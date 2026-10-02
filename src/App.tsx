@@ -25,7 +25,10 @@ import {
   MultiSchoolAdminPanel,
   SiteAdminGlobalFooter,
 } from './components/MultiSchoolAdminPanel';
+import { CrossCampusComparisonTable } from './components/CrossCampusComparisonTable';
+import { CampusChartOfAccountsManager } from './components/CampusChartOfAccountsManager';
 import { SiteOwnerEntryCreationGuard } from './components/BulkVoucherPdfPrinter';
+import { GlobalInactivityScreenLock } from './components/GlobalInactivityScreenLock';
 import {
   TenantAuthProvider,
   useTenantAuth,
@@ -58,6 +61,8 @@ window.__APLUS_REPORT_SIGNATURES_BLOCK__ = DynamicReportSignatureBlock;
 window.__APLUS_RECURRING_VOUCHERS__ = RecurringVoucherManager;
 window.__APLUS_MULTI_SCHOOL_ADMIN__ = MultiSchoolAdminPanel;
 window.__APLUS_TOP_BAR__ = AplusTopBar;
+window.__APLUS_CROSS_CAMPUS_TABLE__ = CrossCampusComparisonTable;
+window.__APLUS_CAMPUS_COA_MANAGER__ = CampusChartOfAccountsManager;
 
 function AppRoleWorkspaceRouter() {
   const {
@@ -239,12 +244,15 @@ export default function App() {
     window.__APLUS_RECURRING_VOUCHERS__ = RecurringVoucherManager;
     window.__APLUS_MULTI_SCHOOL_ADMIN__ = MultiSchoolAdminPanel;
     window.__APLUS_TOP_BAR__ = AplusTopBar;
+    window.__APLUS_CROSS_CAMPUS_TABLE__ = CrossCampusComparisonTable;
+    window.__APLUS_CAMPUS_COA_MANAGER__ = CampusChartOfAccountsManager;
   }, []);
 
   return (
     <AccountingProvider>
       <TenantAuthProvider>
         <div className="min-h-screen flex flex-col">
+          <GlobalInactivityScreenLock />
           <div className="flex-1">
             <AppRoleWorkspaceRouter />
           </div>

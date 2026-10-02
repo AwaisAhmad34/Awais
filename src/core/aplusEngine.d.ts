@@ -328,6 +328,8 @@ declare global {
     __APLUS_REPORT_SIGNATURES_BLOCK__?: React.ComponentType<any>;
     __APLUS_VISIBILITY_CHECK__?: (moduleId: string, user?: any, campuses?: any[]) => boolean;
     __APLUS_TOP_BAR__?: React.ComponentType<{ activeTab: string; onNavigate: (tab: string) => void }>;
+    __APLUS_CROSS_CAMPUS_TABLE__?: React.ComponentType<any>;
+    __APLUS_CAMPUS_COA_MANAGER__?: React.ComponentType<any>;
     __OPEN_SUPER_ADMIN_IMPORT__?: (initialTab?: ImportCategoryTab) => void;
   }
 }

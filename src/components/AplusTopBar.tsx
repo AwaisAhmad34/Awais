@@ -273,6 +273,14 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         }
       }
 
+      // Ctrl+Shift+L or Ctrl+Alt+L -> Lock Screen Immediately (15-min auto timer active)
+      if (ctrlOrMeta && (e.shiftKey || e.altKey) && key === 'l') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('aplus-trigger-screen-lock'));
+        triggerShortcutToast('Security: Screen Locked for Inactivity Protection');
+        return;
+      }
+
       // Alt+P -> Petty Cash Entry
       if (e.altKey && key === 'p') {
         e.preventDefault();
@@ -610,6 +618,17 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 ml-auto">
+          {/* 15-Minute Global Inactivity Security Lock Button */}
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('aplus-trigger-screen-lock'))}
+            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Lock Screen Immediately (15-min auto-inactivity lock active · Ctrl+Shift+L)"
+          >
+            <Lock className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden md:inline">Lock Screen</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsQrScannerOpen(true)}

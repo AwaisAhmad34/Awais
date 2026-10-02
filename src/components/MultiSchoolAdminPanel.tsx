@@ -39,6 +39,9 @@ import { ClientInsideManagerAndSiteTests } from './ClientInsideManagerAndSiteTes
 import { SiteOwnerDeepGovernanceHub } from './SiteOwnerDeepGovernanceHub';
 import { RealTimeCampusActivityStream } from './RealTimeCampusActivityStream';
 import { CampusPerformanceHeatmap } from './CampusPerformanceHeatmap';
+import { CrossCampusComparisonTable } from './CrossCampusComparisonTable';
+import { CampusChartOfAccountsManager } from './CampusChartOfAccountsManager';
+import { PerCampusLoginInvoicePortal } from './PerCampusLoginInvoicePortal';
 
 export type InstituteAccountStatus =
   | 'Active'
@@ -1007,7 +1010,13 @@ const MultiSchoolAdminPanelInner: React.FC<{
   };
 
   const [overviewSubView, setOverviewSubView] = useState<
-    'all' | 'heatmap' | 'governance' | 'stream' | 'client360'
+    | 'all'
+    | 'cross_campus'
+    | 'heatmap'
+    | 'coa_campus'
+    | 'governance'
+    | 'stream'
+    | 'client360'
   >('all');
 
   const activeInstitute =
@@ -1823,48 +1832,14 @@ const MultiSchoolAdminPanelInner: React.FC<{
           </div>
         </div>
 
-        {/* Client's Monthly Invoices Table */}
-        <div className="bg-white rounded-2xl border border-slate-300 p-5 space-y-3">
-          <h3 className="font-black text-sm text-slate-900 uppercase">
-            Monthly Platform & Campus Login Invoices for {activeInstitute.name}
-          </h3>
-          <table className="w-full border-collapse border border-slate-200 text-xs">
-            <thead>
-              <tr className="bg-slate-100 font-black text-slate-700 uppercase">
-                <th className="border border-slate-200 p-2 text-left">Invoice #</th>
-                <th className="border border-slate-200 p-2 text-left">Billing Month</th>
-                <th className="border border-slate-200 p-2 text-center">Active Campuses</th>
-                <th className="border border-slate-200 p-2 text-right">Total Invoice (PKR)</th>
-                <th className="border border-slate-200 p-2 text-center">Due Date</th>
-                <th className="border border-slate-200 p-2 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {myInvoices.map((inv) => (
-                <tr key={inv.id} className="border-b border-slate-200">
-                  <td className="border border-slate-200 p-2 font-mono font-bold">
-                    {inv.invoiceNo}
-                  </td>
-                  <td className="border border-slate-200 p-2 font-bold">
-                    {inv.billingMonth}
-                  </td>
-                  <td className="border border-slate-200 p-2 text-center font-mono">
-                    {inv.activeCampusesCount}
-                  </td>
-                  <td className="border border-slate-200 p-2 text-right font-mono font-black">
-                    PKR {inv.totalAmountPKR.toLocaleString()}
-                  </td>
-                  <td className="border border-slate-200 p-2 text-center font-mono">
-                    {inv.dueDate}
-                  </td>
-                  <td className="border border-slate-200 p-2 text-center font-black">
-                    {inv.status}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* Client's Monthly Invoices Table with Per-Campus Login Breakdown */}
+        <PerCampusLoginInvoicePortal
+          invoices={myInvoices}
+          activeInstitute={activeInstitute}
+          tenantCampuses={registry.tenantCampuses}
+          isSiteOwner={false}
+          onTriggerToast={triggerToast}
+        />
 
         {/* Multi-Voucher Bulk PDF & Batch Print Engine for Campus / Client Admins */}
         <BulkVoucherPdfPrinter
@@ -2042,15 +2017,17 @@ const MultiSchoolAdminPanelInner: React.FC<{
               <div className="flex flex-wrap items-center gap-1.5">
                 {[
                   { id: 'all', label: '📋 Show All Controls' },
-                  { id: 'heatmap', label: '🔥 1. Campus Heatmap' },
+                  { id: 'cross_campus', label: '📊 1. Cross-Campus Comparison' },
+                  { id: 'heatmap', label: '🔥 2. Campus Heatmap' },
+                  { id: 'coa_campus', label: '🏛️ 3. Campus-Scoped COA' },
                   {
                     id: 'governance',
-                    label: '🎛 2. Client Rights, QR, Reports & Theme',
+                    label: '🎛 4. Client Rights, QR, Reports & Theme',
                   },
-                  { id: 'stream', label: '📡 3. Live Activity Stream' },
+                  { id: 'stream', label: '📡 5. Live Activity Stream' },
                   {
                     id: 'client360',
-                    label: '🏢 4. Client 360° & Bulk PDF Print',
+                    label: '🏢 6. Client 360° & Bulk PDF Print',
                   },
                 ].map((item) => (
                   <button
@@ -2060,7 +2037,9 @@ const MultiSchoolAdminPanelInner: React.FC<{
                       setOverviewSubView(
                         item.id as
                           | 'all'
+                          | 'cross_campus'
                           | 'heatmap'
+                          | 'coa_campus'
                           | 'governance'
                           | 'stream'
                           | 'client360'
@@ -2082,40 +2061,40 @@ const MultiSchoolAdminPanelInner: React.FC<{
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
               <button
                 type="button"
+                onClick={() => setOverviewSubView('cross_campus')}
+                className="text-left p-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 cursor-pointer transition-all"
+              >
+                <div className="font-black text-indigo-950">
+                  1. Cross-Campus Table (Side-by-Side) →
+                </div>
+                <div className="text-[11px] text-indigo-900 mt-0.5">
+                  Aggregate and compare Voucher Counts & Total Expenditures across all registered campuses.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setOverviewSubView('coa_campus')}
+                className="text-left p-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 cursor-pointer transition-all"
+              >
+                <div className="font-black text-emerald-950">
+                  2. Campus-Scoped Chart of Accounts →
+                </div>
+                <div className="text-[11px] text-emerald-900 mt-0.5">
+                  Assign, scope and manage financial accounts applicable to relevant campuses or universal network.
+                </div>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setOverviewSubView('heatmap')}
                 className="text-left p-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 cursor-pointer transition-all"
               >
                 <div className="font-black text-amber-950">
-                  1. Campus Performance Heatmap →
+                  3. Campus Performance Heatmap →
                 </div>
                 <div className="text-[11px] text-amber-900 mt-0.5">
-                  Compare budget utilization, petty cash spend & voucher frequency across all campuses.
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setOverviewSubView('governance')}
-                className="text-left p-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 cursor-pointer transition-all"
-              >
-                <div className="font-black text-indigo-950">
-                  2. QR Blocker, Reports (18) & Theme →
-                </div>
-                <div className="text-[11px] text-indigo-900 mt-0.5">
-                  Block/Allow QR codes, set how many reports/modules/charts each client sees & assign color schemes.
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveSection('3_campus_logins_access')}
-                className="text-left p-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 cursor-pointer transition-all"
-              >
-                <div className="font-black text-emerald-950">
-                  3. All Clients Campus Logins ({registry.tenantCampuses.length}) →
-                </div>
-                <div className="text-[11px] text-emerald-900 mt-0.5">
-                  View & edit Campus Login IDs, usernames, passwords & module locks for every client.
+                  Intensity comparison of budget utilization, petty cash spend & transaction frequency.
                 </div>
               </button>
 
@@ -2125,19 +2104,36 @@ const MultiSchoolAdminPanelInner: React.FC<{
                 className="text-left p-3 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 cursor-pointer transition-all"
               >
                 <div className="font-black text-rose-950">
-                  4. Monthly Invoices & Header/Footer →
+                  4. Per-Campus Login Invoicing →
                 </div>
                 <div className="text-[11px] text-rose-900 mt-0.5">
-                  Generate monthly PKR client invoices & customize global Header/Footer branding.
+                  Itemized monthly billing with per-campus login line items & client portal payment proof.
                 </div>
               </button>
             </div>
           </div>
 
-          {/* 1. Campus Performance Heatmap Visualization */}
+          {/* 1. Cross-Campus Comparison Table (Voucher Count & Total Expenditure Side-by-Side) */}
+          {(overviewSubView === 'all' || overviewSubView === 'cross_campus') && (
+            <CrossCampusComparisonTable
+              institutes={registry.institutes}
+              tenantCampuses={registry.tenantCampuses}
+              onTriggerToast={triggerToast}
+            />
+          )}
+
+          {/* 2. Campus Performance Heatmap Visualization */}
           {(overviewSubView === 'all' || overviewSubView === 'heatmap') && (
             <CampusPerformanceHeatmap
               institutes={registry.institutes}
+              tenantCampuses={registry.tenantCampuses}
+              onTriggerToast={triggerToast}
+            />
+          )}
+
+          {/* 3. Campus-Scoped Chart of Accounts Management */}
+          {(overviewSubView === 'all' || overviewSubView === 'coa_campus') && (
+            <CampusChartOfAccountsManager
               tenantCampuses={registry.tenantCampuses}
               onTriggerToast={triggerToast}
             />
@@ -2575,6 +2571,16 @@ const MultiSchoolAdminPanelInner: React.FC<{
               </div>
             </div>
           </form>
+
+          {/* Per-Campus Login Invoice Management & Itemized Breakdown */}
+          <PerCampusLoginInvoicePortal
+            invoices={registry.monthlyInvoices}
+            activeInstitute={activeInstitute}
+            tenantCampuses={registry.tenantCampuses}
+            isSiteOwner={true}
+            onUpdateInvoiceStatus={handleUpdateInvoiceStatus}
+            onTriggerToast={triggerToast}
+          />
 
           <div className="bg-white rounded-2xl border border-slate-300 p-5 space-y-3">
             <h3 className="text-sm font-black uppercase text-slate-900">
