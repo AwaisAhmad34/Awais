@@ -41,6 +41,7 @@ import {
 } from './components/SiteOwnerGovernanceEngine';
 import { initFirebaseCloudSync } from './services/firebaseSync';
 import { useState } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 initFirebaseCloudSync();
 installGlobalVisibilityHook();
@@ -251,6 +252,7 @@ export default function App() {
           <SiteOwnerEntryCreationGuard />
           <SiteAdminGlobalFooter />
         </div>
+        <SpeedInsights />
       </TenantAuthProvider>
     </AccountingProvider>
   );
