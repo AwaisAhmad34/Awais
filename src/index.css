@@ -151,3 +151,100 @@
   font-size: 11pt;
 }
 
+/* ========================================================================== */
+/* CUSTOM INSTITUTIONAL SCROLLBAR DESIGN SYSTEM                               */
+/* ========================================================================== */
+
+html,
+body {
+  scrollbar-width: thin;
+  scrollbar-color: #64748b #f1f5f9;
+  scroll-behavior: smooth;
+}
+
+/* Global WebKit Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #64748b 0%, #475569 100%);
+  border-radius: 9999px;
+  border: 2px solid #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #4f46e5 0%, #3730a3 100%);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Dark Navigation & Top Command Bar Slim Scrollbar */
+.aplus-nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #0f172a;
+}
+
+.aplus-nav-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.aplus-nav-scroll::-webkit-scrollbar-track {
+  background: #0f172a;
+  border-radius: 9999px;
+}
+
+.aplus-nav-scroll::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 9999px;
+}
+
+.aplus-nav-scroll::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b;
+}
+
+/* Financial Tables, Modals & Overflow Containers Scrollbar */
+.overflow-x-auto,
+.overflow-y-auto,
+.overflow-auto {
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 #f8fafc;
+}
+
+.overflow-x-auto::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track,
+.overflow-auto::-webkit-scrollbar-track {
+  background: #f8fafc;
+  border-radius: 9999px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.overflow-auto::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 9999px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover,
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.overflow-auto::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+

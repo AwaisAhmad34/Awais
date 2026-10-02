@@ -359,6 +359,25 @@ export function resolveActiveProfileForUser(
 // Install global visibility check hook used by aplusEngine.js sidebar
 export function installGlobalVisibilityHook() {
   window.__APLUS_VISIBILITY_CHECK__ = (moduleId: string, user?: any) => {
+    try {
+      const regRaw = localStorage.getItem('aplus_multi_school_registry_v1');
+      const govRaw = localStorage.getItem('aplus_site_owner_governance_v1');
+      if (regRaw && govRaw) {
+        const reg = JSON.parse(regRaw);
+        const gov = JSON.parse(govRaw);
+        const activeOrgId = reg?.activeInstituteId || 'inst-aplus-main';
+        const clientCtrl = gov?.clientControls?.[activeOrgId];
+        if (
+          clientCtrl &&
+          Array.isArray(clientCtrl.allowedModules) &&
+          moduleId !== 'multitenant'
+        ) {
+          if (!clientCtrl.allowedModules.includes(moduleId)) {
+            return false;
+          }
+        }
+      }
+    } catch {}
     const cfg = getStoredVisibilityConfig();
     const profile = resolveActiveProfileForUser(cfg, user);
     if (!profile) return true; // Super Admin unrestricted

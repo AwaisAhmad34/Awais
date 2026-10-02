@@ -18,6 +18,7 @@ import {
   printOrDownloadElement,
 } from '../core/aplusEngine';
 import { DynamicReportSignatureBlock } from './ReportSignatureManager';
+import { VoucherQRCodeBadge } from './VoucherQRCodeAndScanner';
 
 export type StandardVoucherType = 'BPV' | 'BRV' | 'CPV' | 'CRV' | 'JV';
 
@@ -338,16 +339,24 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             </div>
           </div>
 
-          <div className="border-2 border-black text-center shrink-0 min-w-[175px] bg-white">
-            <div className="text-[11px] font-bold text-black uppercase border-b-2 border-black py-1 px-3 tracking-wide">
-              Campus Name
+          <div className="flex items-start gap-2.5 shrink-0">
+            <div className="border-2 border-black text-center shrink-0 min-w-[165px] bg-white">
+              <div className="text-[11px] font-bold text-black uppercase border-b-2 border-black py-1 px-3 tracking-wide">
+                Campus Name
+              </div>
+              <div className="text-sm font-black text-black uppercase py-1.5 px-3 tracking-wider">
+                {campusDisplayName || 'CVT CAMPUS'}
+              </div>
+              <div className="text-[10px] font-mono font-bold text-black border-t border-black py-0.5 px-2">
+                Voucher Type: {meta.shortCode}
+              </div>
+              <div className="text-[9px] font-mono font-semibold text-black border-t border-black py-0.5 px-2 truncate max-w-[175px]">
+                Tx ID: {voucher.id || voucher.voucherNo}
+              </div>
             </div>
-            <div className="text-sm font-black text-black uppercase py-1.5 px-3 tracking-wider">
-              {campusDisplayName || 'CVT CAMPUS'}
-            </div>
-            <div className="text-[10px] font-mono font-bold text-black border-t border-black py-0.5 px-2">
-              Voucher Type: {meta.shortCode}
-            </div>
+
+            {/* Embedded Scannable QR Code for Quick App-Based Retrieval */}
+            <VoucherQRCodeBadge voucher={voucher} campus={campus} size={74} />
           </div>
         </div>
 

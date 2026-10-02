@@ -313,6 +313,8 @@ declare global {
     __APLUS_SW_READY__?: boolean;
     __APLUS_TRIGGER_VOUCHER_SAVE__?: () => void;
     __APLUS_TRIGGER_PETTY_SAVE__?: () => void;
+    __APLUS_RECURRING_VOUCHERS__?: React.ComponentType<any>;
+    __APLUS_MULTI_SCHOOL_ADMIN__?: React.ComponentType<any>;
     __APLUS_CUSTOM_DOCS__?: React.ComponentType<{ LegacyDocs: React.ComponentType; onNavigate: (tab: string) => void }>;
     __APLUS_AUDIT_TRAIL__?: React.ComponentType<{ LegacyActivityLog: React.ComponentType<{ onNavigate: (tab: string) => void }>; onNavigate: (tab: string) => void }>;
     __APLUS_VOUCHER_PRINT_LAYOUT__?: React.ComponentType<any>;

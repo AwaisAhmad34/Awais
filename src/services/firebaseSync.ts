@@ -840,3 +840,63 @@ export async function loadSignatureConfigFromCloud(): Promise<any | null> {
   }
   return null;
 }
+
+export async function saveRecurringVouchersToCloud(data: any): Promise<void> {
+  try {
+    notify({ status: 'syncing', message: 'Syncing Recurring Voucher Schedules to Cloud...' });
+    await setDoc(doc(db, 'system_state', 'recurring_vouchers_config'), {
+      updatedAt: new Date().toISOString(),
+      payload: JSON.stringify(sanitizeForFirestore(data)),
+    });
+    notify({
+      status: 'connected',
+      lastSyncedAt: new Date().toISOString(),
+      message: 'Recurring Voucher Schedules synced to Firebase Cloud',
+    });
+  } catch (e) {
+    console.warn('Could not save recurring vouchers to cloud:', e);
+  }
+}
+
+export async function loadRecurringVouchersFromCloud(): Promise<any | null> {
+  try {
+    const snap = await getDoc(doc(db, 'system_state', 'recurring_vouchers_config'));
+    if (snap.exists() && snap.data()?.payload) {
+      return JSON.parse(snap.data()?.payload);
+    }
+  } catch (e) {
+    console.warn('Could not load recurring vouchers from cloud:', e);
+  }
+  return null;
+}
+
+export async function saveMultiSchoolRegistryToCloud(data: any): Promise<void> {
+  try {
+    notify({ status: 'syncing', message: 'Syncing Multi-School / Institute Registry to Cloud...' });
+    await setDoc(doc(db, 'system_state', 'multi_school_registry'), {
+      updatedAt: new Date().toISOString(),
+      payload: JSON.stringify(sanitizeForFirestore(data)),
+    });
+    notify({
+      status: 'connected',
+      lastSyncedAt: new Date().toISOString(),
+      message: 'Multi-School / Institute Admin Registry synced to Firebase Cloud',
+    });
+  } catch (e) {
+    console.warn('Could not save multi-school registry to cloud:', e);
+  }
+}
+
+export async function loadMultiSchoolRegistryFromCloud(): Promise<any | null> {
+  try {
+    const snap = await getDoc(doc(db, 'system_state', 'multi_school_registry'));
+    if (snap.exists() && snap.data()?.payload) {
+      return JSON.parse(snap.data()?.payload);
+    }
+  } catch (e) {
+    console.warn('Could not load multi-school registry from cloud:', e);
+  }
+  return null;
+}
+
+

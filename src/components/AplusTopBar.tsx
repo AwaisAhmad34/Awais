@@ -22,6 +22,11 @@ import {
   Download,
   Search,
   Keyboard,
+  QrCode,
+  CalendarClock,
+  Building,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
 import {
@@ -33,6 +38,16 @@ import {
 } from '../services/firebaseSync';
 import { SuperAdminImportModal } from './SuperAdminImportModal';
 import { VoucherA4PrintStudioModal } from './PrintableVoucherA4Layout';
+import { VoucherQRScannerAndRetrievalModal } from './VoucherQRCodeAndScanner';
+import {
+  subscribeMultiSchoolRegistry,
+  getStoredMultiSchoolRegistry,
+  saveStoredMultiSchoolRegistry,
+  MultiSchoolRegistryState,
+  PlatformRoleType,
+} from './MultiSchoolAdminPanel';
+import { NavigationPermissionGuard } from './NavigationPermissionGuard';
+import { useTenantAuth } from '../context/TenantAuthContext';
 import {
   subscribeVisibilityConfig,
   getStoredVisibilityConfig,
@@ -52,6 +67,81 @@ interface AplusTopBarProps {
   onNavigate: (tab: string) => void;
 }
 
+export type ResolvedAuthPermissionLevel =
+  | 'platform_super_admin'
+  | 'school_client_admin'
+  | 'campus_admin'
+  | 'staff_or_viewer'
+  | 'unauthenticated';
+
+/**
+ * Resolves the current user's effective navigation permission level directly from
+ * the auth context (`currentUser`, `isSuperAdmin`) and synchronized tenant role registry.
+ */
+export function resolveAuthNavigationPermissionLevel(
+  currentUser: any,
+  isSuperAdmin: boolean,
+  platformRole?: PlatformRoleType
+): ResolvedAuthPermissionLevel {
+  if (!currentUser) {
+    return 'unauthenticated';
+  }
+
+  const rawAuthRole = String(currentUser.role || '').toLowerCase();
+  const effectivePlatformRole = platformRole || 'platform_super_admin';
+
+  if (
+    (isSuperAdmin ||
+      rawAuthRole === 'superadmin' ||
+      rawAuthRole === 'platform_super_admin') &&
+    effectivePlatformRole === 'platform_super_admin'
+  ) {
+    return 'platform_super_admin';
+  }
+
+  if (
+    effectivePlatformRole === 'school_client_admin' &&
+    (isSuperAdmin ||
+      rawAuthRole === 'superadmin' ||
+      rawAuthRole === 'admin' ||
+      rawAuthRole === 'approver' ||
+      rawAuthRole === 'school_client_admin')
+  ) {
+    return 'school_client_admin';
+  }
+
+  if (effectivePlatformRole === 'campus_admin' || rawAuthRole === 'campus_admin') {
+    return 'campus_admin';
+  }
+
+  return 'staff_or_viewer';
+}
+
+/**
+ * Robust Navigation Wrapper in AplusTopBar.tsx that reads the current user's role
+ * from the auth context (`useAccounting()`) and conditionally hides or renders the
+ * 'Platform Super Admin' and 'School Client Admin' navigation items based on permission level.
+ */
+export const AuthRoleNavigationWrapper: React.FC<{
+  allowedLevels: ResolvedAuthPermissionLevel[];
+  platformRoleOverride?: PlatformRoleType;
+  children: React.ReactNode;
+}> = ({ allowedLevels, platformRoleOverride, children }) => {
+  const { currentUser, isSuperAdmin } = useAccounting();
+  const { platformRole } = useTenantAuth();
+  const level = resolveAuthNavigationPermissionLevel(
+    currentUser,
+    Boolean(isSuperAdmin),
+    platformRoleOverride || platformRole
+  );
+
+  if (!allowedLevels.includes(level)) {
+    return null;
+  }
+
+  return <>{children}</>;
+};
+
 export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   activeTab,
   onNavigate,
@@ -65,6 +155,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     pettyCashTransactions,
     accountHeads,
     orgSettings,
+    updateOrgSettings,
     exportSystemState,
     importSystemState,
   } = useAccounting();
@@ -100,6 +191,28 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [shortcutFeedback, setShortcutFeedback] = useState<string | null>(null);
+  const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
+  const [schoolRegistry, setSchoolRegistry] = useState<MultiSchoolRegistryState>(() =>
+    getStoredMultiSchoolRegistry()
+  );
+
+  useEffect(() => {
+    return subscribeMultiSchoolRegistry(setSchoolRegistry);
+  }, []);
+
+  const activeSchoolAccount =
+    schoolRegistry.institutes.find((i) => i.id === schoolRegistry.activeInstituteId) ||
+    schoolRegistry.institutes[0];
+
+  // Auto-open QR Scanner / Retrieval if URL has ?voucherId=... or ?voucherNo=...
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('voucherId') || params.get('voucherNo')) {
+        setIsQrScannerOpen(true);
+      }
+    } catch {}
+  }, []);
 
   const triggerShortcutToast = (msg: string) => {
     setShortcutFeedback(msg);
@@ -177,6 +290,22 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         e.preventDefault();
         onNavigate('alltransactions');
         triggerShortcutToast('Shortcut Alt+L → Opened All Vouchers & Audit Ledger');
+        return;
+      }
+
+      // Alt+Q -> Scan / Retrieve Printed Voucher QR Code
+      if (e.altKey && key === 'q') {
+        e.preventDefault();
+        setIsQrScannerOpen((prev) => !prev);
+        triggerShortcutToast('Shortcut Alt+Q → Opened Voucher QR Code Scanner & Retrieval');
+        return;
+      }
+
+      // Alt+R -> Recurring Monthly Expense Vouchers
+      if (e.altKey && key === 'r') {
+        e.preventDefault();
+        onNavigate('recurringvouchers');
+        triggerShortcutToast('Shortcut Alt+R → Opened Recurring Monthly Voucher Scheduler');
         return;
       }
 
@@ -334,8 +463,8 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
 
   return (
     <>
-      <div className="bg-slate-900 text-white border-b border-slate-800 px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
-        <div className="flex items-center gap-2.5 min-w-0">
+      <div className="bg-slate-900 text-white border-b border-slate-800 px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden aplus-nav-scroll">
+        <div className="flex items-center gap-2.5 min-w-0 flex-wrap aplus-nav-scroll">
           {!isOnline || syncStats.status === 'offline' ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/25 border border-amber-400/50 text-amber-300 font-bold text-[11px]">
               <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
@@ -361,13 +490,118 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           </span>
 
           {isSuperAdmin && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/30 text-amber-300 font-bold text-[11px]">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Super Admin Privileges</span>
-            </span>
+            <div className="inline-flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-0.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <select
+                value={schoolRegistry.currentPlatformRole || 'platform_super_admin'}
+                onChange={(e) => {
+                  const nextRole = e.target.value as PlatformRoleType;
+                  const next = {
+                    ...schoolRegistry,
+                    currentPlatformRole: nextRole,
+                  };
+                  setSchoolRegistry(next);
+                  saveStoredMultiSchoolRegistry(next);
+                }}
+                className="bg-transparent text-[11px] font-bold text-amber-300 focus:outline-hidden cursor-pointer"
+                title="Verify NavigationPermissionGuard across Platform Roles"
+              >
+                <option value="platform_super_admin" className="text-slate-900">
+                  Role: Platform Super Admin
+                </option>
+                <option value="school_client_admin" className="text-slate-900">
+                  Role: School Client Admin
+                </option>
+                <option value="campus_admin" className="text-slate-900">
+                  Role: Campus Administrator
+                </option>
+                <option value="accountant" className="text-slate-900">
+                  Role: Accountant
+                </option>
+                <option value="viewer" className="text-slate-900">
+                  Role: Viewer / Auditor
+                </option>
+              </select>
+            </div>
           )}
+
+          {/* Auth-Context Role Navigation Wrapper: Platform Super Admin Entry Point */}
+          <AuthRoleNavigationWrapper
+            allowedLevels={['platform_super_admin']}
+            platformRoleOverride={schoolRegistry.currentPlatformRole}
+          >
+            <NavigationPermissionGuard entryPoint="platform_super_admin">
+              <div className="inline-flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2 py-0.5">
+                <Building className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <select
+                  value={activeSchoolAccount?.id || ''}
+                  onChange={(e) => {
+                    const target = schoolRegistry.institutes.find(
+                      (inst) => inst.id === e.target.value
+                    );
+                    if (!target) return;
+                    const next = { ...schoolRegistry, activeInstituteId: target.id };
+                    setSchoolRegistry(next);
+                    saveStoredMultiSchoolRegistry(next);
+                    if (updateOrgSettings) {
+                      updateOrgSettings({
+                        ...orgSettings,
+                        schoolName: target.name,
+                        tagline: target.tagline,
+                      });
+                    }
+                  }}
+                  className="bg-transparent text-[11px] font-bold text-amber-200 focus:outline-hidden cursor-pointer max-w-[190px] truncate"
+                  title="Switch Active School or Institute Account (Platform Super Admin Only)"
+                >
+                  {schoolRegistry.institutes.map((inst) => (
+                    <option key={inst.id} value={inst.id} className="text-slate-900">
+                      {inst.code} — {inst.name} [{inst.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onNavigate('multischool_admin')}
+                className={`px-2.5 py-0.5 rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                  activeTab === 'multischool_admin'
+                    ? 'bg-amber-400 text-slate-950 font-black'
+                    : 'bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-300'
+                }`}
+                title="Open Platform Super Admin Dashboard (/platform-admin) — Verified platform_super_admin Role"
+              >
+                <Building className="w-3 h-3" />
+                <span>Platform Super Admin</span>
+              </button>
+            </NavigationPermissionGuard>
+          </AuthRoleNavigationWrapper>
+
+          {/* Auth-Context Role Navigation Wrapper: School Client Admin Entry Point */}
+          <AuthRoleNavigationWrapper
+            allowedLevels={['school_client_admin']}
+            platformRoleOverride={schoolRegistry.currentPlatformRole}
+          >
+            <NavigationPermissionGuard entryPoint="school_client_admin">
+              <button
+                type="button"
+                onClick={() => onNavigate('multischool_admin')}
+                className={`px-2.5 py-0.5 rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer ${
+                  activeTab === 'multischool_admin'
+                    ? 'bg-emerald-500 text-slate-950 font-black'
+                    : 'bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-300'
+                }`}
+                title="Open Scoped School Client Admin Dashboard — Verified school_client_admin Role"
+              >
+                <Building className="w-3 h-3" />
+                <span>School Client Admin</span>
+              </button>
+            </NavigationPermissionGuard>
+          </AuthRoleNavigationWrapper>
           <span className="text-slate-300 truncate text-[11px] hidden lg:inline">
-            {orgSettings?.headerTopBarText ||
+            {schoolRegistry.headerFooterConfig?.headerTopBarBanner ||
+              orgSettings?.headerTopBarText ||
               orgSettings?.headerRightText ||
               syncStats.message ||
               orgSettings?.schoolName ||
@@ -376,6 +610,19 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 ml-auto">
+          <button
+            type="button"
+            onClick={() => setIsQrScannerOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 border border-emerald-500/50 text-white font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+            title="Scan Printed Voucher QR Code or Enter Unique Transaction ID for Quick Retrieval (Alt+Q)"
+          >
+            <QrCode className="w-3.5 h-3.5 text-emerald-200" />
+            <span>Scan Voucher QR</span>
+            <kbd className="hidden xl:inline-block px-1 py-0.2 rounded bg-emerald-900 border border-emerald-600 font-mono text-[9px] text-emerald-200">
+              Alt+Q
+            </kbd>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsGlobalSearchOpen(true)}
@@ -461,6 +708,19 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           >
             <CheckSquare className="w-3.5 h-3.5" />
             <span>Bulk Approval & Role Access ({pendingCount} Pending)</span>
+          </button>
+
+          <button
+            onClick={() => onNavigate('recurringvouchers')}
+            className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeTab === 'recurringvouchers'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-indigo-300'
+            }`}
+            title="Schedule Recurring Monthly Expenses (Rent, Electricity, Utilities) with Automated Journal Entry Creation on Permission (Alt+R)"
+          >
+            <CalendarClock className="w-3.5 h-3.5" />
+            <span>Recurring Vouchers</span>
           </button>
 
           {(!activeProfile || activeProfile.widgets.showTopBarErpButton) && (
@@ -624,6 +884,73 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         isOpen={isA4StudioOpen}
         onClose={() => setIsA4StudioOpen(false)}
       />
+
+      <VoucherQRScannerAndRetrievalModal
+        isOpen={isQrScannerOpen}
+        onClose={() => setIsQrScannerOpen(false)}
+        onOpenInA4Studio={() => setIsA4StudioOpen(true)}
+      />
+
+      {/* CLOSED SCHOOL / INSTITUTE ACCOUNT LOCKOUT OVERLAY */}
+      {activeSchoolAccount?.status === 'Closed' &&
+        activeTab !== 'multischool_admin' &&
+        activeTab !== 'campuses' && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 print:hidden">
+            <div className="w-full max-w-xl bg-white rounded-2xl border-2 border-rose-500 shadow-2xl overflow-hidden text-center">
+              <div className="bg-rose-600 text-white px-6 py-5 flex flex-col items-center gap-2">
+                <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center">
+                  <Lock className="w-7 h-7 text-white" />
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-rose-100">
+                  Official Master Admin Account Closure Notice
+                </span>
+                <h2 className="text-lg font-black">
+                  School / Institute Account Closed: {activeSchoolAccount.name} ({activeSchoolAccount.code})
+                </h2>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs text-slate-700">
+                <p className="leading-relaxed">
+                  Access to <strong>{activeSchoolAccount.name}</strong> has been officially closed and locked by the Master Administrator. Voucher entry, petty cash operations, and ledger modifications are disabled for this school/institute account.
+                </p>
+                {activeSchoolAccount.statusReason && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 font-bold">
+                    Closure Reason: {activeSchoolAccount.statusReason}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('multischool_admin')}
+                    className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Building className="w-4 h-4 text-amber-400" />
+                    <span>Open Multi-School Admin Panel</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const updated = schoolRegistry.institutes.map((inst) =>
+                        inst.id === activeSchoolAccount.id
+                          ? { ...inst, status: 'Active' as const, statusReason: 'Re-opened by Master Admin' }
+                          : inst
+                      );
+                      const next = { ...schoolRegistry, institutes: updated };
+                      setSchoolRegistry(next);
+                      saveStoredMultiSchoolRegistry(next);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Unlock className="w-4 h-4" />
+                    <span>Re-Open / Activate This School Account Now</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       {/* Shortcut Action Feedback Pill */}
       {shortcutFeedback && (

@@ -28,6 +28,10 @@ import {
   ReportSignatureConfigPanel,
   RelevantReportKey,
 } from './ReportSignatureManager';
+import {
+  ExtendedLedgerAndTrialBalanceTemplates,
+  ExtendedReportId,
+} from './ExtendedLedgerAndTrialBalanceTemplates';
 
 export type ReportFormatId =
   | 'format_1_main'
@@ -39,7 +43,8 @@ export type ReportFormatId =
   | 'format_7_voucher_books'
   | 'format_8_campus_columnar'
   | 'format_9_expense_pettycash'
-  | 'format_10_audit_certificate';
+  | 'format_10_audit_certificate'
+  | ExtendedReportId;
 
 interface FormatDefinition {
   id: ReportFormatId;
@@ -142,6 +147,78 @@ export const TEN_REPORT_FORMATS: FormatDefinition[] = [
     subtitle:
       'Executive control totals by Main Account Group (100–500) with formal External & Internal Audit Certification',
     icon: Award,
+  },
+  {
+    id: 'format_11_all_trial_balances',
+    number: 11,
+    shortTitle: '11. All Trial Balance Patterns (6 Styles)',
+    fullTitle: 'Format 11: Multi-Pattern Trial Balance Suite (2-Col, 4-Col, 6-Col, 8-Col, Group & Class Matrix)',
+    subtitle:
+      'Switch between 6 Trial Balance structural patterns and 4 visual print themes',
+    icon: Table,
+  },
+  {
+    id: 'format_12_all_general_ledgers',
+    number: 12,
+    shortTitle: '12. All General Ledger Patterns (5 Styles)',
+    fullTitle: 'Format 12: Complete General Ledger & Account Card Suite (Running Balance, T-Account, Master Book)',
+    subtitle:
+      'Running Balance Ledger, Two-Sided T-Account, All-Accounts Continuous Book & Voucher Matrix',
+    icon: BookOpen,
+  },
+  {
+    id: 'format_13_cash_bank_treasury',
+    number: 13,
+    shortTitle: '13. Triple-Col Cash & Bank Book',
+    fullTitle: 'Format 13: Chronological Cash, Bank & Treasury Register (BRV, CRV, BPV, CPV)',
+    subtitle:
+      'Complete cash and bank receipts vs. payments scroll with voucher references',
+    icon: Wallet,
+  },
+  {
+    id: 'format_14_income_statement_patterns',
+    number: 14,
+    shortTitle: '14. Income & P&L Patterns (4 Styles)',
+    fullTitle: 'Format 14: Multi-Pattern Income & Expenditure Statement (IFRS, T-Format & Common-Size %)',
+    subtitle:
+      'Vertical Multi-Step P&L, Traditional Two-Sided Expenditure | Income T-Format & % of Revenue Analysis',
+    icon: BarChart3,
+  },
+  {
+    id: 'format_15_balance_sheet_patterns',
+    number: 15,
+    shortTitle: '15. Balance Sheet Patterns (4 Styles)',
+    fullTitle: 'Format 15: Multi-Pattern Statement of Financial Position (IAS-1 Vertical, Horizontal T & Liquidity)',
+    subtitle:
+      'Classified Vertical Balance Sheet, Traditional Horizontal Capital & Liabilities | Assets & % Structure',
+    icon: Columns,
+  },
+  {
+    id: 'format_16_receipts_payments_cashflow',
+    number: 16,
+    shortTitle: '16. Receipts & Payments / Cash Flow',
+    fullTitle: 'Format 16: Two-Sided Receipts & Payments Account & Cash Flow Schedule',
+    subtitle:
+      'Side-by-side Cash/Bank Inflows (BRV/CRV) vs. Cash/Bank Outflows (BPV/CPV)',
+    icon: FileCheck2,
+  },
+  {
+    id: 'format_17_subledger_counterparty',
+    number: 17,
+    shortTitle: '17. Sub-Ledger & Cheque Register',
+    fullTitle: 'Format 17: Counterparty, Payee & Cheque/Instrument Audit Sub-Ledger',
+    subtitle:
+      'Complete register of all vouchers with narration, payee, and instrument tracking',
+    icon: FileSpreadsheet,
+  },
+  {
+    id: 'format_18_group_control_hierarchy',
+    number: 18,
+    shortTitle: '18. Group Control Master Schedule',
+    fullTitle: 'Format 18: Hierarchical Chart of Accounts & Ledger Control Schedule',
+    subtitle:
+      'Complete institutional ledger and voucher control register with custom print themes',
+    icon: Layers,
   },
 ];
 
@@ -497,12 +574,12 @@ export const MultiFormatReportsHub: React.FC<{
               </div>
               <div>
                 <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-amber-300">
-                  <span>10 Official Financial Report Formats</span>
+                  <span>18 Official Financial Report Formats & Multi-Pattern Templates</span>
                   <span>·</span>
                   <span>Format #1 is Our Main Standard Format</span>
                 </div>
                 <h2 className="text-base sm:text-lg font-black text-white">
-                  Select Report Format (1 to 10) — Instant Live Preview, A4 Print, PDF & CSV Export
+                  Select Report Format (1 to 18) — Covers All Trial Balances, All General Ledgers, P&L, B/S, Cash Flow & Visual Print Themes
                 </h2>
               </div>
             </div>
@@ -1446,6 +1523,19 @@ export const MultiFormatReportsHub: React.FC<{
                 </table>
               </div>
             )}
+
+            {/* FORMATS 11–18: EXTENDED MULTI-PATTERN TRIAL BALANCE, GENERAL LEDGER, P&L, BALANCE SHEET & CASH FLOW TEMPLATES */}
+            {selectedFormat.startsWith('format_1') &&
+              selectedFormat !== 'format_10_audit_certificate' && (
+                <ExtendedLedgerAndTrialBalanceTemplates
+                  selectedFormat={selectedFormat as ExtendedReportId}
+                  accountAnalytics={accountAnalytics}
+                  activeAccountRows={activeAccountRows}
+                  scopedVouchers={scopedVouchers}
+                  scopedPettyCash={scopedPettyCash}
+                  totals={totals}
+                />
+              )}
 
             <OfficialSignatureFooter />
           </div>
