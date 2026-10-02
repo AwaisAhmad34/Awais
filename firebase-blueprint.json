@@ -1,0 +1,106 @@
+{
+  "entities": {
+    "Campus": {
+      "title": "Campus",
+      "description": "School campus financial branch configuration and petty cash float",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "accountantName": { "type": "string" },
+        "pettyCashFloat": { "type": "number" },
+        "currentPettyCash": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "code", "name"]
+    },
+    "Voucher": {
+      "title": "Voucher",
+      "description": "Multi-campus financial voucher (BPV, BRV, CPV, CRV, JV)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "voucherNo": { "type": "string" },
+        "voucherType": { "type": "string" },
+        "campusId": { "type": "string" },
+        "date": { "type": "string" },
+        "narration": { "type": "string" },
+        "totalDebit": { "type": "number" },
+        "totalCredit": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "voucherNo", "voucherType", "campusId", "date"]
+    },
+    "PettyCash": {
+      "title": "PettyCash",
+      "description": "Campus petty cash disbursement or replenishment record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "voucherNo": { "type": "string" },
+        "campusId": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string" },
+        "payee": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "narration": { "type": "string" },
+        "balanceAfter": { "type": "number" }
+      },
+      "required": ["id", "voucherNo", "campusId", "date", "amount"]
+    },
+    "SystemSnapshot": {
+      "title": "SystemSnapshot",
+      "description": "Cloud synchronized ledger snapshot and checklists",
+      "type": "object",
+      "properties": {
+        "updatedAt": { "type": "string" },
+        "payload": { "type": "string" }
+      }
+    },
+    "ErpState": {
+      "title": "ErpState",
+      "description": "Dynamic School ERP state including students, fee challans, staff payroll, procurement, inventory, and budgets",
+      "type": "object",
+      "properties": {
+        "updatedAt": { "type": "string" },
+        "payload": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/campuses/{campusId}": {
+      "schema": { "$ref": "#/entities/Campus" },
+      "description": "School campuses collection"
+    },
+    "/vouchers/{voucherId}": {
+      "schema": { "$ref": "#/entities/Voucher" },
+      "description": "Financial vouchers collection"
+    },
+    "/petty_cash/{pettyCashId}": {
+      "schema": { "$ref": "#/entities/PettyCash" },
+      "description": "Petty cash transactions collection"
+    },
+    "/system_state/{docId}": {
+      "schema": { "$ref": "#/entities/SystemSnapshot" },
+      "description": "Consolidated system state, ERP suite, budgets, visibility rules, and checklists"
+    },
+    "/activity_logs/{logId}": {
+      "schema": { "$ref": "#/entities/SystemSnapshot" },
+      "description": "Forensic audit trail logs of voucher and petty cash actions"
+    },
+    "/bank_reconciliations/{txId}": {
+      "schema": { "$ref": "#/entities/SystemSnapshot" },
+      "description": "Bank reconciliation status records"
+    },
+    "/cash_reconciliations/{recId}": {
+      "schema": { "$ref": "#/entities/SystemSnapshot" },
+      "description": "Physical cash denomination count reconciliation certificates"
+    }
+  }
+}

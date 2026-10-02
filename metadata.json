@@ -1,0 +1,6 @@
+{
+  "name": "Multi-Campus Voucher & Petty Cash Management System",
+  "description": "Aplus School System Multi-Campus Voucher & Petty Cash Management System with four voucher types (BPV, BRV, CPV, CRV, JV), full transaction ledger, petty cash management, physical reconciliation, financial reporting, and complete 49-section system manual.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

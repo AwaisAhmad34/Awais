@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm 10mm;
+  }
+  @page landscape {
+    size: A4 landscape;
+    margin: 8mm 10mm;
+  }
+  html,
+  body {
+    color: #000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background-color: #fff !important;
+    width: 100% !important;
+    height: auto !important;
+    font-size: 11pt !important;
+    overflow: visible !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  header,
+  nav,
+  aside,
+  footer,
+  .print-hidden,
+  [data-print-hide="true"],
+  button,
+  input,
+  select {
+    display: none !important;
+  }
+  .printable-card,
+  #financial-report-sheet,
+  #printable-voucher-document,
+  .a4-sheet {
+    box-shadow: none !important;
+    background: #fff !important;
+    border: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  table {
+    page-break-inside: auto;
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tfoot {
+    display: table-footer-group;
+  }
+  .break-before-page,
+  .print-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+  .break-inside-avoid {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+
+.a4-preview-canvas {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 210mm;
+  min-height: 297mm;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.a4-landscape-preview-canvas {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 297mm;
+  min-height: 210mm;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Reusable A4 Four-Voucher (BPV, BRV, CPV, CRV) Print-Friendly Layout Styles */
+.a4-voucher-sheet {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 210mm;
+  color: #000000;
+  background-color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Specific A4 Padding Presets */
+.a4-voucher-pad-compact {
+  padding: 8mm 10mm;
+}
+
+.a4-voucher-pad-standard {
+  padding: 12mm 14mm;
+}
+
+.a4-voucher-pad-spacious {
+  padding: 16mm 18mm;
+}
+
+/* Specific A4 Typography Scale Presets */
+.a4-voucher-typo-10pt {
+  font-size: 10pt;
+  line-height: 1.35;
+}
+.a4-voucher-typo-10pt .a4-voucher-title {
+  font-size: 20pt;
+}
+.a4-voucher-typo-10pt .a4-voucher-table {
+  font-size: 9.5pt;
+}
+
+.a4-voucher-typo-11pt {
+  font-size: 11pt;
+  line-height: 1.4;
+}
+.a4-voucher-typo-11pt .a4-voucher-title {
+  font-size: 22pt;
+}
+.a4-voucher-typo-11pt .a4-voucher-table {
+  font-size: 10pt;
+}
+
+.a4-voucher-typo-12pt {
+  font-size: 12pt;
+  line-height: 1.45;
+}
+.a4-voucher-typo-12pt .a4-voucher-title {
+  font-size: 24pt;
+}
+.a4-voucher-typo-12pt .a4-voucher-table {
+  font-size: 11pt;
+}
+
