@@ -71,6 +71,40 @@
         "updatedAt": { "type": "string" },
         "payload": { "type": "string" }
       }
+    },
+    "CampusCredential": {
+      "title": "CampusCredential",
+      "description": "Dynamic authentication credentials and security access profile synchronized across campuses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "campusId": { "type": "string" },
+        "campusCode": { "type": "string" },
+        "campusName": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string" },
+        "status": { "type": "string" },
+        "dynamicToken": { "type": "string" },
+        "lastSyncedAt": { "type": "string" }
+      },
+      "required": ["id", "campusId", "username", "password"]
+    },
+    "ExpensePattern": {
+      "title": "ExpensePattern",
+      "description": "Historical pattern association and category suggestion rule",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "keyword": { "type": "string" },
+        "category": { "type": "string" },
+        "accountCode": { "type": "string" },
+        "accountName": { "type": "string" },
+        "frequency": { "type": "number" },
+        "confidence": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "keyword", "category", "accountCode"]
     }
   },
   "firestore": {
@@ -85,6 +119,14 @@
     "/petty_cash/{pettyCashId}": {
       "schema": { "$ref": "#/entities/PettyCash" },
       "description": "Petty cash transactions collection"
+    },
+    "/campus_credentials/{credentialId}": {
+      "schema": { "$ref": "#/entities/CampusCredential" },
+      "description": "Dynamic campus login credentials synchronized in real-time"
+    },
+    "/expense_patterns/{patternId}": {
+      "schema": { "$ref": "#/entities/ExpensePattern" },
+      "description": "Learned and persistent expense category suggestion patterns"
     },
     "/system_state/{docId}": {
       "schema": { "$ref": "#/entities/SystemSnapshot" },

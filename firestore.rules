@@ -25,5 +25,11 @@ service cloud.firestore {
     match /system_state/{docId} {
       allow read, write: if true;
     }
+    match /campus_credentials/{credentialId} {
+      allow read, write: if true;
+    }
+    match /expense_patterns/{patternId} {
+      allow read, write: if true;
+    }
   }
 }

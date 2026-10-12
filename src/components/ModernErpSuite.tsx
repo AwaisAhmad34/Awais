@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   Search,
   RefreshCw,
+  Camera,
 } from 'lucide-react';
 import { useAccounting } from '../core/aplusEngine';
 import { PettyCashCategoryAnalytics } from './PettyCashCategoryAnalytics';
@@ -1236,14 +1237,25 @@ export const ModernErpSuite: React.FC<{
                 Approve vendor Purchase Orders and settle bills directly into the 157-Account General Ledger
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowPoForm((v) => !v)}
-              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create Purchase Order</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('aplus-open-invoice-ocr'))}
+                className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                title="Scan Paper Vendor Invoice via Device Camera & Auto-Populate BPV Voucher"
+              >
+                <Camera className="w-4 h-4" />
+                <span>Scan Paper Invoice (OCR)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPoForm((v) => !v)}
+                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Purchase Order</span>
+              </button>
+            </div>
           </div>
 
           {showPoForm && (

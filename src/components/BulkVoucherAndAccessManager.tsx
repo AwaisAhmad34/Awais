@@ -29,6 +29,10 @@ import {
   TrendingUp,
   TrendingDown,
   Wallet,
+  KeyRound,
+  Database,
+  Printer,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useAccounting, Transaction } from '../core/aplusEngine';
 import {
@@ -36,6 +40,11 @@ import {
   loadVisibilityConfigFromCloud,
   wipeAllCloudCollectionsToZero,
 } from '../services/firebaseSync';
+import { ExpenseCategorySuggesterWidget } from './ExpenseCategorySuggesterWidget';
+import { DynamicCampusAuthModal } from './DynamicCampusAuthModal';
+import { CampusAccountHeadPermissionPanel } from './CampusAccountHeadPermissionPanel';
+import { FullTransactionLedgerPdfExport } from './FullTransactionLedgerPdfExport';
+import { PermissionEngine } from './PermissionEngine';
 
 export interface RolePermissionProfile {
   modules: string[];
@@ -359,25 +368,6 @@ export function resolveActiveProfileForUser(
 // Install global visibility check hook used by aplusEngine.js sidebar
 export function installGlobalVisibilityHook() {
   window.__APLUS_VISIBILITY_CHECK__ = (moduleId: string, user?: any) => {
-    try {
-      const regRaw = localStorage.getItem('aplus_multi_school_registry_v1');
-      const govRaw = localStorage.getItem('aplus_site_owner_governance_v1');
-      if (regRaw && govRaw) {
-        const reg = JSON.parse(regRaw);
-        const gov = JSON.parse(govRaw);
-        const activeOrgId = reg?.activeInstituteId || 'inst-aplus-main';
-        const clientCtrl = gov?.clientControls?.[activeOrgId];
-        if (
-          clientCtrl &&
-          Array.isArray(clientCtrl.allowedModules) &&
-          moduleId !== 'multitenant'
-        ) {
-          if (!clientCtrl.allowedModules.includes(moduleId)) {
-            return false;
-          }
-        }
-      }
-    } catch {}
     const cfg = getStoredVisibilityConfig();
     const profile = resolveActiveProfileForUser(cfg, user);
     if (!profile) return true; // Super Admin unrestricted
@@ -414,9 +404,15 @@ export const BulkVoucherAndAccessManager: React.FC<{
   const [visibilityConfig, setVisibilityConfig] = useState<VisibilityAccessConfig>(() =>
     getStoredVisibilityConfig()
   );
-  const [activePanel, setActivePanel] = useState<'bulk_approval' | 'super_admin_visibility'>(
-    mode === 'standalone' ? 'super_admin_visibility' : 'bulk_approval'
-  );
+  const [activePanel, setActivePanel] = useState<
+    | 'bulk_approval'
+    | 'super_admin_visibility'
+    | 'campus_account_head_access'
+    | 'full_ledger_pdf'
+    | 'expense_suggester'
+    | 'campus_auth_sync'
+    | 'permission_engine'
+  >(mode === 'standalone' ? 'super_admin_visibility' : 'bulk_approval');
 
   // Bulk Voucher Selection & Filter State
   const [statusFilter, setStatusFilter] = useState<'Pending' | 'Approved' | 'Rejected' | 'ALL'>('Pending');
@@ -1079,9 +1075,77 @@ export const BulkVoucherAndAccessManager: React.FC<{
                   }`}
                 >
                   <Sliders className="w-3.5 h-3.5" />
-                  <span>Super Admin: Manage Admin & Campus Head View</span>
+                  <span>Super Admin Visibility</span>
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setActivePanel('full_ledger_pdf')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  activePanel === 'full_ledger_pdf'
+                    ? 'bg-emerald-600 text-white shadow-2xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Export formatted, print-ready full transaction ledger PDF with authorized signature lines"
+              >
+                <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Export Full Ledger PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActivePanel('campus_account_head_access')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  activePanel === 'campus_account_head_access'
+                    ? 'bg-blue-600 text-white shadow-2xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Campus Permission Levels (Level 1-5 RBAC) & Campus Account Head Access Panel"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                <span>Campus Account Head Access</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActivePanel('expense_suggester')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  activePanel === 'expense_suggester'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                <span>AI Expense Suggester</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActivePanel('campus_auth_sync')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  activePanel === 'campus_auth_sync'
+                    ? 'bg-amber-600 text-white shadow-2xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                <span>Campus DB Auth</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActivePanel('permission_engine')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  activePanel === 'permission_engine'
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Centralized Permission Engine: Role Assignment & Matrix Enforcement"
+              >
+                <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Permission Engine (RBAC)</span>
+              </button>
             </div>
 
             {/* Super Admin Live Role Preview Selector */}
@@ -1407,6 +1471,26 @@ export const BulkVoucherAndAccessManager: React.FC<{
                       )}
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel('full_ledger_pdf')}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-all"
+                    title="Export formatted, print-ready full transaction ledger PDF with institutional branding and authorized signature lines"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>Export Full Ledger PDF</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel('expense_suggester')}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-all"
+                    title="Analyze transaction descriptions and predict expense heads using historical patterns"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
+                    <span>Auto-Suggest Categories ({pendingVouchersInCampus.length})</span>
+                  </button>
 
                   <button
                     type="button"
@@ -2271,6 +2355,56 @@ export const BulkVoucherAndAccessManager: React.FC<{
                 })}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* PANEL 3: AUTOMATIC EXPENSE CATEGORY SUGGESTER */}
+        {activePanel === 'expense_suggester' && (
+          <div className="p-4">
+            <ExpenseCategorySuggesterWidget
+              embedded
+              onApplyCategory={() => {
+                setActivePanel('bulk_approval');
+              }}
+            />
+          </div>
+        )}
+
+        {/* PANEL 4: DYNAMIC CAMPUS CREDENTIALS & DB AUTH MODAL */}
+        {activePanel === 'campus_auth_sync' && (
+          <DynamicCampusAuthModal
+            isOpen={true}
+            onClose={() => setActivePanel('bulk_approval')}
+          />
+        )}
+
+        {/* PANEL 5: CAMPUS ACCOUNT HEAD PERMISSION ACCESS PANEL (LEVEL 1-5 RBAC) */}
+        {activePanel === 'campus_account_head_access' && (
+          <div className="p-4">
+            <CampusAccountHeadPermissionPanel
+              embedded
+              onClose={() => setActivePanel('bulk_approval')}
+            />
+          </div>
+        )}
+
+        {/* PANEL 6: FULL TRANSACTION LEDGER FORMATTED PRINT-READY PDF EXPORT */}
+        {activePanel === 'full_ledger_pdf' && (
+          <div className="p-4">
+            <FullTransactionLedgerPdfExport
+              embedded
+              onClose={() => setActivePanel('bulk_approval')}
+            />
+          </div>
+        )}
+
+        {/* PANEL 7: CENTRALIZED PERMISSION ENGINE */}
+        {activePanel === 'permission_engine' && (
+          <div className="p-4">
+            <PermissionEngine
+              embedded
+              onClose={() => setActivePanel('bulk_approval')}
+            />
           </div>
         )}
       </div>

@@ -263,25 +263,13 @@ export function initFirebaseCloudSync() {
       } catch {}
     },
 
-    async seedAll(campusesList: any[], vouchersList: any[], pettyCashList: any[]) {
+    async seedAll(campusesList: any[]) {
       try {
         const batch = writeBatch(db);
         let ops = 0;
         for (const c of (campusesList || []).slice(0, 50)) {
           if (c?.id) {
             batch.set(doc(db, 'campuses', String(c.id)), sanitizeForFirestore(c), { merge: true });
-            ops++;
-          }
-        }
-        for (const v of (vouchersList || []).slice(0, 150)) {
-          if (v?.id) {
-            batch.set(doc(db, 'vouchers', String(v.id)), sanitizeForFirestore(v), { merge: true });
-            ops++;
-          }
-        }
-        for (const p of (pettyCashList || []).slice(0, 150)) {
-          if (p?.id) {
-            batch.set(doc(db, 'petty_cash', String(p.id)), sanitizeForFirestore(p), { merge: true });
             ops++;
           }
         }
@@ -432,14 +420,22 @@ async function startCrossBrowserRealtimeSync() {
       mergeArraysById(cloudState?.campuses || [], colCampuses),
       localState.campuses || []
     );
-    const mergedTransactions = mergeArraysById(
-      mergeArraysById(cloudState?.transactions || [], colVouchers),
-      localState.transactions || []
-    );
-    const mergedPettyCash = mergeArraysById(
-      mergeArraysById(cloudState?.pettyCashTransactions || [], colPettyCash),
-      localState.pettyCashTransactions || []
-    );
+    const isDataPurged =
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem('aplus_dummy_data_purged_v2') === 'true';
+
+    const mergedTransactions = isDataPurged
+      ? (localState.transactions || [])
+      : mergeArraysById(
+          mergeArraysById(cloudState?.transactions || [], colVouchers),
+          localState.transactions || []
+        );
+    const mergedPettyCash = isDataPurged
+      ? (localState.pettyCashTransactions || [])
+      : mergeArraysById(
+          mergeArraysById(cloudState?.pettyCashTransactions || [], colPettyCash),
+          localState.pettyCashTransactions || []
+        );
     const mergedUsers = mergeArraysById(cloudState?.users || [], localState.users || []);
 
     const cloudHeads = Array.isArray(cloudState?.accountHeads) ? cloudState.accountHeads : [];

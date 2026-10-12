@@ -23,6 +23,7 @@ import {
   printOrDownloadElement,
   SchoolLogo,
 } from '../core/aplusEngine';
+import { useTenantAuth } from '../context/TenantAuthContext';
 import {
   DynamicReportSignatureBlock,
   ReportSignatureConfigPanel,
@@ -241,6 +242,9 @@ export const MultiFormatReportsHub: React.FC<{
     getAccountOpeningDrCr,
   } = useAccounting();
 
+  const { platformRole, activeCampusId, activeCampusNode } = useTenantAuth();
+  const isCampusAdmin = platformRole === 'campus_admin' && Boolean(activeCampusId);
+
   const [selectedFormat, setSelectedFormat] = useState<ReportFormatId>('format_1_main');
   const [dateFrom, setDateFrom] = useState<string>(() => activePeriod?.startDate || '2026-07-01');
   const [dateTo, setDateTo] = useState<string>(
@@ -255,33 +259,42 @@ export const MultiFormatReportsHub: React.FC<{
   const activeFormatObj =
     TEN_REPORT_FORMATS.find((f) => f.id === selectedFormat) || TEN_REPORT_FORMATS[0];
 
-  const campusLabel =
-    currentCampusId === 'all'
-      ? 'All Campuses Combined (Consolidated)'
-      : campuses.find((c) => c.id === currentCampusId)?.name || 'Selected Campus';
+  const campusLabel = isCampusAdmin
+    ? `${activeCampusNode?.name || 'Active Campus'} (${activeCampusNode?.code || activeCampusId}) [Isolated]`
+    : currentCampusId === 'all'
+    ? 'All Campuses Combined (Consolidated)'
+    : campuses.find((c) => c.id === currentCampusId)?.name || 'Selected Campus';
 
   // Scoped transactions for Formats 2–10
   const scopedVouchers = useMemo(() => {
     return (transactions || [])
       .filter((tx) => {
-        if (currentCampusId !== 'all' && tx.campusId !== currentCampusId) return false;
+        if (isCampusAdmin) {
+          if (tx.campusId !== activeCampusId) return false;
+        } else if (currentCampusId !== 'all' && tx.campusId !== currentCampusId) {
+          return false;
+        }
         const d = (tx.date || '').slice(0, 10);
         if (dateFrom && d && d < dateFrom) return false;
         if (dateTo && d && d > dateTo) return false;
         return tx.status !== 'Rejected';
       })
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  }, [transactions, currentCampusId, dateFrom, dateTo]);
+  }, [transactions, currentCampusId, isCampusAdmin, activeCampusId, dateFrom, dateTo]);
 
   const scopedPettyCash = useMemo(() => {
     return (pettyCashTransactions || []).filter((pc) => {
-      if (currentCampusId !== 'all' && pc.campusId !== currentCampusId) return false;
+      if (isCampusAdmin) {
+        if (pc.campusId !== activeCampusId) return false;
+      } else if (currentCampusId !== 'all' && pc.campusId !== currentCampusId) {
+        return false;
+      }
       const d = (pc.date || '').slice(0, 10);
       if (dateFrom && d && d < dateFrom) return false;
       if (dateTo && d && d > dateTo) return false;
       return true;
     });
-  }, [pettyCashTransactions, currentCampusId, dateFrom, dateTo]);
+  }, [pettyCashTransactions, currentCampusId, isCampusAdmin, activeCampusId, dateFrom, dateTo]);
 
   // Compute Account-Level Movements & Balances for Formats 2–10
   const accountAnalytics = useMemo(() => {
@@ -639,22 +652,33 @@ export const MultiFormatReportsHub: React.FC<{
             <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 {/* Campus Selector */}
-                <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                  <select
-                    value={currentCampusId}
-                    onChange={(e) => setCurrentCampusId(e.target.value)}
-                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
-                  >
-                    <option value="all" className="text-slate-900">
-                      All Campuses (Consolidated)
-                    </option>
-                    {campuses.map((c) => (
-                      <option key={c.id} value={c.id} className="text-slate-900">
-                        {c.name} ({c.code})
+                <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 border ${
+                  isCampusAdmin
+                    ? 'bg-amber-950/40 border-amber-500/50 text-amber-300'
+                    : 'bg-slate-800 border-slate-700 text-white'
+                }`}>
+                  <Building2 className={`w-3.5 h-3.5 ${isCampusAdmin ? 'text-amber-400' : 'text-slate-400'}`} />
+                  {isCampusAdmin ? (
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-200">
+                      <span>{activeCampusNode?.name || 'Assigned Campus'} ({activeCampusNode?.code || activeCampusId})</span>
+                      <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1 py-0.2 rounded font-mono uppercase">Locked</span>
+                    </div>
+                  ) : (
+                    <select
+                      value={currentCampusId}
+                      onChange={(e) => setCurrentCampusId(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                    >
+                      <option value="all" className="text-slate-900">
+                        All Campuses (Consolidated)
                       </option>
-                    ))}
-                  </select>
+                      {campuses.map((c) => (
+                        <option key={c.id} value={c.id} className="text-slate-900">
+                          {c.name} ({c.code})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 {/* Date From */}

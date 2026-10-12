@@ -21,6 +21,13 @@ import {
   Layers,
   AlertTriangle,
   History,
+  Sliders,
+  Sparkles,
+  KeyRound,
+  Copy,
+  Tag,
+  ShieldAlert,
+  Scale,
 } from 'lucide-react';
 import {
   useAccounting,
@@ -28,6 +35,11 @@ import {
   printOrDownloadElement,
 } from '../core/aplusEngine';
 import { fetchCloudAuditLogs } from '../services/firebaseSync';
+import {
+  getStoredRbacAuditEvents,
+  RbacAuditLogRecord,
+  RBAC_AUDIT_STORAGE_KEY,
+} from '../services/campusPermissionEngine';
 
 interface SecureAuditTrailProps {
   LegacyActivityLog: React.ComponentType<{ onNavigate: (tab: string) => void }>;
@@ -71,6 +83,9 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
 
   const [viewMode, setViewMode] = useState<'forensic' | 'classic'>('forensic');
   const [cloudLogs, setCloudLogs] = useState<AuditLogEntry[]>([]);
+  const [liveRbacEvents, setLiveRbacEvents] = useState<RbacAuditLogRecord[]>(() =>
+    getStoredRbacAuditEvents()
+  );
   const [syncingCloud, setSyncingCloud] = useState(false);
   const [verificationBanner, setVerificationBanner] = useState<{
     verifiedCount: number;
@@ -80,6 +95,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
   // Filters
   const [actionFilter, setActionFilter] = useState<
     | 'ALL'
+    | 'RBAC_PERMISSION'
     | 'CREATE_VOUCHER'
     | 'UPDATE_VOUCHER'
     | 'DELETE_VOUCHER'
@@ -109,42 +125,74 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
 
   useEffect(() => {
     syncFromCloud();
+
+    // Listen to real-time RBAC audit events broadcast across the application
+    const onRbacEvent = (e: any) => {
+      if (e.detail) {
+        setLiveRbacEvents((prev) => [e.detail, ...prev]);
+      }
+    };
+    window.addEventListener('aplus:rbac-audit-logged', onRbacEvent);
+    return () => window.removeEventListener('aplus:rbac-audit-logged', onRbacEvent);
   }, []);
 
-  // Merge local activityLogs + cloudLogs + per-voucher auditLogs into a unified, deduplicated stream
+  // Merge local activityLogs + cloudLogs + stored RBAC events into a unified, deduplicated stream
   const unifiedLogs = useMemo(() => {
     const byId = new Map<string, AuditLogEntry>();
 
     const normalize = (raw: any): AuditLogEntry => {
       const entry: AuditLogEntry = {
-        id: String(raw.id || `act-${ raw.timestamp || Date.now() }`),
+        id: String(raw.id || `act-${raw.timestamp || Date.now()}`),
         timestamp: raw.timestamp || new Date().toISOString(),
         epochMs:
           raw.epochMs ||
           (raw.timestamp ? new Date(raw.timestamp).getTime() : Date.now()),
-        userId: raw.userId || raw.performedById || 'user-admin',
+        userId: raw.userId || raw.performedById || raw.actor?.userId || 'user-admin',
         username: raw.username || undefined,
-        userEmail: raw.userEmail || raw.performedByEmail || undefined,
-        userName: raw.userName || raw.performedBy || 'System User',
-        userRole: raw.userRole || raw.performedByRole || 'Authorized Officer',
-        campusId: raw.campusId || 'all',
-        campusName: raw.campusName || 'Central / Branch Campus',
-        action: raw.action || 'SYSTEM_ACTION',
-        entityType: raw.entityType || 'Voucher',
-        entityId: raw.entityId || 'N/A',
-        details: raw.details || raw.notes || '',
+        userEmail: raw.userEmail || raw.performedByEmail || raw.actor?.userEmail || undefined,
+        userName: raw.userName || raw.performedBy || raw.actor?.userName || 'System User',
+        userRole: raw.userRole || raw.performedByRole || raw.actor?.userRole || 'Authorized Officer',
+        campusId: raw.campusId || raw.affectedScope?.campusId || 'all',
+        campusName: raw.campusName || raw.affectedScope?.campusName || 'Central / Branch Campus',
+        action: raw.action || raw.actionType || 'SYSTEM_ACTION',
+        entityType: raw.entityType || (raw.actionType ? 'RBAC_PERMISSION' : 'Voucher'),
+        entityId: raw.entityId || raw.affectedScope?.accountCode || raw.affectedScope?.targetUserId || 'N/A',
+        details: raw.details || raw.natureOfChange || raw.notes || '',
         amount: raw.amount !== undefined ? Number(raw.amount) : undefined,
-        metadata: raw.metadata || {},
+        metadata: {
+          ...(raw.metadata || {}),
+          actor: raw.actor || raw.metadata?.actor,
+          affectedScope: raw.affectedScope || raw.metadata?.affectedScope,
+          natureOfChange: raw.natureOfChange || raw.metadata?.natureOfChange,
+          beforeState: raw.beforeState || raw.metadata?.beforeState,
+          afterState: raw.afterState || raw.metadata?.afterState,
+          ruleEnforced: raw.ruleEnforced || raw.metadata?.ruleEnforced,
+          isRbacChange:
+            raw.isRbacChange ||
+            raw.metadata?.isRbacChange ||
+            raw.entityType === 'RBAC_PERMISSION' ||
+            String(raw.action || '').startsWith('ROLE_') ||
+            String(raw.action || '').startsWith('PERMISSION_') ||
+            String(raw.action || '').includes('ACCOUNT_HEAD_'),
+        },
       };
-      entry.integrityHash = computeAuditHash(entry);
+      entry.integrityHash = raw.integrityHash || computeAuditHash(entry);
       return entry;
     };
 
+    // 1. Core engine activity logs
     (activityLogs || []).forEach((item) => {
       const norm = normalize(item);
       byId.set(norm.id, norm);
     });
 
+    // 2. Dedicated RBAC events from local storage / live broadcasts
+    (liveRbacEvents || []).forEach((item) => {
+      const norm = normalize(item);
+      byId.set(norm.id, norm);
+    });
+
+    // 3. Firestore cloud logs
     (cloudLogs || []).forEach((item) => {
       const norm = normalize(item);
       if (!byId.has(norm.id)) {
@@ -157,7 +205,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
       const tB = new Date(b.timestamp).getTime() || 0;
       return tB - tA;
     });
-  }, [activityLogs, cloudLogs]);
+  }, [activityLogs, cloudLogs, liveRbacEvents]);
 
   // Distinct User IDs for User filter dropdown
   const userOptions = useMemo(() => {
@@ -183,22 +231,39 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
     return Array.from(map.values());
   }, [users, unifiedLogs]);
 
-  // Summary metrics
+  // Summary metrics (including dedicated RBAC changes counter)
   const stats = useMemo(() => {
     let created = 0;
     let edited = 0;
     let deleted = 0;
     let statusChanges = 0;
+    let rbacChanges = 0;
     let other = 0;
     const uniqueUsers = new Set<string>();
 
     unifiedLogs.forEach((l) => {
       uniqueUsers.add(l.userId);
-      if (l.action === 'CREATE_VOUCHER') created++;
-      else if (l.action === 'UPDATE_VOUCHER') edited++;
-      else if (l.action === 'DELETE_VOUCHER') deleted++;
-      else if (l.action === 'STATUS_CHANGE') statusChanges++;
-      else other++;
+      const isRbac =
+        l.metadata?.isRbacChange ||
+        l.entityType === 'RBAC_PERMISSION' ||
+        l.action.startsWith('ROLE_') ||
+        l.action.startsWith('PERMISSION_') ||
+        l.action.includes('ACCOUNT_HEAD_') ||
+        l.action.includes('SECURITY_OVERRIDE');
+
+      if (isRbac) {
+        rbacChanges++;
+      } else if (l.action === 'CREATE_VOUCHER') {
+        created++;
+      } else if (l.action === 'UPDATE_VOUCHER') {
+        edited++;
+      } else if (l.action === 'DELETE_VOUCHER') {
+        deleted++;
+      } else if (l.action === 'STATUS_CHANGE') {
+        statusChanges++;
+      } else {
+        other++;
+      }
     });
 
     return {
@@ -207,6 +272,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
       edited,
       deleted,
       statusChanges,
+      rbacChanges,
       other,
       uniqueUsersCount: uniqueUsers.size,
     };
@@ -214,9 +280,20 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
 
   const filteredLogs = useMemo(() => {
     return unifiedLogs.filter((log) => {
+      const isRbac =
+        log.metadata?.isRbacChange ||
+        log.entityType === 'RBAC_PERMISSION' ||
+        log.action.startsWith('ROLE_') ||
+        log.action.startsWith('PERMISSION_') ||
+        log.action.includes('ACCOUNT_HEAD_') ||
+        log.action.includes('SECURITY_OVERRIDE');
+
       if (actionFilter !== 'ALL') {
-        if (actionFilter === 'OTHER') {
+        if (actionFilter === 'RBAC_PERMISSION') {
+          if (!isRbac) return false;
+        } else if (actionFilter === 'OTHER') {
           if (
+            isRbac ||
             [
               'CREATE_VOUCHER',
               'UPDATE_VOUCHER',
@@ -263,7 +340,10 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
           log.action.toLowerCase().includes(q) ||
           log.details.toLowerCase().includes(q) ||
           (log.integrityHash || '').toLowerCase().includes(q) ||
-          (log.campusName || '').toLowerCase().includes(q);
+          (log.campusName || '').toLowerCase().includes(q) ||
+          (log.metadata?.natureOfChange || '').toLowerCase().includes(q) ||
+          (log.metadata?.affectedScope?.targetUserName || '').toLowerCase().includes(q) ||
+          (log.metadata?.affectedScope?.accountCode || '').toLowerCase().includes(q);
         if (!match) return false;
       }
 
@@ -326,7 +406,101 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
     }
   };
 
-  const getActionMeta = (action: string) => {
+  const getActionMeta = (action: string, isRbac?: boolean) => {
+    // RBAC & Permission specific action codes
+    if (isRbac || action.startsWith('ROLE_') || action.startsWith('PERMISSION_') || action.includes('ACCOUNT_HEAD_') || action.includes('SECURITY_OVERRIDE')) {
+      switch (action) {
+        case 'ROLE_ASSIGNED':
+          return {
+            label: 'Role Assigned',
+            code: 'ROLE_ASSIGNED',
+            badgeClass: 'bg-purple-100 text-purple-900 border-purple-300',
+            dotClass: 'bg-purple-600',
+            icon: UserCheck,
+          };
+        case 'ROLE_REVOKED':
+          return {
+            label: 'Role Revoked / Suspended',
+            code: 'ROLE_REVOKED',
+            badgeClass: 'bg-rose-100 text-rose-900 border-rose-300',
+            dotClass: 'bg-rose-600',
+            icon: AlertTriangle,
+          };
+        case 'USER_CAMPUS_ASSIGNED':
+          return {
+            label: 'Campus Scope Assigned',
+            code: 'USER_CAMPUS_ASSIGNED',
+            badgeClass: 'bg-blue-100 text-blue-900 border-blue-300',
+            dotClass: 'bg-blue-600',
+            icon: Building2,
+          };
+        case 'PERMISSION_MATRIX_OVERRIDE':
+          return {
+            label: 'Permission Matrix Override',
+            code: 'PERMISSION_MATRIX_OVERRIDE',
+            badgeClass: 'bg-indigo-100 text-indigo-900 border-indigo-300',
+            dotClass: 'bg-indigo-600',
+            icon: Sliders,
+          };
+        case 'ACCOUNT_HEAD_VISIBILITY_CHANGED':
+          return {
+            label: 'Account Visibility Changed',
+            code: 'ACCOUNT_HEAD_VISIBILITY_CHANGED',
+            badgeClass: 'bg-cyan-100 text-cyan-900 border-cyan-300',
+            dotClass: 'bg-cyan-600',
+            icon: Eye,
+          };
+        case 'ACCOUNT_HEAD_ACTION_PERMISSION_CHANGED':
+          return {
+            label: 'Action Permission Changed',
+            code: 'ACCOUNT_HEAD_ACTION_PERMISSION_CHANGED',
+            badgeClass: 'bg-teal-100 text-teal-900 border-teal-300',
+            dotClass: 'bg-teal-600',
+            icon: Sliders,
+          };
+        case 'SENSITIVE_ACCOUNT_RESTRICTION_TOGGLED':
+          return {
+            label: 'Sensitive Head Restriction',
+            code: 'SENSITIVE_ACCOUNT_RESTRICTION_TOGGLED',
+            badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+            dotClass: 'bg-amber-600',
+            icon: Lock,
+          };
+        case 'POLICY_CONFIG_COPIED':
+          return {
+            label: 'Campus Policy Copied',
+            code: 'POLICY_CONFIG_COPIED',
+            badgeClass: 'bg-sky-100 text-sky-900 border-sky-300',
+            dotClass: 'bg-sky-600',
+            icon: Copy,
+          };
+        case 'LEVEL_SWITCHED':
+          return {
+            label: 'RBAC Level Switched',
+            code: 'LEVEL_SWITCHED',
+            badgeClass: 'bg-violet-100 text-violet-900 border-violet-300',
+            dotClass: 'bg-violet-600',
+            icon: Layers,
+          };
+        case 'DELEGATED_ACCESS_UPDATED':
+          return {
+            label: 'Delegated Access Updated',
+            code: 'DELEGATED_ACCESS_UPDATED',
+            badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+            dotClass: 'bg-emerald-600',
+            icon: CheckCircle2,
+          };
+        default:
+          return {
+            label: action.replace(/_/g, ' '),
+            code: action,
+            badgeClass: 'bg-purple-100 text-purple-900 border-purple-300',
+            dotClass: 'bg-purple-600',
+            icon: ShieldCheck,
+          };
+      }
+    }
+
     switch (action) {
       case 'CREATE_VOUCHER':
         return {
@@ -391,9 +565,9 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
       'UTC Timestamp (ISO-8601)',
       'Local Date',
       'Local Time',
-      'User ID',
-      'User Name',
-      'User Role',
+      'Actor User ID',
+      'Actor Name',
+      'Actor Role',
       'Action Code',
       'Entity Type',
       'Voucher / Entity ID',
@@ -401,7 +575,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
       'Campus Name',
       'Amount (PKR)',
       'Integrity Signature Hash',
-      'Audit Details',
+      'Audit Details / Nature of Change',
     ];
     const rows = filteredLogs.map((l) => {
       const t = formatExactTimestamp(l.timestamp);
@@ -449,13 +623,16 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
   if (viewMode === 'classic') {
     return (
       <div className="space-y-4">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-end">
+        <div className="flex items-center justify-between bg-slate-900 text-white p-4 rounded-2xl">
+          <div className="flex items-center gap-2">
+            <History className="w-5 h-5 text-amber-400" />
+            <h3 className="font-black text-sm">Classic Activity Stream Mode</h3>
+          </div>
           <button
             onClick={() => setViewMode('forensic')}
-            className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-2 shadow-xs cursor-pointer"
+            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs cursor-pointer"
           >
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Switch to Forensic Secure Audit Trail (User ID & Timestamp Bound)</span>
+            Switch to Forensic Immutable Ledger View
           </button>
         </div>
         <LegacyActivityLog onNavigate={onNavigate} />
@@ -464,237 +641,209 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 pb-12">
-      {/* Header Banner */}
-      <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-md border border-slate-800">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-xs text-emerald-400 font-mono">
-              <ShieldCheck className="w-4 h-4 shrink-0" />
-              <span>
-                TAMPER-EVIDENT FORENSIC AUDIT TRAIL • USER ID & ISO-8601 TIMESTAMP BOUND
-              </span>
+    <div className="space-y-6">
+      {/* Top Banner & Security Header */}
+      <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white p-6 rounded-3xl border border-slate-800 shadow-xl space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-400 shadow-inner">
+              <ShieldCheck className="w-6 h-6" />
             </div>
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight">
-              Secure Voucher & System Audit Trail Register
-            </h1>
-            <p className="text-xs text-slate-300 max-w-3xl">
-              Every voucher creation, modification, status approval, and deletion is permanently bound to an authenticated{' '}
-              <strong className="text-white">User ID</strong>,{' '}
-              <strong className="text-white">UTC / Local Timestamp</strong>,{' '}
-              <strong className="text-white">Campus Scope</strong>, and{' '}
-              <strong className="text-white">SHA-256 Integrity Checksum</strong>.
-            </p>
+            <div>
+              <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                <span>IAS 1 Compliant</span>
+                <span>·</span>
+                <span>Immutable RBAC Governance & Voucher Journal</span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
+                <span>Forensic Secure Audit Trail</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300">
+                  SHA-256 Signatures
+                </span>
+              </h1>
+            </div>
           </div>
 
+          {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleVerifyIntegrity}
-              className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
+              title="Verify cryptographic integrity of all audit entries"
             >
-              <Fingerprint className="w-4 h-4" />
-              <span>Verify Audit Chain</span>
+              <Fingerprint className="w-4 h-4 text-emerald-200" />
+              <span>Verify Cryptographic Integrity</span>
             </button>
+
             <button
               onClick={syncFromCloud}
               disabled={syncingCloud}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer"
             >
-              <RefreshCw
-                className={`w-3.5 h-3.5 text-blue-400 ${
-                  syncingCloud ? 'animate-spin' : ''
-                }`}
-              />
-              <span>{syncingCloud ? 'Syncing...' : 'Sync Cloud Logs'}</span>
+              <RefreshCw className={`w-4 h-4 ${syncingCloud ? 'animate-spin' : ''}`} />
+              <span>Pull Cloud Logs</span>
             </button>
+
             <button
               onClick={handleExportCsv}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5 text-emerald-300" />
+              <Download className="w-4 h-4 text-blue-400" />
               <span>Export CSV</span>
             </button>
+
             <button
               onClick={handlePrintAuditReport}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer"
             >
-              <Printer className="w-3.5 h-3.5 text-amber-300" />
-              <span>Print / PDF</span>
-            </button>
-            <button
-              onClick={() => setViewMode('classic')}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
-            >
-              Analytics View
+              <Printer className="w-4 h-4 text-amber-400" />
+              <span>Print Audit Register</span>
             </button>
           </div>
         </div>
 
-        {/* Active Session Identity Strip */}
-        <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Active Session Actor:</span>
-              <strong className="text-white font-mono">
-                {currentUser?.id || 'user-admin'}
-              </strong>
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>
-              Name: <strong className="text-white">{currentUser?.name || 'Administrator'}</strong>
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>
-              Role:{' '}
-              <strong className="text-white">
-                {currentUser?.designation || currentUser?.role || 'Super Administrator'}
-              </strong>
+        {/* Cryptographic Verification Banner */}
+        {verificationBanner && (
+          <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-100 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span>
+                <strong>Zero-Tamper Checksum Verified:</strong> All{' '}
+                <strong className="text-white font-mono">
+                  {verificationBanner.verifiedCount}
+                </strong>{' '}
+                audit trail entries match their original SHA-256 integrity signatures and UTC timestamps.
+              </span>
+            </div>
+            <span className="font-mono text-[11px] text-emerald-300">
+              Verified at {new Date(verificationBanner.timestamp).toLocaleTimeString()}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onNavigate('transaction')}
-              className="text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1 cursor-pointer"
-            >
-              <span>Create Voucher</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-            <span aria-hidden="true">·</span>
-            <button
-              onClick={() => onNavigate('alltransactions')}
-              className="text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 cursor-pointer"
-            >
-              <span>Edit / Delete Vouchers</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Verification Confirmation Banner */}
-      {verificationBanner && (
-        <div className="bg-emerald-50 border border-emerald-300 rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs text-emerald-950">
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>
-              <strong>Cryptographic Chain Verified:</strong> All{' '}
-              <strong>{verificationBanner.verifiedCount}</strong> audit trail records passed SHA-256 signature verification, User ID binding, and ISO-8601 timestamp sequence validation at{' '}
-              <span className="font-mono">{verificationBanner.timestamp}</span>.
-            </span>
-          </div>
-          <button
-            onClick={() => setVerificationBanner(null)}
-            className="text-emerald-700 hover:text-emerald-950 p-1 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Action Type Summary Filter Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* KPI Stats Bar with Dedicated RBAC Changes Card */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         <button
           onClick={() => setActionFilter('ALL')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
             actionFilter === 'ALL'
               ? 'bg-slate-900 border-slate-900 text-white shadow-xs'
               : 'bg-white border-slate-200 hover:border-slate-300 text-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold uppercase tracking-wider opacity-75">
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-75">
             Total Logged Events
           </div>
-          <div className="text-2xl font-black font-mono mt-1">{stats.total}</div>
-          <div className="text-[11px] opacity-75 mt-0.5">
-            {stats.uniqueUsersCount} Active User IDs
+          <div className="text-xl font-black font-mono mt-1">{stats.total}</div>
+          <div className="text-[10px] opacity-75 mt-0.5">
+            {stats.uniqueUsersCount} Active Users
           </div>
+        </button>
+
+        {/* Dedicated Role & RBAC Governance Filter Card */}
+        <button
+          onClick={() => setActionFilter('RBAC_PERMISSION')}
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+            actionFilter === 'RBAC_PERMISSION'
+              ? 'bg-purple-700 border-purple-700 text-white shadow-xs'
+              : 'bg-purple-50/60 border-purple-200 hover:border-purple-300 text-purple-950'
+          }`}
+        >
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-85 flex items-center gap-1">
+            <ShieldCheck className="w-3 h-3 text-purple-600" />
+            <span>RBAC & Permissions</span>
+          </div>
+          <div className="text-xl font-black font-mono mt-1 text-purple-900">
+            {stats.rbacChanges}
+          </div>
+          <div className="text-[10px] opacity-80 mt-0.5 font-mono">ROLE_CHANGES</div>
         </button>
 
         <button
           onClick={() => setActionFilter('CREATE_VOUCHER')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
             actionFilter === 'CREATE_VOUCHER'
               ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
               : 'bg-white border-slate-200 hover:border-blue-300 text-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold uppercase tracking-wider opacity-80">
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">
             Vouchers Created
           </div>
-          <div className="text-2xl font-black font-mono mt-1">{stats.created}</div>
-          <div className="text-[11px] opacity-80 mt-0.5 font-mono">CREATE_VOUCHER</div>
+          <div className="text-xl font-black font-mono mt-1">{stats.created}</div>
+          <div className="text-[10px] opacity-80 mt-0.5 font-mono">CREATE_VOUCHER</div>
         </button>
 
         <button
           onClick={() => setActionFilter('UPDATE_VOUCHER')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
             actionFilter === 'UPDATE_VOUCHER'
               ? 'bg-amber-600 border-amber-600 text-white shadow-xs'
               : 'bg-white border-slate-200 hover:border-amber-300 text-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold uppercase tracking-wider opacity-80">
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">
             Vouchers Edited
           </div>
-          <div className="text-2xl font-black font-mono mt-1">{stats.edited}</div>
-          <div className="text-[11px] opacity-80 mt-0.5 font-mono">UPDATE_VOUCHER</div>
+          <div className="text-xl font-black font-mono mt-1">{stats.edited}</div>
+          <div className="text-[10px] opacity-80 mt-0.5 font-mono">UPDATE_VOUCHER</div>
         </button>
 
         <button
           onClick={() => setActionFilter('DELETE_VOUCHER')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
             actionFilter === 'DELETE_VOUCHER'
               ? 'bg-rose-600 border-rose-600 text-white shadow-xs'
               : 'bg-white border-slate-200 hover:border-rose-300 text-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold uppercase tracking-wider opacity-80">
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">
             Vouchers Deleted
           </div>
-          <div className="text-2xl font-black font-mono mt-1">{stats.deleted}</div>
-          <div className="text-[11px] opacity-80 mt-0.5 font-mono">DELETE_VOUCHER</div>
+          <div className="text-xl font-black font-mono mt-1">{stats.deleted}</div>
+          <div className="text-[10px] opacity-80 mt-0.5 font-mono">DELETE_VOUCHER</div>
         </button>
 
         <button
           onClick={() => setActionFilter('STATUS_CHANGE')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
             actionFilter === 'STATUS_CHANGE'
               ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
               : 'bg-white border-slate-200 hover:border-emerald-300 text-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold uppercase tracking-wider opacity-80">
-            Status & Approvals
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">
+            Approvals
           </div>
-          <div className="text-2xl font-black font-mono mt-1">
+          <div className="text-xl font-black font-mono mt-1">
             {stats.statusChanges}
           </div>
-          <div className="text-[11px] opacity-80 mt-0.5 font-mono">STATUS_CHANGE</div>
+          <div className="text-[10px] opacity-80 mt-0.5 font-mono">STATUS_CHANGE</div>
         </button>
 
         <button
           onClick={() => setActionFilter('OTHER')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
             actionFilter === 'OTHER'
-              ? 'bg-purple-600 border-purple-600 text-white shadow-xs'
-              : 'bg-white border-slate-200 hover:border-purple-300 text-slate-800'
+              ? 'bg-slate-800 border-slate-800 text-white shadow-xs'
+              : 'bg-white border-slate-200 hover:border-slate-300 text-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold uppercase tracking-wider opacity-80">
-            Petty Cash & System
+          <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">
+            Other Events
           </div>
-          <div className="text-2xl font-black font-mono mt-1">{stats.other}</div>
-          <div className="text-[11px] opacity-80 mt-0.5 font-mono">SYSTEM_EVENTS</div>
+          <div className="text-xl font-black font-mono mt-1">{stats.other}</div>
+          <div className="text-[10px] opacity-80 mt-0.5 font-mono">PETTY_CASH</div>
         </button>
       </div>
 
-      {/* Filter Bar (Search, User ID Filter, Campus Filter, Date Range) */}
+      {/* Filter Bar (Search, User Filter, Campus Filter, Date Range) */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
           <div className="lg:col-span-4">
             <label className="block text-[11px] font-bold text-slate-700 mb-1">
-              Search Voucher No, User ID, Name, or Hash
+              Search by Voucher No, Actor User, Affected Scope, or Hash
             </label>
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -702,8 +851,8 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="e.g. BPV-C1-26-001, user-admin, SHA256..."
-                className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                placeholder="e.g. BPV-001, Professor Tariq, Khiali Main, SHA256..."
+                className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-600"
               />
               {searchQuery && (
                 <button
@@ -718,14 +867,14 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
 
           <div className="lg:col-span-3">
             <label className="block text-[11px] font-bold text-slate-700 mb-1">
-              Filter by User ID & Officer
+              Filter by Authenticated Actor
             </label>
             <select
               value={selectedUserId}
               onChange={(e) => setSelectedUserId(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 cursor-pointer"
             >
-              <option value="ALL">All Authenticated User IDs</option>
+              <option value="ALL">All Authenticated Actors</option>
               {userOptions.map((u) => (
                 <option key={u.userId} value={u.userId}>
                   [{u.userId}] {u.userName} ({u.role})
@@ -736,7 +885,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
 
           <div className="lg:col-span-2">
             <label className="block text-[11px] font-bold text-slate-700 mb-1">
-              Campus Scope
+              Campus Jurisdiction Scope
             </label>
             <select
               value={selectedCampus}
@@ -791,7 +940,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
               {orgSettings.schoolName || 'A+ School System'} — Forensic Audit Trail Log
             </h2>
             <p className="text-[11px] text-slate-500">
-              Chronological register of voucher creations, edits, approvals, and deletions bound to User IDs and UTC timestamps
+              Chronological register of role assignments, permission matrix changes, voucher operations, and account head security bound to Actors and UTC timestamps.
             </p>
           </div>
           <div className="text-xs font-mono font-bold text-slate-700">
@@ -803,14 +952,14 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-300 divide-x divide-slate-200 text-[11px]">
-                <th className="py-3 px-3 w-44">Exact Timestamp (UTC / Local)</th>
-                <th className="py-3 px-3 w-48">Authenticated User & ID</th>
-                <th className="py-3 px-3 w-40">Action Event</th>
-                <th className="py-3 px-3 w-36">Voucher / Reference</th>
-                <th className="py-3 px-4 min-w-[240px]">Audit Particulars & Summary</th>
-                <th className="py-3 px-3 w-32 text-right">Amount (PKR)</th>
-                <th className="py-3 px-3 w-40">Integrity Signature</th>
-                <th className="py-3 px-2.5 w-20 text-center print:hidden">Inspect</th>
+                <th className="py-3 px-3 w-40">Timestamp (UTC / Local)</th>
+                <th className="py-3 px-3 w-44">Actor / Officer</th>
+                <th className="py-3 px-3 w-36">Action Event</th>
+                <th className="py-3 px-3 w-44">Affected Scope</th>
+                <th className="py-3 px-4 min-w-[240px]">Nature of Change / Audit Particulars</th>
+                <th className="py-3 px-3 w-28 text-right">Financial Impact</th>
+                <th className="py-3 px-3 w-36">Integrity Signature</th>
+                <th className="py-3 px-2.5 w-16 text-center print:hidden">Inspect</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -823,17 +972,29 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
               ) : (
                 filteredLogs.map((log) => {
                   const ts = formatExactTimestamp(log.timestamp);
-                  const meta = getActionMeta(log.action);
+                  const isRbac =
+                    log.metadata?.isRbacChange ||
+                    log.entityType === 'RBAC_PERMISSION' ||
+                    log.action.startsWith('ROLE_') ||
+                    log.action.startsWith('PERMISSION_') ||
+                    log.action.includes('ACCOUNT_HEAD_') ||
+                    log.action.includes('SECURITY_OVERRIDE');
+
+                  const meta = getActionMeta(log.action, isRbac);
                   const Icon = meta.icon;
                   const hash = log.integrityHash || computeAuditHash(log);
+
+                  const affectedScope = log.metadata?.affectedScope;
 
                   return (
                     <tr
                       key={log.id}
                       onClick={() => setInspectedLog(log)}
-                      className="hover:bg-slate-50/90 divide-x divide-slate-100 transition-colors cursor-pointer"
+                      className={`hover:bg-slate-50/90 divide-x divide-slate-100 transition-colors cursor-pointer ${
+                        isRbac ? 'bg-purple-50/20' : ''
+                      }`}
                     >
-                      {/* Exact Timestamp */}
+                      {/* Timestamp */}
                       <td className="p-3 font-mono align-top">
                         <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                           <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -841,20 +1002,20 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                         </div>
                         <div className="text-[11px] text-slate-600 pl-5">{ts.time}</div>
                         <div
-                          className="text-[10px] text-slate-400 pl-5 truncate max-w-[160px]"
+                          className="text-[10px] text-slate-400 pl-5 truncate max-w-[150px]"
                           title={ts.utc}
                         >
                           {ts.utc}
                         </div>
                       </td>
 
-                      {/* User ID & Name */}
+                      {/* Actor Identity */}
                       <td className="p-3 align-top">
                         <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                          <UserCheck className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          <UserCheck className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                           <span className="truncate">{log.userName}</span>
                         </div>
-                        <div className="text-[11px] font-mono font-bold text-blue-700 mt-0.5">
+                        <div className="text-[11px] font-mono font-bold text-indigo-700 mt-0.5">
                           ID: {log.userId}
                         </div>
                         <div className="text-[10px] text-slate-500 truncate">
@@ -862,7 +1023,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                         </div>
                       </td>
 
-                      {/* Action Event */}
+                      {/* Action Event Badge */}
                       <td className="p-3 align-top">
                         <div className="flex items-center gap-1.5 font-bold text-slate-900">
                           <span className={`w-2 h-2 rounded-full ${meta.dotClass}`} />
@@ -874,33 +1035,64 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                         </div>
                       </td>
 
-                      {/* Voucher / Reference ID */}
-                      <td className="p-3 font-mono align-top">
-                        <div className="font-black text-slate-900 text-xs">
-                          {log.entityId}
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {log.entityType}
-                          {log.metadata?.voucherType
-                            ? ` · ${log.metadata.voucherType}`
-                            : ''}
-                        </div>
-                      </td>
-
-                      {/* Details */}
+                      {/* Affected Scope (Campus, Account Head, Target User) */}
                       <td className="p-3 align-top">
-                        <p className="text-slate-800 font-medium leading-relaxed">
-                          {log.details}
-                        </p>
-                        {(log.metadata?.beforeSnapshot ||
-                          log.metadata?.deletedSnapshot) && (
-                          <div className="mt-1 text-[10px] font-semibold text-amber-700">
-                            Contains forensic before/after field snapshot — click to inspect
+                        {isRbac && affectedScope ? (
+                          <div className="space-y-1">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-800 border border-slate-200">
+                              {affectedScope.scopeType || 'Scope'}
+                            </span>
+                            {affectedScope.campusName && (
+                              <div className="text-[11px] font-bold text-slate-900 flex items-center gap-1">
+                                <Building2 className="w-3 h-3 text-slate-400" />
+                                <span className="truncate">{affectedScope.campusName}</span>
+                              </div>
+                            )}
+                            {affectedScope.targetUserName && (
+                              <div className="text-[10px] font-semibold text-purple-900">
+                                User: {affectedScope.targetUserName}
+                              </div>
+                            )}
+                            {affectedScope.accountCode && (
+                              <div className="text-[10px] font-mono font-bold text-blue-900">
+                                Head: {affectedScope.accountCode}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="font-mono font-black text-slate-900 text-xs">
+                              {log.entityId}
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              {log.entityType}
+                              {log.metadata?.voucherType
+                                ? ` · ${log.metadata.voucherType}`
+                                : ''}
+                            </div>
                           </div>
                         )}
                       </td>
 
-                      {/* Amount */}
+                      {/* Nature of Change / Details */}
+                      <td className="p-3 align-top">
+                        <p className="text-slate-800 font-medium leading-relaxed">
+                          {log.metadata?.natureOfChange || log.details}
+                        </p>
+                        {log.metadata?.ruleEnforced && (
+                          <div className="mt-1 text-[10px] font-bold text-indigo-700 flex items-center gap-1">
+                            <Scale className="w-3 h-3" />
+                            <span>Rule: {log.metadata.ruleEnforced}</span>
+                          </div>
+                        )}
+                        {(log.metadata?.beforeSnapshot || log.metadata?.beforeState) && (
+                          <div className="mt-1 text-[10px] font-semibold text-amber-700">
+                            Contains before/after diff snapshot — click Inspect to examine
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Financial Impact */}
                       <td className="p-3 text-right font-mono font-bold text-slate-900 align-top">
                         {log.amount !== undefined && log.amount > 0
                           ? `PKR ${Number(log.amount).toLocaleString()}`
@@ -910,7 +1102,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                       {/* Integrity Signature */}
                       <td className="p-3 font-mono align-top">
                         <div
-                          className="text-[10px] font-bold text-emerald-800 truncate max-w-[145px]"
+                          className="text-[10px] font-bold text-emerald-800 truncate max-w-[140px]"
                           title={hash}
                         >
                           {hash}
@@ -920,7 +1112,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                         </div>
                       </td>
 
-                      {/* Inspect Button */}
+                      {/* Inspect */}
                       <td className="p-3 text-center align-top print:hidden">
                         <button
                           type="button"
@@ -929,7 +1121,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                             setInspectedLog(log);
                           }}
                           className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 transition-colors cursor-pointer"
-                          title="Inspect Full Forensic Record & Voucher History"
+                          title="Inspect Full Forensic Record & Diff"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
@@ -986,7 +1178,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                     </div>
                   )}
                   <div className="text-slate-600">
-                    Campus: <strong>{inspectedLog.campusName}</strong> (
+                    Campus Scope: <strong>{inspectedLog.campusName}</strong> (
                     <span className="font-mono">{inspectedLog.campusId}</span>)
                   </div>
                 </div>
@@ -1019,20 +1211,80 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
                 </div>
               </div>
 
-              {/* Event Summary */}
+              {/* Event Summary / Nature of Change */}
               <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 space-y-1">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
-                  Logged Action Description
+                  {inspectedLog.metadata?.isRbacChange ? 'Nature of Role-Based Permission Change' : 'Logged Action Description'}
                 </div>
                 <p className="text-slate-900 font-semibold leading-relaxed">
-                  {inspectedLog.details}
+                  {inspectedLog.metadata?.natureOfChange || inspectedLog.details}
                 </p>
-                {inspectedLog.amount !== undefined && inspectedLog.amount > 0 && (
-                  <div className="font-mono font-black text-blue-950 pt-1">
-                    Financial Impact: PKR {Number(inspectedLog.amount).toLocaleString()}
+                {inspectedLog.metadata?.ruleEnforced && (
+                  <div className="font-mono text-[11px] text-indigo-900 font-bold pt-1">
+                    Security Invariant: {inspectedLog.metadata.ruleEnforced}
                   </div>
                 )}
               </div>
+
+              {/* SPECIALIZED RBAC SCOPE INSPECTION CARD */}
+              {inspectedLog.metadata?.affectedScope && (
+                <div className="p-4 rounded-xl bg-purple-50/60 border border-purple-200 space-y-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Affected Scope & Target Entity</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-800">
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Scope Type:</span>
+                      <strong className="uppercase font-mono">
+                        {inspectedLog.metadata.affectedScope.scopeType}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Campus:</span>
+                      <strong>{inspectedLog.metadata.affectedScope.campusName || 'N/A'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Target User:</span>
+                      <strong>{inspectedLog.metadata.affectedScope.targetUserName || 'N/A'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 block">Account Head:</span>
+                      <strong className="font-mono">
+                        {inspectedLog.metadata.affectedScope.accountCode || 'N/A'}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Before vs After Diff for RBAC State Changes */}
+              {(inspectedLog.metadata?.beforeState || inspectedLog.metadata?.afterState) && (
+                <div className="space-y-2">
+                  <h4 className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
+                    Before vs. After Role & Permission State Diff
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200 space-y-1">
+                      <div className="font-bold text-amber-900 text-[11px] uppercase">
+                        Previous State (Before Change)
+                      </div>
+                      <pre className="text-[10px] font-mono bg-white p-2 rounded border border-amber-200 overflow-x-auto text-amber-950">
+                        {JSON.stringify(inspectedLog.metadata.beforeState || { status: 'None' }, null, 2)}
+                      </pre>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200 space-y-1">
+                      <div className="font-bold text-emerald-900 text-[11px] uppercase">
+                        Updated State (After Change)
+                      </div>
+                      <pre className="text-[10px] font-mono bg-white p-2 rounded border border-emerald-200 overflow-x-auto text-emerald-950">
+                        {JSON.stringify(inspectedLog.metadata.afterState || { status: 'Applied' }, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Before vs After Diff for Edited Vouchers */}
               {inspectedLog.metadata?.beforeSnapshot &&

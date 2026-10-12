@@ -177,6 +177,15 @@ export interface AccountingContextType {
   currentUser: any;
   users: any[];
   isSuperAdmin: boolean;
+  login: (username: string, password?: string) => { success: boolean; message?: string };
+  loginAsUser?: (userId: string, isSuperAdmin?: boolean) => void;
+  loginAsCampus?: (campusId: string) => void;
+  logout?: () => void;
+  addUser: (user: any) => any;
+  updateUser: (id: string, updates: any) => void;
+  deleteUser?: (id: string) => void;
+  resetUserPassword?: (userId: string, pass: string) => void;
+  updateCampusLoginAccess?: (campusId: string, enabled: boolean) => void;
   isModuleAllowed: (moduleId: string) => boolean;
   getUserAllowedModules: () => string[];
   updateCampusModules?: (campusId: string, modules: string[]) => void;
@@ -313,8 +322,6 @@ declare global {
     __APLUS_SW_READY__?: boolean;
     __APLUS_TRIGGER_VOUCHER_SAVE__?: () => void;
     __APLUS_TRIGGER_PETTY_SAVE__?: () => void;
-    __APLUS_RECURRING_VOUCHERS__?: React.ComponentType<any>;
-    __APLUS_MULTI_SCHOOL_ADMIN__?: React.ComponentType<any>;
     __APLUS_CUSTOM_DOCS__?: React.ComponentType<{ LegacyDocs: React.ComponentType; onNavigate: (tab: string) => void }>;
     __APLUS_AUDIT_TRAIL__?: React.ComponentType<{ LegacyActivityLog: React.ComponentType<{ onNavigate: (tab: string) => void }>; onNavigate: (tab: string) => void }>;
     __APLUS_VOUCHER_PRINT_LAYOUT__?: React.ComponentType<any>;
@@ -326,10 +333,9 @@ declare global {
     __APLUS_SUGGESTIONS_HUB__?: React.ComponentType<{ onNavigate?: (tab: string) => void }>;
     __APLUS_MULTI_FORMAT_REPORTS__?: React.ComponentType<{ LegacyReportsHub: React.ComponentType<any> }>;
     __APLUS_REPORT_SIGNATURES_BLOCK__?: React.ComponentType<any>;
+    __APLUS_PERMISSION_ENGINE__?: React.ComponentType<any>;
     __APLUS_VISIBILITY_CHECK__?: (moduleId: string, user?: any, campuses?: any[]) => boolean;
     __APLUS_TOP_BAR__?: React.ComponentType<{ activeTab: string; onNavigate: (tab: string) => void }>;
-    __APLUS_CROSS_CAMPUS_TABLE__?: React.ComponentType<any>;
-    __APLUS_CAMPUS_COA_MANAGER__?: React.ComponentType<any>;
     __OPEN_SUPER_ADMIN_IMPORT__?: (initialTab?: ImportCategoryTab) => void;
   }
 }
