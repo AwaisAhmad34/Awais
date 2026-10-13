@@ -24,6 +24,7 @@ import {
 import { useAccounting } from '../core/aplusEngine';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
 import { PettyCashUtilizationComparativeChart } from './PettyCashUtilizationComparativeChart';
+import { DailyCashSummary } from './DailyCashSummary';
 import {
   restoreLastDeletedAccount,
   restoreAllOfficialChartOfAccounts,
@@ -250,8 +251,13 @@ export const FinancialHealthAndSuggestions: React.FC<{
   );
 
   return (
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 mb-6 print:hidden">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+    <>
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 mb-6 print:hidden">
+        <DailyCashSummary onNavigate={onNavigate} />
+      </section>
+
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 mb-6 print:hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         {/* Top Production Enterprise Header (Reset Button Removed, Replaced with Hosting & Cloud Launch Controls) */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white px-5 py-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -1142,5 +1148,6 @@ export const FinancialHealthAndSuggestions: React.FC<{
         )}
       </div>
     </section>
-  );
+  </>
+);
 };

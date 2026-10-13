@@ -430,17 +430,35 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
                             <span>Rotate</span>
                           </button>
 
+                          {onSelectCampusLogin && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onClose();
+                                setTimeout(() => {
+                                  onSelectCampusLogin(cred.campusId);
+                                }, 10);
+                              }}
+                              className="px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 text-[11px] font-bold cursor-pointer transition-colors"
+                              title="Fill credentials into login form"
+                            >
+                              Fill Form
+                            </button>
+                          )}
+
                           {loginAsCampus && (
                             <button
                               type="button"
                               onClick={() => {
-                                loginAsCampus(cred.campusId);
                                 onClose();
-                                if (onSelectCampusLogin) onSelectCampusLogin(cred.campusId);
+                                setTimeout(() => {
+                                  loginAsCampus(cred.campusId);
+                                }, 20);
                               }}
-                              className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer transition-colors"
+                              className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer transition-colors shadow-2xs"
+                              title="Instant login into this campus branch"
                             >
-                              Login As
+                              Instant Login
                             </button>
                           )}
                         </div>

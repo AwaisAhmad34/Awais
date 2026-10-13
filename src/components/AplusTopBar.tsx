@@ -26,6 +26,8 @@ import {
   Sparkles,
   Database,
   RotateCcw,
+  LogOut,
+  User,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
 import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
@@ -38,6 +40,7 @@ import {
 } from '../services/firebaseSync';
 import { SuperAdminImportModal } from './SuperAdminImportModal';
 import { VoucherA4PrintStudioModal } from './PrintableVoucherA4Layout';
+import { PlatformSiteAdminHub } from './PlatformSiteAdminHub';
 import {
   subscribeVisibilityConfig,
   getStoredVisibilityConfig,
@@ -69,6 +72,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const {
     isSuperAdmin,
     currentUser,
+    logout,
     currentCampusId,
     campuses,
     transactions,
@@ -117,6 +121,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isFullLedgerPdfOpen, setIsFullLedgerPdfOpen] = useState(false);
   const [isCampusAccountHeadAccessOpen, setIsCampusAccountHeadAccessOpen] = useState(false);
   const [isPermissionEngineOpen, setIsPermissionEngineOpen] = useState(false);
+  const [isSiteAdminHubOpen, setIsSiteAdminHubOpen] = useState(false);
 
   const triggerShortcutToast = (msg: string) => {
     setShortcutFeedback(msg);
@@ -383,6 +388,13 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
               <span>Super Admin Privileges</span>
             </span>
           )}
+          {currentUser && (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-700/60 text-indigo-200 text-[11px] font-semibold">
+              <User className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="font-bold text-white">{currentUser.name}</span>
+              <span className="text-slate-400 text-[10px]">({currentUser.role || 'Staff'})</span>
+            </div>
+          )}
           <span className="text-slate-300 truncate text-[11px] hidden lg:inline">
             {orgSettings?.headerTopBarText ||
               orgSettings?.headerRightText ||
@@ -393,6 +405,22 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 ml-auto">
+          {currentUser && (
+            <button
+              type="button"
+              onClick={() => {
+                if (logout) {
+                  logout();
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 text-rose-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              title="Sign out of current terminal. Login is required for everyone."
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-400" />
+              <span>Sign Out</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setIsGlobalSearchOpen(true)}
@@ -496,6 +524,18 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           </button>
 
           <button
+            onClick={() => setIsSiteAdminHubOpen(true)}
+            className="px-3 py-1 rounded-lg bg-gradient-to-r from-purple-700 via-indigo-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-[11px] flex items-center gap-1.5 transition-all shadow-md cursor-pointer border border-purple-400/50"
+            title="Platform Site Admin Audit & Central School Management System (Creator Central Control, Hierarchy, 5-Tier RBAC, Code Controls, Disaster Recovery)"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-purple-200" />
+            <span>Platform Site Admin Hub</span>
+            <span className="px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 font-mono text-[9px] font-black border border-purple-400/40">
+              12 SOPs
+            </span>
+          </button>
+
+          <button
             onClick={() => setIsCampusAuthModalOpen(true)}
             className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
             title="Dynamic campus authentication and database credentials synchronization"
@@ -525,6 +565,19 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           >
             <CheckSquare className="w-3.5 h-3.5" />
             <span>Bulk Approval & Role Access ({pendingCount} Pending)</span>
+          </button>
+
+          <button
+            onClick={() => onNavigate('dashboard')}
+            className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeTab === 'dashboard'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
+            }`}
+            title="Open Daily Cash Summary Dashboard (Live Inflows, Outflows & Net Movement per Campus for Current Date)"
+          >
+            <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Daily Cash Summary</span>
           </button>
 
           {(!activeProfile || activeProfile.widgets.showTopBarErpButton) && (
@@ -1096,6 +1149,21 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
                 }}
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Platform Site Admin Hub Modal (12-Section Architecture & Security Audit) */}
+      {isSiteAdminHubOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
+            <PlatformSiteAdminHub
+              onClose={() => setIsSiteAdminHubOpen(false)}
+              onNavigate={(tab) => {
+                setIsSiteAdminHubOpen(false);
+                onNavigate(tab);
+              }}
+            />
           </div>
         </div>
       )}

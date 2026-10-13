@@ -22,10 +22,12 @@ import {
   installGlobalVisibilityHook,
 } from './components/BulkVoucherAndAccessManager';
 import { FinancialHealthAndSuggestions } from './components/FinancialHealthAndSuggestions';
+import { DailyCashSummary } from './components/DailyCashSummary';
 import { MultiFormatReportsHub } from './components/MultiFormatReportsHub';
 import { DynamicReportSignatureBlock } from './components/ReportSignatureManager';
 import { DynamicCampusLoginPortal } from './components/DynamicCampusLoginPortal';
 import { PermissionEngine } from './components/PermissionEngine';
+import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
 import { initFirebaseCloudSync } from './services/firebaseSync';
 
 initFirebaseCloudSync();
@@ -39,6 +41,8 @@ window.__APLUS_PETTY_CASH_CHART__ = PettyCashCategoryAnalytics;
 window.__APLUS_MODERN_ERP__ = ModernErpSuite;
 window.__APLUS_BULK_VOUCHER_HUB__ = BulkVoucherAndAccessManager;
 window.__APLUS_SUGGESTIONS_HUB__ = FinancialHealthAndSuggestions;
+window.__APLUS_DAILY_CASH_SUMMARY__ = DailyCashSummary;
+window.__APLUS_SITE_ADMIN_HUB__ = PlatformSiteAdminHub;
 window.__APLUS_MULTI_FORMAT_REPORTS__ = MultiFormatReportsHub;
 window.__APLUS_REPORT_SIGNATURES_BLOCK__ = DynamicReportSignatureBlock;
 window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;
@@ -46,18 +50,13 @@ window.__APLUS_TOP_BAR__ = AplusTopBar;
 
 function InnerApp() {
   const { currentUser } = useAccounting();
-  const [preferLegacyLogin, setPreferLegacyLogin] = useState(false);
 
-  // If unauthenticated and user has not requested the legacy login screen, show the Dynamic Campus Auth Portal
-  if (!currentUser && !preferLegacyLogin) {
-    return (
-      <DynamicCampusLoginPortal
-        onSwitchToLegacy={() => setPreferLegacyLogin(true)}
-      />
-    );
+  // Login is required for everyone
+  if (!currentUser) {
+    return <DynamicCampusLoginPortal />;
   }
 
-  // When authenticated (or if legacy login was explicitly selected), render MainApp
+  // When authenticated, render MainApp
   return <MainApp />;
 }
 
@@ -74,6 +73,8 @@ export default function App() {
     window.__APLUS_MODERN_ERP__ = ModernErpSuite;
     window.__APLUS_BULK_VOUCHER_HUB__ = BulkVoucherAndAccessManager;
     window.__APLUS_SUGGESTIONS_HUB__ = FinancialHealthAndSuggestions;
+    window.__APLUS_DAILY_CASH_SUMMARY__ = DailyCashSummary;
+    window.__APLUS_SITE_ADMIN_HUB__ = PlatformSiteAdminHub;
     window.__APLUS_MULTI_FORMAT_REPORTS__ = MultiFormatReportsHub;
     window.__APLUS_REPORT_SIGNATURES_BLOCK__ = DynamicReportSignatureBlock;
     window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;

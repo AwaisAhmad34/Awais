@@ -33,6 +33,7 @@ import {
   ExtendedLedgerAndTrialBalanceTemplates,
   ExtendedReportId,
 } from './ExtendedLedgerAndTrialBalanceTemplates';
+import { generateAndDownloadReportPdf } from '../services/financialReportPdfGenerator';
 
 export type ReportFormatId =
   | 'format_1_main'
@@ -478,28 +479,71 @@ export const MultiFormatReportsHub: React.FC<{
   };
 
   const handleExportPdfFormat = async () => {
-    if (!printRef.current) return;
     setIsExporting(true);
     try {
-      const fileName = `APlus_Format_${activeFormatObj.number}_${activeFormatObj.shortTitle
-        .replace(/[^a-zA-Z0-9]/g, '_')}_${dateFrom}_to_${dateTo}.pdf`;
-      await generateElementPdf(
-        printRef.current,
-        fileName,
+      const isLandscape =
         selectedFormat === 'format_5_10col_worksheet' ||
-          selectedFormat === 'format_6_monthly_matrix' ||
-          selectedFormat === 'format_8_campus_columnar'
-          ? 'landscape'
-          : 'portrait',
-        2.2,
-        {
-          addPageNumbers: true,
-          margin: 6,
-          docTitle: activeFormatObj.fullTitle,
-          institutionName: orgSettings?.schoolName || 'A+ School System',
-        }
-      );
-      setToastMsg(`Exported PDF for ${activeFormatObj.shortTitle}`);
+        selectedFormat === 'format_6_monthly_matrix' ||
+        selectedFormat === 'format_8_campus_columnar';
+
+      // First attempt: High-fidelity direct vector PDF generation with jsPDF
+      try {
+        const rows = activeAccountRows.map((r) => ({
+          code: r.head.code,
+          name: r.head.name,
+          category: r.head.category,
+          openDr: r.openDr,
+          openCr: r.openCr,
+          periodDr: r.periodDr,
+          periodCr: r.periodCr,
+          closingDr: r.closingDr,
+          closingCr: r.closingCr,
+        }));
+
+        const result = await generateAndDownloadReportPdf({
+          reportTitle: activeFormatObj.fullTitle,
+          reportSubtitle: activeFormatObj.subtitle,
+          formatNumber: activeFormatObj.number,
+          formatName: activeFormatObj.shortTitle,
+          campusName: campusLabel,
+          dateFrom,
+          dateTo,
+          schoolName: orgSettings?.schoolName || 'A+ School System',
+          orientation: isLandscape ? 'landscape' : 'portrait',
+          accountRows: rows,
+          totals: totals,
+          vouchers: scopedVouchers,
+          pettyCashTransactions: scopedPettyCash,
+        });
+
+        setToastMsg(`Successfully generated and downloaded PDF: ${result.fileName}`);
+        setTimeout(() => setToastMsg(null), 5000);
+        return;
+      } catch (vectorErr) {
+        console.warn('Vector PDF generation failed, falling back to DOM capture:', vectorErr);
+      }
+
+      // Fallback: DOM-based rendering
+      if (printRef.current) {
+        const fileName = `APlus_Format_${activeFormatObj.number}_${activeFormatObj.shortTitle
+          .replace(/[^a-zA-Z0-9]/g, '_')}_${dateFrom}_to_${dateTo}.pdf`;
+        await generateElementPdf(
+          printRef.current,
+          fileName,
+          isLandscape ? 'landscape' : 'portrait',
+          2.2,
+          {
+            addPageNumbers: true,
+            margin: 6,
+            docTitle: activeFormatObj.fullTitle,
+            institutionName: orgSettings?.schoolName || 'A+ School System',
+          }
+        );
+        setToastMsg(`Exported PDF for ${activeFormatObj.shortTitle}`);
+        setTimeout(() => setToastMsg(null), 5000);
+      }
+    } catch (err: any) {
+      setToastMsg(`PDF Export Error: ${err?.message || 'Could not generate PDF.'}`);
       setTimeout(() => setToastMsg(null), 5000);
     } finally {
       setIsExporting(false);

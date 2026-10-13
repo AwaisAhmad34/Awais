@@ -24,6 +24,7 @@ import {
   Clock,
   MapPin,
   Laptop,
+  RotateCcw,
 } from 'lucide-react';
 import { useAccounting, SchoolLogo, Campus } from '../core/aplusEngine';
 import {
@@ -36,7 +37,6 @@ import {
   synchronizeCredentialsWithEngineUsers,
 } from '../services/campusAuthSync';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { DynamicCampusAuthModal } from './DynamicCampusAuthModal';
 import { ManualGuidanceTooltip } from './ManualGuidanceTooltip';
 import { AplusSystemManual } from './AplusSystemManual';
 
@@ -59,26 +59,37 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   } = useAccounting();
 
   const [activeTab, setActiveTab] = useState<'campus' | 'admin'>('campus');
-  const [selectedCampusId, setSelectedCampusId] = useState<string>(campuses[0]?.id || '');
-  const [campusPassword, setCampusPassword] = useState<string>('');
-  const [adminUsername, setAdminUsername] = useState<string>('admin');
-  const [adminPassword, setAdminPassword] = useState<string>('admin');
+  const [selectedCampusId, setSelectedCampusId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aplus_saved_campus_id');
+      if (saved && campuses.some((c) => c.id === saved)) return saved;
+    }
+    return campuses[0]?.id || '';
+  });
+  const [campusSearch, setCampusSearch] = useState<string>('');
+  const [campusPassword, setCampusPassword] = useState<string>(''); // Clean, no autofill
+  const [adminUsername, setAdminUsername] = useState<string>(''); // Clean, no autofill
+  const [adminPassword, setAdminPassword] = useState<string>(''); // Clean, no autofill
   const [showPassword, setShowPassword] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
-  const [isCredentialsModalOpen, setIsCredentialsModalOpen] = useState(false);
   const [manualModalSectionId, setManualModalSectionId] = useState<string | null>(null);
   const [isCapsLockOn, setIsCapsLockOn] = useState(false);
-  const [rememberTerminal, setRememberTerminal] = useState(true);
+  const [rememberTerminal, setRememberTerminal] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('aplus_remember_terminal') !== 'false';
+    }
+    return true;
+  });
 
-  // Cached credentials state
+  // Cached credentials state for backend validation
   const [credentials, setCredentials] = useState<CampusCredential[]>(() =>
     ensureCredentialsForAllCampuses(campuses, getLocalStoredCampusCredentials())
   );
   const [dbSyncStatus, setDbSyncStatus] = useState<'connected' | 'syncing'>('connected');
 
-  // Load and subscribe to real-time credentials from Firestore
+  // Load and subscribe to real-time credentials from Firestore for validation
   useEffect(() => {
     setDbSyncStatus('syncing');
     let isMounted = true;
@@ -113,28 +124,18 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     };
   }, [campuses]);
 
-  // When selected campus changes, update selected campus credential
-  const activeCampusCredential = credentials.find((c) => c.campusId === selectedCampusId);
+  // When selected campus changes, update selected campus
   const activeCampus = campuses.find((c) => c.id === selectedCampusId) || campuses[0];
+  const activeCampusCredential = credentials.find((c) => c.campusId === selectedCampusId);
 
-  // Quick fill dynamic credentials helper for seamless evaluation
-  const handleQuickFillCampus = (campusId: string) => {
+  // Campus selection handler - strictly clears password so user must manually type password (NO AUTOFILL!)
+  const handleSelectCampus = (campusId: string) => {
     setSelectedCampusId(campusId);
-    const targetCred = credentials.find((c) => c.campusId === campusId);
-    if (targetCred) {
-      setCampusPassword(targetCred.password);
-      setErrorMessage(null);
-      setSuccessNotice(`Loaded credentials for ${targetCred.campusName}`);
-      setTimeout(() => setSuccessNotice(null), 3000);
-    }
-  };
-
-  const handleQuickFillAdmin = () => {
-    setAdminUsername('admin');
-    setAdminPassword('admin');
+    setCampusPassword(''); // Clear password field - password is required from user
     setErrorMessage(null);
-    setSuccessNotice('Master Administrator credentials loaded (admin / admin)');
-    setTimeout(() => setSuccessNotice(null), 3000);
+    if (rememberTerminal && typeof window !== 'undefined') {
+      localStorage.setItem('aplus_saved_campus_id', campusId);
+    }
   };
 
   // Detect CapsLock on key events
@@ -208,6 +209,50 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
     if (!result.success) {
       setErrorMessage(result.message || 'Invalid administrator username or security key.');
+    }
+  };
+
+  // Recover / Restore Super Admin if deleted or corrupted
+  const handleRecoverSuperAdmin = async () => {
+    setIsAuthenticating(true);
+    setErrorMessage(null);
+    try {
+      const existingAdmin = users?.find((u: any) => u.username?.toLowerCase() === 'admin');
+      if (!existingAdmin) {
+        addUser({
+          id: 'user_master_superadmin_01',
+          username: 'admin',
+          email: 'admin@aplus.edu.pk',
+          name: 'Super Administrator',
+          role: 'superadmin',
+          status: 'active',
+          password: 'admin',
+          campusAccess: 'all',
+          permissions: ['all'],
+        });
+      } else {
+        if (updateUser) {
+          updateUser(existingAdmin.id, {
+            role: 'superadmin',
+            status: 'active',
+            password: 'admin',
+            campusAccess: 'all',
+            permissions: ['all'],
+          });
+        }
+        if (resetUserPassword) {
+          resetUserPassword(existingAdmin.id, 'admin');
+        }
+      }
+
+      setSuccessNotice('Super Administrator account successfully recovered! Username: admin | Password: admin');
+      setActiveTab('admin');
+      setAdminUsername('admin');
+      setAdminPassword('admin');
+    } catch (err: any) {
+      setErrorMessage(`Recovery Error: ${err?.message || 'Could not recover Super Admin account.'}`);
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -320,64 +365,141 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-wider">
                 <span className="flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-indigo-400" />
-                  Connected Campus Branches
+                  Campus Branch Directory
                 </span>
                 <span className="text-emerald-400 font-mono text-[11px] flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                  {campuses.length} Active
+                  {campuses.length} Branches Registered
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5 pt-1">
-                {campuses.map((c) => {
-                  const cred = credentials.find((cr) => cr.campusId === c.id);
-                  const isSelected = selectedCampusId === c.id;
-                  return (
+              {/* Campus search */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={campusSearch}
+                  onChange={(e) => setCampusSearch(e.target.value)}
+                  placeholder="Filter branch by code, name, or city..."
+                  className="w-full text-xs bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                {campusSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setCampusSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs cursor-pointer"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+
+              {/* Campus Grid Directory */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 max-h-60 overflow-y-auto pr-0.5">
+                {campuses
+                  .filter(
+                    (c) =>
+                      c.name.toLowerCase().includes(campusSearch.toLowerCase()) ||
+                      c.code.toLowerCase().includes(campusSearch.toLowerCase()) ||
+                      (c.city && c.city.toLowerCase().includes(campusSearch.toLowerCase()))
+                  )
+                  .map((c) => {
+                    const isSelected = selectedCampusId === c.id;
+                    return (
+                      <div
+                        key={c.id}
+                        onClick={() => {
+                          setActiveTab('campus');
+                          handleSelectCampus(c.id);
+                        }}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer group flex flex-col justify-between ${
+                          isSelected && activeTab === 'campus'
+                            ? 'bg-indigo-950/60 border-indigo-500 shadow-md ring-1 ring-indigo-500/50'
+                            : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-mono text-[10px] font-black text-indigo-400 uppercase bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/80">
+                              {c.code}
+                            </span>
+                            <span className="text-[10px] font-medium text-slate-400">
+                              {c.city || 'Punjab'}
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-white truncate group-hover:text-indigo-200 transition-colors">
+                            {c.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            Accountant: {c.accountantName || 'Branch Accountant'}
+                          </p>
+                        </div>
+
+                        <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            Float: PKR {c.pettyCashFloat ? c.pettyCashFloat.toLocaleString() : '35,000'}
+                          </span>
+                          <span className={`text-[10px] font-bold ${
+                            isSelected && activeTab === 'campus'
+                              ? 'text-indigo-300'
+                              : 'text-slate-400 group-hover:text-slate-200'
+                          }`}>
+                            {isSelected && activeTab === 'campus' ? 'Selected ✓' : 'Select Branch →'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {/* Super Administrator Access Reference Card (ONLY Super Admin shown, NOT other users) */}
+              <div className="mt-3 bg-gradient-to-r from-slate-950 via-indigo-950/60 to-slate-950 border border-indigo-700/60 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-extrabold text-white">Site Admin Access</span>
+                  </div>
+                  <span className="text-[10px] bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded font-mono font-bold border border-amber-400/30">
+                    Master Admin
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Central administrative clearance for all campus ledgers, Chart of Accounts, bulk approvals & system settings.
+                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800 text-xs">
+                  <div className="font-mono text-[11px] text-slate-300">
+                    Username: <span className="text-amber-300 font-bold">admin</span> • Password: <span className="text-amber-300 font-bold">admin</span>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button
-                      key={c.id}
+                      type="button"
+                      onClick={handleRecoverSuperAdmin}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-[11px] transition-colors cursor-pointer flex items-center gap-1"
+                      title="Emergency restore: Recreate Super Admin account if it was accidentally deleted from DB"
+                    >
+                      <RotateCcw className="w-3 h-3 text-amber-400" />
+                      <span>Recover Super Admin</span>
+                    </button>
+                    <button
                       type="button"
                       onClick={() => {
-                        setActiveTab('campus');
-                        handleQuickFillCampus(c.id);
+                        setActiveTab('admin');
+                        setErrorMessage(null);
+                        setAdminUsername('admin');
+                        setAdminPassword('admin');
                       }}
-                      className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer group ${
-                        isSelected && activeTab === 'campus'
-                          ? 'bg-indigo-950/60 border-indigo-500/80 shadow-md ring-1 ring-indigo-500/50'
-                          : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 hover:bg-slate-800/50'
-                      }`}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition-colors cursor-pointer"
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-mono text-[10px] font-bold text-indigo-400 uppercase">
-                          {c.code}
-                        </span>
-                        <span className="text-[10px] font-semibold text-slate-400">
-                          {c.city || 'Punjab'}
-                        </span>
-                      </div>
-                      <p className="text-xs font-bold text-white truncate group-hover:text-indigo-200 transition-colors">
-                        {c.name}
-                      </p>
-                      <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        Float: PKR {c.pettyCashFloat ? c.pettyCashFloat.toLocaleString() : '35,000'}
-                      </p>
+                      Use Admin Login
                     </button>
-                  );
-                })}
+                  </div>
+                </div>
               </div>
 
-              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                <span className="flex items-center gap-1">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  Bank & Cash Sub-Ledger Segregation
+              <div className="pt-2 text-[11px] text-slate-400 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>
+                  Login is required for everyone. Branch accountants must enter their confidential assigned password.
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsCredentialsModalOpen(true)}
-                  className="text-indigo-400 hover:text-indigo-300 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <KeyRound className="w-3 h-3" />
-                  Vault Directory
-                </button>
               </div>
             </div>
 
@@ -389,7 +511,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               </div>
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0" />
-                <span>Audit Trail Logging (Sec. 39)</span>
+                <span>Mandatory Authentication Enforced</span>
               </div>
             </div>
           </div>
@@ -398,7 +520,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           <div className="lg:col-span-6 w-full max-w-md mx-auto">
             <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-6">
               
-              {/* Card Header & Tabs */}
+              {/* Card Header & Tabs (2-Way Segmented: Campus vs Super Admin) */}
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -406,26 +528,26 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                   </span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Online
+                    Secure Login Required
                   </span>
                 </div>
 
-                {/* Segmented Tab Switcher */}
-                <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
+                {/* 2-Way Tab Switcher: Campus vs Super Admin */}
+                <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800 gap-1.5">
                   <button
                     type="button"
                     onClick={() => {
                       setActiveTab('campus');
                       setErrorMessage(null);
                     }}
-                    className={`flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                       activeTab === 'campus'
                         ? 'bg-indigo-600 text-white shadow-md'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <Building2 className="w-4 h-4" />
-                    <span>Campus Branch</span>
+                    <span>Campus Branch Login</span>
                   </button>
 
                   <button
@@ -434,14 +556,14 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                       setActiveTab('admin');
                       setErrorMessage(null);
                     }}
-                    className={`flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                       activeTab === 'admin'
                         ? 'bg-gradient-to-r from-slate-800 to-indigo-900 text-white shadow-md border border-indigo-700/50'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <ShieldCheck className="w-4 h-4 text-amber-400" />
-                    <span>Central Admin</span>
+                    <span>Super Admin Login</span>
                   </button>
                 </div>
               </div>
@@ -479,29 +601,26 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 </div>
               )}
 
-              {/* TAB 1: CAMPUS BRANCH LOGIN FORM */}
+              {/* TAB 1: CAMPUS BRANCH LOGIN FORM (Password Entry Required - NO AUTOFILL) */}
               {activeTab === 'campus' && (
-                <form onSubmit={handleCampusLoginSubmit} className="space-y-4">
+                <form onSubmit={handleCampusLoginSubmit} autoComplete="off" className="space-y-4">
                   {/* Campus Selector */}
                   <div>
                     <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-1.5 flex items-center justify-between">
                       <span>Select Campus Branch</span>
                       <span className="text-[11px] font-normal text-slate-400">
-                        {campuses.length} Branches Synchronized
+                        {campuses.length} Branches Available
                       </span>
                     </label>
                     <div className="relative">
                       <select
                         value={selectedCampusId}
-                        onChange={(e) => {
-                          setSelectedCampusId(e.target.value);
-                          setErrorMessage(null);
-                        }}
+                        onChange={(e) => handleSelectCampus(e.target.value)}
                         className="w-full text-sm font-bold text-white bg-slate-950 border border-slate-700 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer appearance-none pr-10"
                       >
                         {campuses.map((c) => (
                           <option key={c.id} value={c.id} className="bg-slate-900 text-white">
-                            {c.name} ({c.code}) — {c.city || 'Gujranwala'}
+                            {c.name} ({c.code}) — {c.city || 'Punjab'}
                           </option>
                         ))}
                       </select>
@@ -509,21 +628,15 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                     </div>
                   </div>
 
-                  {/* Campus Password Field */}
+                  {/* Campus Password Field (NO AUTOFILL - MANUAL INPUT REQUIRED) */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block">
                         Campus Security Password
                       </label>
-                      {activeCampusCredential && (
-                        <button
-                          type="button"
-                          onClick={() => handleQuickFillCampus(selectedCampusId)}
-                          className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-                        >
-                          Auto-Fill Branch Key
-                        </button>
-                      )}
+                      <span className="text-[11px] text-amber-400 font-semibold">
+                        * Required to Login
+                      </span>
                     </div>
                     <div className="relative">
                       <input
@@ -531,9 +644,10 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                         value={campusPassword}
                         onChange={(e) => setCampusPassword(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder="Enter dynamic campus password..."
+                        placeholder="Enter your campus branch password..."
                         className="w-full text-sm font-mono font-bold text-white bg-slate-950 border border-slate-700 rounded-xl p-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder:text-slate-500"
-                        autoComplete="current-password"
+                        autoComplete="new-password"
+                        required
                       />
                       <button
                         type="button"
@@ -544,6 +658,9 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Each campus accountant must enter their confidential branch security password.
+                    </p>
                   </div>
 
                   {/* Remember Terminal Checkbox */}
@@ -552,10 +669,21 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                       <input
                         type="checkbox"
                         checked={rememberTerminal}
-                        onChange={(e) => setRememberTerminal(e.target.checked)}
+                        onChange={(e) => {
+                          const val = e.target.checked;
+                          setRememberTerminal(val);
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('aplus_remember_terminal', val ? 'true' : 'false');
+                            if (val) {
+                              localStorage.setItem('aplus_saved_campus_id', selectedCampusId);
+                            } else {
+                              localStorage.removeItem('aplus_saved_campus_id');
+                            }
+                          }
+                        }}
                         className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                       />
-                      <span>Remember this workstation terminal</span>
+                      <span>Remember selected branch on this device</span>
                     </label>
 
                     <button
@@ -576,7 +704,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                     {isAuthenticating ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Verifying with Firestore Database...</span>
+                        <span>Verifying Credentials...</span>
                       </>
                     ) : (
                       <>
@@ -589,14 +717,36 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 </form>
               )}
 
-              {/* TAB 2: CENTRAL ADMINISTRATOR LOGIN FORM */}
+              {/* TAB 2: CENTRAL ADMINISTRATOR LOGIN FORM (Super Admin Credentials Displayed) */}
               {activeTab === 'admin' && (
-                <form onSubmit={handleAdminLoginSubmit} className="space-y-4">
-                  <div className="bg-slate-950/70 border border-indigo-900/50 rounded-xl p-3 text-xs text-indigo-200 flex items-start gap-2">
-                    <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-white block font-semibold mb-0.5">Super Administrator Portal</strong>
-                      Full administrative clearance for all campus ledgers, Chart of Accounts, bulk approvals, and credentials vault.
+                <form onSubmit={handleAdminLoginSubmit} autoComplete="off" className="space-y-4">
+                  <div className="bg-slate-950/80 border border-indigo-700/60 rounded-xl p-3.5 text-xs text-indigo-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-amber-400" />
+                        <strong className="text-white font-bold">Site Administrator Portal</strong>
+                      </div>
+                      <span className="text-[10px] bg-amber-400/20 text-amber-300 font-mono font-bold px-2 py-0.5 rounded border border-amber-400/30">
+                        Super Admin
+                      </span>
+                    </div>
+                    <p className="text-slate-300 text-[11px] leading-relaxed">
+                      Executive authority clearance for master ledgers, Chart of Accounts, bulk approvals, and audit logs.
+                    </p>
+                    <div className="pt-2 border-t border-slate-800 text-xs font-mono text-amber-300 flex items-center justify-between">
+                      <span>Credentials:</span>
+                      <span>Username: <strong className="text-white">admin</strong> • Password: <strong className="text-white">admin</strong></span>
+                    </div>
+                    <div className="pt-1.5 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleRecoverSuperAdmin}
+                        className="text-[11px] text-amber-300 hover:text-amber-200 underline flex items-center gap-1 cursor-pointer"
+                        title="If Super Admin was deleted, click here to recover full administrator rights"
+                      >
+                        <RotateCcw className="w-3 h-3 text-amber-400" />
+                        <span>Recover / Restore Deleted Super Admin</span>
+                      </button>
                     </div>
                   </div>
 
@@ -608,24 +758,21 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                       type="text"
                       value={adminUsername}
                       onChange={(e) => setAdminUsername(e.target.value)}
-                      placeholder="admin"
+                      placeholder="e.g. admin"
                       className="w-full text-sm font-mono font-bold text-white bg-slate-950 border border-slate-700 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder:text-slate-500"
-                      autoComplete="username"
+                      autoComplete="new-password"
+                      required
                     />
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block">
-                        Master Security Key
+                        Master Security Key / Password
                       </label>
-                      <button
-                        type="button"
-                        onClick={handleQuickFillAdmin}
-                        className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-                      >
-                        Auto-Fill Demo Admin Key
-                      </button>
+                      <span className="text-[11px] text-amber-400 font-semibold">
+                        * Required to Login
+                      </span>
                     </div>
                     <div className="relative">
                       <input
@@ -633,9 +780,10 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                         value={adminPassword}
                         onChange={(e) => setAdminPassword(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder="••••••"
+                        placeholder="e.g. admin"
                         className="w-full text-sm font-mono font-bold text-white bg-slate-950 border border-slate-700 rounded-xl p-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder:text-slate-500"
-                        autoComplete="current-password"
+                        autoComplete="new-password"
+                        required
                       />
                       <button
                         type="button"
@@ -670,16 +818,11 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 </form>
               )}
 
-              {/* Bottom Quick Access Helpers */}
+              {/* Bottom Helpers */}
               <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setIsCredentialsModalOpen(true)}
-                  className="text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1.5 cursor-pointer hover:underline"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>Campus Credentials Vault</span>
-                </button>
+                <span className="text-slate-500 text-[11px]">
+                  Multi-Campus Segregated Ledger
+                </span>
 
                 {onSwitchToLegacy && (
                   <button
@@ -711,19 +854,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           </div>
         </div>
       </footer>
-
-      {/* Dynamic Credentials Vault & Password Rotation Modal */}
-      {isCredentialsModalOpen && (
-        <DynamicCampusAuthModal
-          isOpen={isCredentialsModalOpen}
-          onClose={() => setIsCredentialsModalOpen(false)}
-          onSelectCampusLogin={(campusId) => {
-            setSelectedCampusId(campusId);
-            setIsCredentialsModalOpen(false);
-            handleQuickFillCampus(campusId);
-          }}
-        />
-      )}
 
       {/* 49-Section System Manual & Procedures Modal */}
       {manualModalSectionId && (

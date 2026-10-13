@@ -331,6 +331,8 @@ declare global {
     __APLUS_MODERN_ERP__?: React.ComponentType<{ activeTab: string; onNavigate: (tab: string) => void }>;
     __APLUS_BULK_VOUCHER_HUB__?: React.ComponentType<{ onNavigate?: (tab: string) => void; mode?: 'ledger' | 'standalone' }>;
     __APLUS_SUGGESTIONS_HUB__?: React.ComponentType<{ onNavigate?: (tab: string) => void }>;
+    __APLUS_DAILY_CASH_SUMMARY__?: React.ComponentType<{ onNavigate?: (tab: string) => void; defaultCollapsed?: boolean }>;
+    __APLUS_SITE_ADMIN_HUB__?: React.ComponentType<{ onNavigate?: (tab: string) => void; onClose?: () => void; defaultSection?: any }>;
     __APLUS_MULTI_FORMAT_REPORTS__?: React.ComponentType<{ LegacyReportsHub: React.ComponentType<any> }>;
     __APLUS_REPORT_SIGNATURES_BLOCK__?: React.ComponentType<any>;
     __APLUS_PERMISSION_ENGINE__?: React.ComponentType<any>;

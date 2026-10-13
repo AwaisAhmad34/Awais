@@ -161,7 +161,12 @@ export function ensureCredentialsForAllCampuses(
     }
   });
 
-  saveLocalStoredCampusCredentials(result, false);
+  // Defer cache persistence to prevent synchronous side-effects during React render phase
+  if (typeof window !== 'undefined') {
+    setTimeout(() => {
+      saveLocalStoredCampusCredentials(result, false);
+    }, 0);
+  }
   return result;
 }
 
@@ -370,11 +375,18 @@ export async function authenticateDynamicCampusLogin(params: {
     };
   }
 
-  // Password verification
-  if (inputPass && matched.password !== inputPass) {
+  // Password verification - mandatory for every user
+  if (!inputPass) {
     return {
       success: false,
-      message: 'Invalid password. Please check your dynamic campus credentials or request credentials re-sync.',
+      message: 'Password is required. Please enter your campus security password.',
+    };
+  }
+
+  if (matched.password !== inputPass) {
+    return {
+      success: false,
+      message: 'Invalid password. Please enter the correct password for this campus branch.',
     };
   }
 
