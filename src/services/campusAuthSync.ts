@@ -67,12 +67,26 @@ export function getLocalStoredCampusCredentials(): CampusCredential[] {
   return [];
 }
 
-export function saveLocalStoredCampusCredentials(creds: CampusCredential[]): void {
+export function saveLocalStoredCampusCredentials(
+  creds: CampusCredential[],
+  notifySubscribers: boolean = true
+): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(creds));
     cachedCredentials = creds;
-    SYNC_SUBSCRIBERS.forEach((cb) => cb(creds));
+    if (notifySubscribers && SYNC_SUBSCRIBERS.size > 0) {
+      // Defer subscriber invocation to the next tick so it never triggers during React render phase
+      setTimeout(() => {
+        SYNC_SUBSCRIBERS.forEach((cb) => {
+          try {
+            cb(creds);
+          } catch (err) {
+            console.warn('Error notifying campus credential subscriber:', err);
+          }
+        });
+      }, 0);
+    }
   } catch {}
 }
 
@@ -147,7 +161,7 @@ export function ensureCredentialsForAllCampuses(
     }
   });
 
-  saveLocalStoredCampusCredentials(result);
+  saveLocalStoredCampusCredentials(result, false);
   return result;
 }
 
@@ -260,9 +274,15 @@ export function subscribeToCloudCampusCredentials(
 ): () => void {
   SYNC_SUBSCRIBERS.add(callback);
 
-  // Immediately send cached
+  // Send cached credentials asynchronously to prevent updating state during render
   const initial = getLocalStoredCampusCredentials();
-  if (initial.length > 0) callback(initial);
+  if (initial.length > 0) {
+    setTimeout(() => {
+      if (SYNC_SUBSCRIBERS.has(callback)) {
+        callback(initial);
+      }
+    }, 0);
+  }
 
   if (!firestoreListenerActive) {
     firestoreListenerActive = true;
@@ -383,39 +403,57 @@ export function synchronizeCredentialsWithEngineUsers(params: {
   resetUserPassword?: (userId: string, pass: string) => void;
 }): void {
   const { credentials, users = [], addUser, updateUser, resetUserPassword } = params;
+  if (!credentials || credentials.length === 0) return;
 
-  credentials.forEach((cred) => {
-    // Find user by campusId and role campus_accountant or username
-    const existingUser = users.find(
-      (u) =>
-        (u.campusId === cred.campusId && u.role === 'campus_accountant') ||
-        u.username?.toLowerCase() === cred.username.toLowerCase()
-    );
+  // Defer execution outside React's render/reconciliation phase
+  setTimeout(() => {
+    try {
+      credentials.forEach((cred) => {
+        // Find user by campusId and role campus_accountant or username
+        const existingUser = users.find(
+          (u) =>
+            (u.campusId === cred.campusId && u.role === 'campus_accountant') ||
+            u.username?.toLowerCase() === cred.username.toLowerCase()
+        );
 
-    if (existingUser) {
-      updateUser(existingUser.id, {
-        username: cred.username,
-        name: cred.accountantName || `${cred.campusName} Accountant`,
-        password: cred.password,
-        status: cred.status,
-        allowedModules: cred.allowedModules,
+        const targetName = cred.accountantName || `${cred.campusName} Accountant`;
+
+        if (existingUser) {
+          const needsUpdate =
+            existingUser.username !== cred.username ||
+            existingUser.password !== cred.password ||
+            existingUser.status !== cred.status ||
+            existingUser.name !== targetName;
+
+          if (needsUpdate) {
+            updateUser(existingUser.id, {
+              username: cred.username,
+              name: targetName,
+              password: cred.password,
+              status: cred.status,
+              allowedModules: cred.allowedModules,
+            });
+            if (resetUserPassword && cred.password) {
+              resetUserPassword(existingUser.id, cred.password);
+            }
+          }
+        } else {
+          addUser({
+            id: `user-${cred.campusId}`,
+            username: cred.username,
+            name: targetName,
+            email: `${cred.username}@aschoolsystem.edu.pk`,
+            role: 'campus_accountant',
+            campusId: cred.campusId,
+            password: cred.password,
+            status: cred.status,
+            designation: `Campus Accountant (${cred.campusCode})`,
+            allowedModules: cred.allowedModules,
+          });
+        }
       });
-      if (resetUserPassword && cred.password) {
-        resetUserPassword(existingUser.id, cred.password);
-      }
-    } else {
-      addUser({
-        id: `user-${cred.campusId}`,
-        username: cred.username,
-        name: cred.accountantName || `${cred.campusName} Accountant`,
-        email: `${cred.username}@aschoolsystem.edu.pk`,
-        role: 'campus_accountant',
-        campusId: cred.campusId,
-        password: cred.password,
-        status: cred.status,
-        designation: `Campus Accountant (${cred.campusCode})`,
-        allowedModules: cred.allowedModules,
-      });
+    } catch (err) {
+      console.warn('Error synchronizing credentials with engine users:', err);
     }
-  });
+  }, 0);
 }

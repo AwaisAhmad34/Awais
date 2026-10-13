@@ -25,8 +25,10 @@ import {
   KeyRound,
   Sparkles,
   Database,
+  RotateCcw,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
+import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
 import {
   subscribeCloudSync,
   CloudSyncStats,
@@ -75,6 +77,8 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     orgSettings,
     exportSystemState,
     importSystemState,
+    addAccountHead,
+    importOfficialAccountsHeads,
   } = useAccounting();
   const [syncStats, setSyncStats] = useState<CloudSyncStats>({
     lastSyncedAt: null,
@@ -592,6 +596,22 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
               <span>A4 Voucher Print Studio</span>
             </button>
           )}
+
+          <button
+            onClick={() => {
+              const res = restoreLastDeletedAccount({
+                accountHeads,
+                addAccountHead,
+                importOfficialAccountsHeads,
+              });
+              triggerShortcutToast(res.message);
+            }}
+            className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Restore recently deleted Chart of Account head or recover missing master accounts"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+            <span>Restore Deleted COA</span>
+          </button>
 
           {(!activeProfile || activeProfile.widgets.showTopBarAuditTrailButton) && (
             <button

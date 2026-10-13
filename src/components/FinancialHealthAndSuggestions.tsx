@@ -17,9 +17,18 @@ import {
   ShieldCheck,
   Terminal,
   Type,
+  RotateCcw,
+  BarChart3,
+  History,
 } from 'lucide-react';
 import { useAccounting } from '../core/aplusEngine';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
+import { PettyCashUtilizationComparativeChart } from './PettyCashUtilizationComparativeChart';
+import {
+  restoreLastDeletedAccount,
+  restoreAllOfficialChartOfAccounts,
+  getDeletedAccountsTrashBin,
+} from '../services/chartOfAccountsRecovery';
 
 function formatPKR(val: number): string {
   return `Rs. ${Math.round(val || 0).toLocaleString('en-PK')}`;
@@ -42,9 +51,12 @@ export const FinancialHealthAndSuggestions: React.FC<{
     addAccountHead,
     updateCampusOpeningDrCr,
     exportSystemState,
+    importOfficialAccountsHeads,
+    replenishPettyCash,
   } = useAccounting();
 
   const [isExpanded, setIsExpanded] = useState(true);
+  const [showPettyCashComparison, setShowPettyCashComparison] = useState(true);
   const [activeQuickForm, setActiveQuickForm] = useState<
     | 'none'
     | 'new_campus'
@@ -55,6 +67,20 @@ export const FinancialHealthAndSuggestions: React.FC<{
   >('none');
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+
+  const handleRestoreLastDeletedCOA = () => {
+    const res = restoreLastDeletedAccount({
+      accountHeads,
+      addAccountHead,
+      importOfficialAccountsHeads,
+    });
+    showNotice(res.message);
+  };
+
+  const handleRestoreAllMasterCOA = () => {
+    const res = restoreAllOfficialChartOfAccounts(importOfficialAccountsHeads);
+    showNotice(res.message);
+  };
 
   // Header & Footer Text Editor State
   const [hdrSchoolName, setHdrSchoolName] = useState(orgSettings?.schoolName || '');
@@ -248,6 +274,26 @@ export const FinancialHealthAndSuggestions: React.FC<{
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRestoreLastDeletedCOA}
+              className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              title="Restore recently deleted Chart of Account head or recover missing master accounts"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restore Last Deleted COA</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleRestoreAllMasterCOA}
+              className="px-3.5 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              title="Ensure all 157 official institutional Chart of Accounts heads are active"
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Verify & Restore All 157 COA</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -804,6 +850,63 @@ export const FinancialHealthAndSuggestions: React.FC<{
               </form>
             )}
 
+            {/* VISUALIZATION FEATURE: SIDE-BY-SIDE PETTY CASH UTILIZATION COMPARISON ACROSS ALL CAMPUSES */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                    <BarChart3 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
+                      Multi-Campus Petty Cash Utilization Side-by-Side Analytics
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Side-by-side bar chart comparing petty cash allocation floats, disbursed expenses, and liquid safe reserves across all campus branches
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPettyCashComparison((v) => !v)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-xs font-bold text-slate-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <span>{showPettyCashComparison ? 'Hide Utilization Chart' : 'Show Utilization Chart'}</span>
+                  {showPettyCashComparison ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+              {showPettyCashComparison && (
+                <PettyCashUtilizationComparativeChart
+                  campuses={campuses}
+                  pettyCashTransactions={pettyCashTransactions}
+                  onNavigate={onNavigate}
+                  onReplenishClick={(campusId) => {
+                    const campus = campuses.find((c) => c.id === campusId);
+                    if (!campus) return;
+                    const replenishAmount = Math.max(
+                      1000,
+                      Number(campus.pettyCashFloat) - Number(campus.currentPettyCash)
+                    );
+                    if (typeof replenishPettyCash === 'function') {
+                      replenishPettyCash(
+                        campusId,
+                        replenishAmount,
+                        'acc-1020',
+                        `CHQ-PETTY-${Date.now().toString().slice(-4)}`,
+                        new Date().toISOString().slice(0, 10)
+                      );
+                      showNotice(
+                        `Replenished Rs. ${replenishAmount.toLocaleString('en-PK')} to ${campus.name} petty cash vault!`
+                      );
+                    } else {
+                      onNavigate?.('pettycash');
+                    }
+                  }}
+                />
+              )}
+            </div>
+
             {/* 6 Enterprise Operational Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Step 1: Campuses */}
@@ -858,25 +961,36 @@ export const FinancialHealthAndSuggestions: React.FC<{
                     Full 5-pillar double-entry Chart of Accounts (100 Assets to 500 Operating Expenses). Add custom account heads anytime.
                   </p>
                 </div>
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveQuickForm(
-                        activeQuickForm === 'new_account' ? 'none' : 'new_account'
-                      )
-                    }
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ New Account Head</span>
-                  </button>
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveQuickForm(
+                          activeQuickForm === 'new_account' ? 'none' : 'new_account'
+                        )
+                      }
+                      className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ New Head</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRestoreLastDeletedCOA}
+                      className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                      title="Undo delete and restore last deleted chart of accounts head"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Restore Deleted</span>
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => onNavigate?.('accounts')}
                     className="text-[11px] font-bold text-slate-700 hover:text-slate-900 inline-flex items-center gap-0.5 cursor-pointer"
                   >
-                    <span>Open Full COA</span>
+                    <span>Full COA</span>
                     <ArrowUpRight className="w-3.5 h-3.5" />
                   </button>
                 </div>

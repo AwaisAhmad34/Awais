@@ -20,6 +20,7 @@ import {
   PlusCircle,
   RotateCcw,
   Cloud,
+  X,
 } from 'lucide-react';
 import {
   useAccounting,
@@ -41,6 +42,8 @@ import {
 interface AplusSystemManualProps {
   LegacyDocs: React.ComponentType;
   onNavigate?: (tab: string) => void;
+  initialSectionId?: string;
+  onClose?: () => void;
 }
 
 type ManualWorkspaceTab =
@@ -65,6 +68,8 @@ const CATEGORIES = [
 export const AplusSystemManual: React.FC<AplusSystemManualProps> = ({
   LegacyDocs,
   onNavigate,
+  initialSectionId,
+  onClose,
 }) => {
   const {
     orgSettings,
@@ -79,7 +84,16 @@ export const AplusSystemManual: React.FC<AplusSystemManualProps> = ({
   } = useAccounting();
 
   const [activeSubTab, setActiveSubTab] = useState<ManualWorkspaceTab>('interactive_49');
-  const [selectedSectionId, setSelectedSectionId] = useState<string>(APLUS_MANUAL_SECTIONS[0].id);
+  const [selectedSectionId, setSelectedSectionId] = useState<string>(
+    initialSectionId || APLUS_MANUAL_SECTIONS[0].id
+  );
+
+  useEffect(() => {
+    if (initialSectionId) {
+      setSelectedSectionId(initialSectionId);
+      setActiveSubTab('interactive_49');
+    }
+  }, [initialSectionId]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -567,6 +581,17 @@ export const AplusSystemManual: React.FC<AplusSystemManualProps> = ({
             <span>Core Technical Specs (10)</span>
           </button>
         </div>
+
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer flex items-center justify-center border border-slate-300"
+            title="Close Manual"
+          >
+            <X className="w-5 h-5 text-slate-700" />
+          </button>
+        )}
       </div>
 
       {/* MODE 1: INTERACTIVE 49-SECTION MANUAL */}
