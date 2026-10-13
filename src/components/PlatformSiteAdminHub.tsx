@@ -47,6 +47,7 @@ import {
   ShieldAlert,
   Server,
   Zap,
+  UserPlus,
 } from 'lucide-react';
 import { useAccounting, Campus, AccountHead, Transaction } from '../core/aplusEngine';
 import {
@@ -76,6 +77,11 @@ import {
   saveStoredHierarchicalRbacConfig,
   syncHierarchicalRbacToCloud,
 } from '../services/campusPermissionEngine';
+import {
+  generateDynamicPassword,
+  createDynamicCampusCredential,
+  saveCampusCredentialToCloud,
+} from '../services/campusAuthSync';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
 
 export type PlatformAdminNavSection =
@@ -158,6 +164,13 @@ export const PlatformSiteAdminHub: React.FC<{
   const [targetCampusForParent, setTargetCampusForParent] = useState<string>('');
   const [selectedParentId, setSelectedParentId] = useState<string>('none');
   const [campusSearchQuery, setCampusSearchQuery] = useState('');
+  const [newCampusName, setNewCampusName] = useState('');
+  const [newCampusCode, setNewCampusCode] = useState('');
+  const [newCampusCity, setNewCampusCity] = useState('Gujranwala');
+  const [newCampusAccountant, setNewCampusAccountant] = useState('');
+  const [newCampusPassword, setNewCampusPassword] = useState('');
+  const [newCampusFloat, setNewCampusFloat] = useState('35000');
+  const [newCampusParentId, setNewCampusParentId] = useState<string>('none');
 
   // --------------------------------------------------------------------------
   // SECTION 04: USERS & LOGIN ACCOUNTS STATE
@@ -167,10 +180,12 @@ export const PlatformSiteAdminHub: React.FC<{
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [userFormUsername, setUserFormUsername] = useState('');
   const [userFormName, setUserFormName] = useState('');
+  const [userFormEmail, setUserFormEmail] = useState('');
   const [userFormPassword, setUserFormPassword] = useState('');
-  const [userFormRole, setUserFormRole] = useState<string>('campus_accountant');
+  const [userFormRole, setUserFormRole] = useState<string>('Accountant');
   const [userFormCampusId, setUserFormCampusId] = useState<string>(campuses[0]?.id || '');
   const [userFormLevel, setUserFormLevel] = useState<PermissionLevel>('level_4_sub_campus_admin');
+  const [userFormDelegatedSubCampuses, setUserFormDelegatedSubCampuses] = useState<string[]>([]);
 
   // --------------------------------------------------------------------------
   // SECTION 07: ACCOUNT HEADS & CODE CONFIGURATION STATE
@@ -377,6 +392,186 @@ export const PlatformSiteAdminHub: React.FC<{
         : `Configured '${target?.name}' as Primary Main Campus!`
     );
     setTargetCampusForParent('');
+  };
+
+  const handleOpenAddSubCampusModal = (preselectedParentId?: string) => {
+    setNewCampusName('');
+    setNewCampusCode('');
+    setNewCampusCity('Gujranwala');
+    setNewCampusAccountant('');
+    setNewCampusPassword(generateDynamicPassword('SUB'));
+    setNewCampusFloat('35000');
+    setNewCampusParentId(preselectedParentId || 'none');
+    setIsCampusModalOpen(true);
+  };
+
+  const handleCreateCampusOrSubCampus = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCampusName.trim() || !newCampusCode.trim()) {
+      triggerToast('error', 'Branch name and branch code are required.');
+      return;
+    }
+
+    const cleanCode = newCampusCode.trim().toUpperCase();
+    if (campuses.some((c) => c.code.toUpperCase() === cleanCode)) {
+      triggerToast('error', `Campus code '${cleanCode}' is already registered.`);
+      return;
+    }
+
+    const parentId = newCampusParentId === 'none' || !newCampusParentId ? null : newCampusParentId;
+    const parent = campuses.find((c) => c.id === parentId);
+
+    const newId = `campus-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+    const newCampus: ExtendedCampusNode = {
+      id: newId,
+      code: cleanCode,
+      name: newCampusName.trim(),
+      city: newCampusCity.trim() || 'Punjab',
+      accountantName: newCampusAccountant.trim() || 'Branch Accountant',
+      pettyCashFloat: Number(newCampusFloat) || 35000,
+      currentPettyCash: Number(newCampusFloat) || 35000,
+      status: 'active',
+      isMainCampus: !parentId,
+      parentCampusId: parentId,
+      loginEnabled: true,
+      allowedModules: [
+        'dashboard',
+        'transaction',
+        'alltransactions',
+        'pettycash',
+        'cashreconciliation',
+        'reports',
+      ],
+    };
+
+    addCampus(newCampus);
+
+    // Generate dynamic credentials and save to database
+    const pass = newCampusPassword.trim() || generateDynamicPassword(cleanCode);
+    const cred = createDynamicCampusCredential(newCampus, undefined, pass);
+    saveCampusCredentialToCloud(cred);
+
+    recordSiteAdminSecurityEvent({
+      actorName: currentUser?.name || 'Platform Site Admin',
+      actorRole: 'Level 1 Platform Creator',
+      severity: 'medium',
+      category: 'CAMPUS_HIERARCHY',
+      action: parentId ? 'CREATE_SUB_CAMPUS' : 'CREATE_MAIN_CAMPUS',
+      targetEntity: 'Campus',
+      targetId: newId,
+      details: parentId
+        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}'. Initial Float: PKR ${newCampus.pettyCashFloat.toLocaleString()}.`
+        : `Created Main Campus '${newCampus.name}' (${newCampus.code}).`,
+    });
+
+    triggerToast(
+      'success',
+      parentId
+        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}'!`
+        : `Created Main Campus '${newCampus.name}' (${newCampus.code})!`
+    );
+
+    setIsCampusModalOpen(false);
+  };
+
+  const handleOpenAddUserModal = (preselectedCampusId?: string, userToEdit?: any) => {
+    if (userToEdit) {
+      setSelectedUserToEdit(userToEdit);
+      setUserFormUsername(userToEdit.username || '');
+      setUserFormName(userToEdit.name || '');
+      setUserFormEmail(userToEdit.email || '');
+      setUserFormPassword('');
+      setUserFormRole(userToEdit.role || 'Accountant');
+      setUserFormCampusId(userToEdit.campusId || campuses[0]?.id || '');
+      setUserFormLevel(userToEdit.permissionLevel || 'level_4_sub_campus_admin');
+      setUserFormDelegatedSubCampuses(userToEdit.delegatedSubCampusIds || []);
+    } else {
+      setSelectedUserToEdit(null);
+      setUserFormUsername('');
+      setUserFormName('');
+      setUserFormEmail('');
+      setUserFormPassword(generateDynamicPassword('USER'));
+      setUserFormRole('Accountant');
+      setUserFormCampusId(preselectedCampusId || campuses[0]?.id || '');
+      setUserFormLevel(preselectedCampusId ? 'level_4_sub_campus_admin' : 'level_4_sub_campus_admin');
+      setUserFormDelegatedSubCampuses([]);
+    }
+    setIsUserModalOpen(true);
+  };
+
+  const handleSaveUserAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userFormUsername.trim() || !userFormName.trim()) {
+      triggerToast('error', 'Username and user full name are required.');
+      return;
+    }
+
+    const cleanUsername = userFormUsername.trim().toLowerCase();
+
+    if (!selectedUserToEdit) {
+      if (users.some((u) => u.username?.toLowerCase() === cleanUsername)) {
+        triggerToast('error', `Username '${cleanUsername}' already exists.`);
+        return;
+      }
+      if (!userFormPassword.trim()) {
+        triggerToast('error', 'A secure password is required for this user.');
+        return;
+      }
+
+      const assignedCampus = campuses.find((c) => c.id === userFormCampusId) || campuses[0];
+      const isLevel1 = userFormLevel === 'level_1_platform_super_admin';
+
+      const newUser = {
+        id: `usr-${cleanUsername.replace(/[^a-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
+        username: cleanUsername,
+        name: userFormName.trim(),
+        email: userFormEmail.trim() || `${cleanUsername}@school.edu.pk`,
+        password: userFormPassword.trim(),
+        role: isLevel1 ? 'admin' : userFormRole,
+        isSuperAdmin: isLevel1,
+        campusId: isLevel1 ? 'all' : (userFormCampusId || assignedCampus?.id),
+        campusName: isLevel1 ? 'All Campuses (Central Platform)' : assignedCampus?.name,
+        permissionLevel: userFormLevel,
+        delegatedSubCampusIds:
+          userFormLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
+        createdAt: new Date().toISOString(),
+      };
+
+      addUser(newUser);
+
+      recordSiteAdminSecurityEvent({
+        actorName: currentUser?.name || 'Platform Site Admin',
+        actorRole: 'Level 1 Platform Creator',
+        severity: isLevel1 ? 'high' : 'medium',
+        category: 'AUTHENTICATION',
+        action: 'CREATE_USER_ACCOUNT',
+        targetEntity: 'User',
+        targetId: newUser.id,
+        details: `Created user account '${newUser.name}' (@${newUser.username}) with ${userFormLevel} for campus '${newUser.campusName}'.`,
+      });
+
+      triggerToast('success', `Created user account '${newUser.name}' (@${cleanUsername})!`);
+    } else {
+      const updates: any = {
+        name: userFormName.trim(),
+        email: userFormEmail.trim(),
+        role: userFormLevel === 'level_1_platform_super_admin' ? 'admin' : userFormRole,
+        isSuperAdmin: userFormLevel === 'level_1_platform_super_admin',
+        campusId: userFormCampusId,
+        permissionLevel: userFormLevel,
+        delegatedSubCampusIds:
+          userFormLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
+      };
+      if (userFormPassword.trim()) {
+        updates.password = userFormPassword.trim();
+      }
+
+      updateUser(selectedUserToEdit.id, updates);
+      triggerToast('success', `Updated user account '${userFormName}'!`);
+    }
+
+    setIsUserModalOpen(false);
+    setSelectedUserToEdit(null);
   };
 
   // --------------------------------------------------------------------------
