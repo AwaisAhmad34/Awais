@@ -43,6 +43,10 @@ import {
 import { ExpenseCategorySuggesterWidget } from './ExpenseCategorySuggesterWidget';
 import { DynamicCampusAuthModal } from './DynamicCampusAuthModal';
 import { CampusAccountHeadPermissionPanel } from './CampusAccountHeadPermissionPanel';
+import {
+  evaluateVoucherApprovalAuthorization,
+  getStoredApprovalMatrixConfig,
+} from '../services/approvalMatrixService';
 import { FullTransactionLedgerPdfExport } from './FullTransactionLedgerPdfExport';
 import { PermissionEngine } from './PermissionEngine';
 
@@ -710,15 +714,36 @@ export const BulkVoucherAndAccessManager: React.FC<{
       return;
     }
 
-    // Check High-Value threshold if Campus Head profile has restriction
-    if (targetStatus === 'Approved' && !canApproveHighValue) {
-      const highValueVouchers = selectedVouchers.filter((v) => (Number(v.totalDebit) || 0) > 50000);
-      if (highValueVouchers.length > 0) {
-        showToast(
-          'reject',
-          `Approval Limit Exceeded: ${highValueVouchers.length} selected voucher(s) exceed Rs. 50,000. Super Admin or Administration authorization required.`
-        );
-        return;
+    // Check Configurable Approval Matrix Thresholds based on role and hierarchy
+    if (targetStatus === 'Approved') {
+      const currentRole =
+        visibilityConfig.previewRole === 'administration'
+          ? 'School Client / Organization Owner'
+          : visibilityConfig.previewRole === 'campus_head'
+          ? 'Sub-Campus Principal / Campus Head'
+          : isSuperAdmin
+          ? 'Platform Creator / Super Admin'
+          : currentUser?.role || 'Campus Senior Accountant';
+
+      for (const v of selectedVouchers) {
+        const amt = Number(v.totalDebit) || 0;
+        const vType = ((v as any).type || (v as any).voucherType || v.voucherNo?.slice(0, 3) || 'CPV') as any;
+        const evalResult = evaluateVoucherApprovalAuthorization({
+          amount: amt,
+          voucherType: vType,
+          userRole: currentRole,
+          isSuperAdmin: isSuperAdmin || visibilityConfig.previewRole === 'administration',
+          voucherCreator: (v as any).createdBy,
+          currentUserUsername: currentUser?.username,
+        });
+
+        if (!evalResult.isAuthorized) {
+          showToast(
+            'reject',
+            `Approval Matrix Threshold Exceeded for voucher #${v.voucherNo}: ${evalResult.reason}`
+          );
+          return;
+        }
       }
     }
 

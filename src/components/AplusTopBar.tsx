@@ -28,6 +28,7 @@ import {
   RotateCcw,
   LogOut,
   User,
+  Scale,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
 import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
@@ -41,6 +42,7 @@ import {
 import { SuperAdminImportModal } from './SuperAdminImportModal';
 import { VoucherA4PrintStudioModal } from './PrintableVoucherA4Layout';
 import { PlatformSiteAdminHub } from './PlatformSiteAdminHub';
+import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
 import {
   subscribeVisibilityConfig,
   getStoredVisibilityConfig,
@@ -122,6 +124,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isCampusAccountHeadAccessOpen, setIsCampusAccountHeadAccessOpen] = useState(false);
   const [isPermissionEngineOpen, setIsPermissionEngineOpen] = useState(false);
   const [isSiteAdminHubOpen, setIsSiteAdminHubOpen] = useState(false);
+  const [isApprovalMatrixModalOpen, setIsApprovalMatrixModalOpen] = useState(false);
 
   const triggerShortcutToast = (msg: string) => {
     setShortcutFeedback(msg);
@@ -533,6 +536,15 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span className="px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 font-mono text-[9px] font-black border border-purple-400/40">
               12 SOPs
             </span>
+          </button>
+
+          <button
+            onClick={() => setIsApprovalMatrixModalOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-emerald-500/40"
+            title="Configurable Voucher Authorization & Approval Matrix by User Role and Campus Hierarchy"
+          >
+            <Scale className="w-3.5 h-3.5 text-emerald-200" />
+            <span>Approval Matrix</span>
           </button>
 
           <button
@@ -1164,6 +1176,15 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
                 onNavigate(tab);
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Configurable Approval Matrix Modal */}
+      {isApprovalMatrixModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-6xl max-h-[94vh] flex flex-col overflow-y-auto">
+            <ConfigurableApprovalMatrixModule onClose={() => setIsApprovalMatrixModalOpen(false)} />
           </div>
         </div>
       )}

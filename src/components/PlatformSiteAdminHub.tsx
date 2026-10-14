@@ -83,6 +83,7 @@ import {
   saveCampusCredentialToCloud,
 } from '../services/campusAuthSync';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
+import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
 
 export type PlatformAdminNavSection =
   | '01_dashboard'
@@ -1257,15 +1258,32 @@ export const PlatformSiteAdminHub: React.FC<{
                   </p>
                 </div>
 
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={campusSearchQuery}
-                    onChange={(e) => setCampusSearchQuery(e.target.value)}
-                    placeholder="Search campus branches..."
-                    className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-48 sm:w-60 focus:border-emerald-500"
-                  />
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={campusSearchQuery}
+                      onChange={(e) => setCampusSearchQuery(e.target.value)}
+                      placeholder="Search campus branches..."
+                      className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-40 sm:w-52 focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCampusParentId('none');
+                      setNewCampusName('');
+                      setNewCampusCode(`C-${campuses.length + 1}`);
+                      setNewCampusPassword(generateDynamicPassword('CAMP'));
+                      setIsCampusModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Register Campus</span>
+                  </button>
                 </div>
               </div>
 
@@ -1287,7 +1305,7 @@ export const PlatformSiteAdminHub: React.FC<{
                         key={campus.id}
                         className={`p-4 rounded-2xl border transition-all ${
                           isMain
-                            ? 'bg-slate-950/90 border-emerald-800/80'
+                            ? 'bg-slate-950/90 border-emerald-800/80 shadow-md'
                             : 'bg-slate-950/60 border-slate-800'
                         }`}
                       >
@@ -1343,23 +1361,54 @@ export const PlatformSiteAdminHub: React.FC<{
                           </div>
                         )}
 
-                        {/* Reassign Parent Form */}
-                        <div className="mt-3 pt-2.5 border-t border-slate-800 flex items-center justify-between gap-2 text-xs">
-                          <span className="text-slate-400 text-[11px]">Configure Parent:</span>
-                          <select
-                            value={campus.parentCampusId || 'none'}
-                            onChange={(e) => handleUpdateCampusParent(campus.id, e.target.value)}
-                            className="bg-slate-900 text-white border border-slate-700 rounded-lg px-2 py-1 text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                          >
-                            <option value="none">-- Set as Main Campus (No Parent) --</option>
-                            {campuses
-                              .filter((c) => c.id !== campus.id)
-                              .map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  Parent: {c.name} ({c.code})
-                                </option>
-                              ))}
-                          </select>
+                        {/* Direct Sub-Campus and User Quick Creation Buttons */}
+                        <div className="mt-3 pt-2.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewCampusParentId(campus.id);
+                                setNewCampusName(`${campus.name} Sub-Branch`);
+                                setNewCampusCode(`${campus.code}-S${subBranches.length + 1}`);
+                                setNewCampusCity(campus.city || 'Punjab');
+                                setNewCampusPassword(generateDynamicPassword(campus.code));
+                                setIsCampusModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/80 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                              title={`Add a new Sub-Campus child under parent ${campus.name}`}
+                            >
+                              <Plus className="w-3 h-3 text-emerald-400" />
+                              <span>+ Sub-Campus</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddUserModal(campus.id)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/80 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                              title={`Create a login user account assigned to ${campus.name}`}
+                            >
+                              <UserPlus className="w-3 h-3 text-indigo-400" />
+                              <span>+ Add User</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="text-slate-400 text-[10px]">Parent:</span>
+                            <select
+                              value={campus.parentCampusId || 'none'}
+                              onChange={(e) => handleUpdateCampusParent(campus.id, e.target.value)}
+                              className="bg-slate-900 text-white border border-slate-700 rounded-lg px-2 py-0.5 text-[11px] outline-none focus:border-indigo-500 cursor-pointer"
+                            >
+                              <option value="none">-- Main (None) --</option>
+                              {campuses
+                                .filter((c) => c.id !== campus.id)
+                                .map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    Parent: {c.name} ({c.code})
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1384,15 +1433,26 @@ export const PlatformSiteAdminHub: React.FC<{
                   </p>
                 </div>
 
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={userSearchQuery}
-                    onChange={(e) => setUserSearchQuery(e.target.value)}
-                    placeholder="Search users..."
-                    className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-48 sm:w-60 focus:border-indigo-500"
-                  />
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      placeholder="Search users..."
+                      className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-40 sm:w-52 focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAddUserModal()}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm shrink-0"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>+ Generate New Login</span>
+                  </button>
                 </div>
               </div>
 
@@ -1405,7 +1465,7 @@ export const PlatformSiteAdminHub: React.FC<{
                       <th className="py-3 px-4">Permission Level</th>
                       <th className="py-3 px-4">Assigned Campus</th>
                       <th className="py-3 px-4">Role Type</th>
-                      <th className="py-3 px-4 text-right">Security Controls</th>
+                      <th className="py-3 px-4 text-right">Actions & Security</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/80">
@@ -1451,9 +1511,19 @@ export const PlatformSiteAdminHub: React.FC<{
                               {u.role || 'campus_accountant'}
                             </td>
                             <td className="py-3 px-4 text-right">
-                              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                                Protected ✓
-                              </span>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAddUserModal(u.campusId, u)}
+                                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer border border-slate-700"
+                                  title="Edit user role, scope, or password"
+                                >
+                                  Edit
+                                </button>
+                                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800">
+                                  Active ✓
+                                </span>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1693,6 +1763,15 @@ export const PlatformSiteAdminHub: React.FC<{
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* 08: VOUCHER & APPROVAL CONTROLS / CONFIGURABLE MATRIX            */}
+          {/* ================================================================ */}
+          {activeSection === '08_voucher_controls' && (
+            <div className="space-y-5">
+              <ConfigurableApprovalMatrixModule />
             </div>
           )}
 
@@ -1942,6 +2021,404 @@ export const PlatformSiteAdminHub: React.FC<{
                   className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-colors cursor-pointer"
                 >
                   Save Client Organization
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ================================================================ */}
+      {/* CAMPUS / SUB-CAMPUS REGISTRATION MODAL                            */}
+      {/* ================================================================ */}
+      {isCampusModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-xl w-full p-6 text-slate-100 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white">
+                    {newCampusParentId !== 'none' && newCampusParentId
+                      ? 'Register Sub-Campus under Parent'
+                      : 'Register New Campus Branch'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {newCampusParentId !== 'none' && newCampusParentId
+                      ? `Creating a child branch that reports to parent hierarchy.`
+                      : `Set up a main campus branch in the institutional directory.`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCampusModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCampusOrSubCampus} className="space-y-4 text-xs">
+              {/* Hierarchy Level Type */}
+              <div>
+                <label className="block text-slate-400 mb-1 font-bold">Campus Hierarchy Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewCampusParentId('none')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold text-center transition-colors cursor-pointer ${
+                      newCampusParentId === 'none'
+                        ? 'bg-emerald-950 text-emerald-300 border-emerald-600'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    Main Campus (Parent)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (campuses.length > 0 && newCampusParentId === 'none') {
+                        setNewCampusParentId(campuses[0].id);
+                      }
+                    }}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold text-center transition-colors cursor-pointer ${
+                      newCampusParentId !== 'none'
+                        ? 'bg-sky-950 text-sky-300 border-sky-600'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    Sub-Campus (Child Branch)
+                  </button>
+                </div>
+              </div>
+
+              {/* If Sub-Campus, pick Parent Campus */}
+              {newCampusParentId !== 'none' && (
+                <div className="p-3 rounded-xl bg-sky-950/40 border border-sky-800">
+                  <label className="block text-sky-300 mb-1 font-bold">
+                    Select Parent Campus to Report To:
+                  </label>
+                  <select
+                    value={newCampusParentId}
+                    onChange={(e) => setNewCampusParentId(e.target.value)}
+                    className="w-full bg-slate-950 border border-sky-700/80 rounded-xl px-3 py-2 text-white outline-none focus:border-sky-400 cursor-pointer"
+                    required
+                  >
+                    {campuses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.code}) {(c as any).isMainCampus || !(c as any).parentCampusId ? '— Main Campus' : '— Branch'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Campus Name and Code */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Campus Branch Name</label>
+                  <input
+                    type="text"
+                    value={newCampusName}
+                    onChange={(e) => setNewCampusName(e.target.value)}
+                    placeholder="e.g. Model Town Boys Campus"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Unique Campus Code</label>
+                  <input
+                    type="text"
+                    value={newCampusCode}
+                    onChange={(e) => setNewCampusCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. MTB-01"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold outline-none focus:border-emerald-500 uppercase"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* City and Accountant */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">City / Location</label>
+                  <input
+                    type="text"
+                    value={newCampusCity}
+                    onChange={(e) => setNewCampusCity(e.target.value)}
+                    placeholder="e.g. Gujranwala, Punjab"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Branch Accountant / In-Charge</label>
+                  <input
+                    type="text"
+                    value={newCampusAccountant}
+                    onChange={(e) => setNewCampusAccountant(e.target.value)}
+                    placeholder="e.g. Muhammad Aslam"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Petty Cash Float and Password */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Petty Cash Float (PKR)</label>
+                  <input
+                    type="number"
+                    value={newCampusFloat}
+                    onChange={(e) => setNewCampusFloat(e.target.value)}
+                    placeholder="35000"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Campus Access Key / Password</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newCampusPassword}
+                      onChange={(e) => setNewCampusPassword(e.target.value)}
+                      placeholder="e.g. CAMPUS@2026"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setNewCampusPassword(generateDynamicPassword(newCampusCode || 'CAMP'))}
+                      className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold shrink-0 border border-slate-700"
+                      title="Generate dynamic password"
+                    >
+                      Gen
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCampusModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {newCampusParentId !== 'none' && newCampusParentId
+                      ? 'Register Sub-Campus'
+                      : 'Register Main Campus'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* HIERARCHICAL LOGIN & ACCESS GENERATOR MODAL                       */}
+      {/* ================================================================ */}
+      {isUserModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-2xl w-full p-6 text-slate-100 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                  <UserPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white">
+                    {selectedUserToEdit ? 'Edit User Credentials & Scope' : 'Hierarchical Login & Access Generator'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Multi-tier user provisioning with permission scoping and audit tracking.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsUserModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUserAccount} className="space-y-4 text-xs">
+              {/* Step 1: Account Level */}
+              <div>
+                <label className="block text-slate-400 mb-1 font-bold">
+                  1. Account Level & Authority Hierarchy
+                </label>
+                <select
+                  value={userFormLevel}
+                  onChange={(e: any) => setUserFormLevel(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 font-bold"
+                >
+                  <option value="level_1_platform_super_admin">
+                    Level 1 — Platform Super Admin (Platform Creator / Full Central Access)
+                  </option>
+                  <option value="level_2_client_admin">
+                    Level 2 — School Client / Organization Admin (Owns Institution Network)
+                  </option>
+                  <option value="level_3_main_campus_admin">
+                    Level 3 — Main Campus Admin (Controls Main Campus + Delegated Sub-Campuses)
+                  </option>
+                  <option value="level_4_sub_campus_admin">
+                    Level 4 — Sub-Campus Admin (Manages Single Sub-Campus Operations)
+                  </option>
+                  <option value="level_5_departmental_user">
+                    Level 5 — Departmental Staff (Accountant, Cashier, Auditor, Viewer)
+                  </option>
+                </select>
+              </div>
+
+              {/* Step 2: Role and Campus */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">2. Assign Role Type</label>
+                  <select
+                    value={userFormRole}
+                    onChange={(e) => setUserFormRole(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  >
+                    <option value="Accountant">Campus Accountant</option>
+                    <option value="Cashier">Petty Cashier</option>
+                    <option value="Principal">Campus Principal / Director</option>
+                    <option value="Auditor">Internal Auditor</option>
+                    <option value="Viewer">Read-Only Viewer</option>
+                    <option value="admin">Administrator</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">3. Assigned Campus Branch</label>
+                  <select
+                    value={userFormCampusId}
+                    onChange={(e) => setUserFormCampusId(e.target.value)}
+                    disabled={userFormLevel === 'level_1_platform_super_admin'}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 disabled:opacity-50"
+                  >
+                    {userFormLevel === 'level_1_platform_super_admin' ? (
+                      <option value="all">All Campuses (Central Platform)</option>
+                    ) : (
+                      campuses.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.code}) {(c as any).isMainCampus || !(c as any).parentCampusId ? '— Main Campus' : '— Sub-Branch'}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              {/* Step 3: Name & Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">4. Full Name</label>
+                  <input
+                    type="text"
+                    value={userFormName}
+                    onChange={(e) => setUserFormName(e.target.value)}
+                    placeholder="e.g. Tariq Mehmood"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">5. Verified Email Address</label>
+                  <input
+                    type="email"
+                    value={userFormEmail}
+                    onChange={(e) => setUserFormEmail(e.target.value)}
+                    placeholder="e.g. t.mehmood@school.edu.pk"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Step 4: Login Username & Dynamic Password */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">6. Login Username</label>
+                  <input
+                    type="text"
+                    value={userFormUsername}
+                    onChange={(e) => setUserFormUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
+                    placeholder="e.g. tmehmood"
+                    disabled={!!selectedUserToEdit}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-500 disabled:opacity-50"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">
+                    7. Password {selectedUserToEdit ? '(Leave blank to keep existing)' : ''}
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={userFormPassword}
+                      onChange={(e) => setUserFormPassword(e.target.value)}
+                      placeholder={selectedUserToEdit ? 'Keep unchanged' : 'Secure password'}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setUserFormPassword(generateDynamicPassword('ACC'))}
+                      className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold shrink-0 border border-slate-700"
+                      title="Generate dynamic secure password"
+                    >
+                      Gen
+                    </button>
+                    {userFormPassword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(
+                            `Username: ${userFormUsername}\nPassword: ${userFormPassword}`
+                          );
+                          triggerToast('success', 'Credentials copied to clipboard!');
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-indigo-950 hover:bg-indigo-900 text-indigo-300 font-bold shrink-0 border border-indigo-800"
+                        title="Copy credentials"
+                      >
+                        Copy
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsUserModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <UserCheck className="w-4 h-4" />
+                  <span>{selectedUserToEdit ? 'Save Changes' : 'Generate & Activate Account'}</span>
                 </button>
               </div>
             </form>
