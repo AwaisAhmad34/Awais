@@ -319,6 +319,17 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   );
 
   const activeProfile = resolveActiveProfileForUser(visConfig, currentUser, currentCampusId);
+  const isPlatformSiteAdmin =
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'superadmin' ||
+    currentUser?.role === 'level_1_platform_super_admin' ||
+    (isSuperAdmin && (!currentUser?.campusId || currentUser?.campusAccess === 'all'));
+  const isAuthorizedForCampusDb =
+    isPlatformSiteAdmin ||
+    isSuperAdmin ||
+    currentUser?.role === 'superadmin' ||
+    currentUser?.role === 'level_2_client_super_admin' ||
+    currentUser?.role === 'level_3_main_campus_admin';
   const pendingCount = (transactions || []).filter(
     (t) => !t.status || t.status === 'Pending' || t.status === 'Draft'
   ).length;
@@ -526,17 +537,19 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span>AI Expense Suggester</span>
           </button>
 
-          <button
-            onClick={() => setIsSiteAdminHubOpen(true)}
-            className="px-3 py-1 rounded-lg bg-gradient-to-r from-purple-700 via-indigo-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-[11px] flex items-center gap-1.5 transition-all shadow-md cursor-pointer border border-purple-400/50"
-            title="Platform Site Admin Audit & Central School Management System (Creator Central Control, Hierarchy, 5-Tier RBAC, Code Controls, Disaster Recovery)"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-purple-200" />
-            <span>Platform Site Admin Hub</span>
-            <span className="px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 font-mono text-[9px] font-black border border-purple-400/40">
-              12 SOPs
-            </span>
-          </button>
+          {isPlatformSiteAdmin && (
+            <button
+              onClick={() => setIsSiteAdminHubOpen(true)}
+              className="px-3 py-1 rounded-lg bg-gradient-to-r from-purple-700 via-indigo-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-[11px] flex items-center gap-1.5 transition-all shadow-md cursor-pointer border border-purple-400/50"
+              title="Platform Site Admin Audit & Central School Management System (Creator Central Control, Hierarchy, 5-Tier RBAC, Code Controls, Disaster Recovery)"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-200" />
+              <span>Platform Site Admin Hub</span>
+              <span className="px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 font-mono text-[9px] font-black border border-purple-400/40">
+                12 SOPs
+              </span>
+            </button>
+          )}
 
           <button
             onClick={() => setIsApprovalMatrixModalOpen(true)}
@@ -547,14 +560,16 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span>Approval Matrix</span>
           </button>
 
-          <button
-            onClick={() => setIsCampusAuthModalOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-            title="Dynamic campus authentication and database credentials synchronization"
-          >
-            <KeyRound className="w-3.5 h-3.5 text-amber-200" />
-            <span>Campus DB Auth</span>
-          </button>
+          {isAuthorizedForCampusDb && (
+            <button
+              onClick={() => setIsCampusAuthModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+              title="Dynamic campus authentication and database credentials synchronization (Super Admin & Platform Admin scope)"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-200" />
+              <span>Campus DB Auth</span>
+            </button>
+          )}
 
           <button
             onClick={handleCloudPull}

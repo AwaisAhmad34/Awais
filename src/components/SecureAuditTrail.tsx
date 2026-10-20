@@ -42,8 +42,8 @@ import {
 } from '../services/campusPermissionEngine';
 
 interface SecureAuditTrailProps {
-  LegacyActivityLog: React.ComponentType<{ onNavigate: (tab: string) => void }>;
-  onNavigate: (tab: string) => void;
+  LegacyActivityLog?: React.ComponentType<{ onNavigate: (tab: string) => void }>;
+  onNavigate?: (tab: string) => void;
 }
 
 export function computeAuditHash(entry: Partial<AuditLogEntry>): string {
@@ -635,7 +635,7 @@ export const SecureAuditTrail: React.FC<SecureAuditTrailProps> = ({
             Switch to Forensic Immutable Ledger View
           </button>
         </div>
-        <LegacyActivityLog onNavigate={onNavigate} />
+        {LegacyActivityLog && <LegacyActivityLog onNavigate={onNavigate || (() => {})} />}
       </div>
     );
   }

@@ -229,7 +229,7 @@ function formatNum(val: number): string {
 }
 
 export const MultiFormatReportsHub: React.FC<{
-  LegacyReportsHub: React.ComponentType<any>;
+  LegacyReportsHub?: React.ComponentType<any>;
 }> = ({ LegacyReportsHub }) => {
   const {
     accountHeads,
@@ -818,8 +818,19 @@ export const MultiFormatReportsHub: React.FC<{
         </div>
       </div>
 
-      {/* FORMAT #1 (MAIN FORMAT WE ALREADY USE): Renders the complete original Yw report suite */}
-      {selectedFormat === 'format_1_main' && <LegacyReportsHub />}
+      {/* FORMAT #1 (MAIN FORMAT WE ALREADY USE): Renders the complete original report suite */}
+      {selectedFormat === 'format_1_main' && (
+        LegacyReportsHub ? (
+          <LegacyReportsHub />
+        ) : (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 text-center bg-slate-900 border border-slate-800 rounded-2xl">
+            <h4 className="text-sm font-bold text-white mb-1">Financial Report Generator</h4>
+            <p className="text-xs text-slate-400">
+              Select any institutional report format from the tabs above (Executive Board, Daily Daybook, T-Accounts, 10-Col Worksheet, or Campus Columnar) to generate live financial statements.
+            </p>
+          </div>
+        )
+      )}
 
       {/* FORMATS #2 TO #10: Rendered in A4 Printable Institutional Container */}
       {selectedFormat !== 'format_1_main' && (

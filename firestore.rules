@@ -31,5 +31,20 @@ service cloud.firestore {
     match /expense_patterns/{patternId} {
       allow read, write: if true;
     }
+    match /global_recycle_bin/{recordId} {
+      allow read, write: if true;
+    }
+    match /recovery_audit_trail/{auditId} {
+      allow read, write: if true;
+    }
+    match /platform_security_audits/{auditId} {
+      allow read, write: if true;
+    }
+    match /system_backups/{backupId} {
+      allow read, write: if true;
+    }
+    match /approval_matrices/{campusId} {
+      allow read, write: if true;
+    }
   }
 }

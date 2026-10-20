@@ -33,6 +33,7 @@ import {
   Database,
   Printer,
   FileSpreadsheet,
+  Edit3,
 } from 'lucide-react';
 import { useAccounting, Transaction } from '../core/aplusEngine';
 import {
@@ -40,6 +41,8 @@ import {
   loadVisibilityConfigFromCloud,
   wipeAllCloudCollectionsToZero,
 } from '../services/firebaseSync';
+import { softDeleteRecord } from '../services/globalRecoveryService';
+import { VoucherEditingModal } from './VoucherEditingModal';
 import { ExpenseCategorySuggesterWidget } from './ExpenseCategorySuggesterWidget';
 import { DynamicCampusAuthModal } from './DynamicCampusAuthModal';
 import { CampusAccountHeadPermissionPanel } from './CampusAccountHeadPermissionPanel';
@@ -460,6 +463,10 @@ export const BulkVoucherAndAccessManager: React.FC<{
   // Super Admin Visibility Editor Target State
   const [targetScope, setTargetScope] = useState<'administration' | 'campus_head' | string>('campus_head');
 
+  // Dedicated Voucher Editor State
+  const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
+  const [isVoucherEditorOpen, setIsVoucherEditorOpen] = useState(false);
+
   useEffect(() => {
     installGlobalVisibilityHook();
     const unsub = subscribeVisibilityConfig(setVisibilityConfig);
@@ -634,10 +641,25 @@ export const BulkVoucherAndAccessManager: React.FC<{
     if (selectedVouchers.length === 0) return;
     const count = selectedVouchers.length;
     selectedVouchers.forEach((v) => {
+      const c = campuses.find((cmp) => cmp.id === v.campusId);
+      softDeleteRecord({
+        recordType: 'VOUCHER',
+        originalPayload: v,
+        campusId: v.campusId,
+        campusName: c?.name || 'Campus Branch',
+        campusCode: c?.code || 'CMP',
+        identifier: v.voucherNo,
+        title: `${v.voucherType} - ${v.narration || 'General Ledger Voucher'}`,
+        date: v.date,
+        deletedByUserId: currentUser?.id || 'usr-controller',
+        deletedByUserName: currentUser?.name || 'Authorized Controller',
+        deletedByUserRole: currentUser?.role || 'Accountant',
+        deletionReason: 'Deleted via Voucher Audit Ledger (Moved to Global Recycle Bin)',
+      });
       deleteTransaction(v.id);
     });
     setSelectedIds([]);
-    showToast('reject', `Deleted ${count} selected voucher(s) from the ledger.`);
+    showToast('reject', `Moved ${count} voucher(s) to the Global Recycle Bin (recoverable).`);
   };
 
   const handleDeleteAllPreviousEntriesAndCampuses = async () => {
@@ -1893,6 +1915,18 @@ export const BulkVoucherAndAccessManager: React.FC<{
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingVoucherId(voucher.id);
+                                      setIsVoucherEditorOpen(true);
+                                    }}
+                                    className="px-2.5 py-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[11px] cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                                    title="Open full voucher editor with Previous/Next navigation"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
                                   {normStatus !== 'Approved' && (
                                     <button
                                       type="button"
@@ -2433,6 +2467,19 @@ export const BulkVoucherAndAccessManager: React.FC<{
           </div>
         )}
       </div>
+
+      {/* DEDICATED VOUCHER EDITING MODAL (PREVIOUS/NEXT NAVIGATION & RECENT REGISTER) */}
+      {isVoucherEditorOpen && (
+        <VoucherEditingModal
+          isOpen={isVoucherEditorOpen}
+          initialVoucherId={editingVoucherId || undefined}
+          filteredVoucherList={filteredVouchers}
+          onClose={() => {
+            setIsVoucherEditorOpen(false);
+            setEditingVoucherId(null);
+          }}
+        />
+      )}
     </section>
   );
 };

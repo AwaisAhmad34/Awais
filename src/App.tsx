@@ -33,7 +33,7 @@ import { initFirebaseCloudSync } from './services/firebaseSync';
 initFirebaseCloudSync();
 installGlobalVisibilityHook();
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
-window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail;
+window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
 window.__APLUS_VOUCHER_PRINT_LAYOUT__ = PrintableVoucherA4Layout;
 window.__APLUS_CASH_RECONCILIATION__ = PhysicalCashReconciliation;
 window.__APLUS_BUDGET_VARIANCE_WIDGET__ = BudgetVarianceWidget;
@@ -49,15 +49,74 @@ window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;
 window.__APLUS_TOP_BAR__ = AplusTopBar;
 
 function InnerApp() {
-  const { currentUser } = useAccounting();
+  const { currentUser, isSuperAdmin } = useAccounting();
+  const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
 
   // Login is required for everyone
   if (!currentUser) {
     return <DynamicCampusLoginPortal />;
   }
 
-  // When authenticated, render MainApp
-  return <MainApp />;
+  // Check if authenticated user is a Platform Site Admin (Platform Creator / Super Admin)
+  const isPlatformSiteAdmin =
+    currentUser.role === 'admin' ||
+    currentUser.role === 'superadmin' ||
+    currentUser.role === 'level_1_platform_super_admin' ||
+    (isSuperAdmin && (!currentUser.campusId || currentUser.campusAccess === 'all'));
+
+  // Dedicated Platform-Level Control Panel (Site Admin does NOT enter through a campus branch)
+  if (isPlatformSiteAdmin && adminViewMode === 'platform_control_panel') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 p-2 sm:p-4">
+        {/* Platform Creator Workspace Bar */}
+        <div className="max-w-7xl mx-auto mb-2 flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-xs font-mono font-bold text-slate-300">
+              Platform Administration Workspace • Signed in as <strong className="text-white">{currentUser.name || currentUser.username}</strong>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAdminViewMode('campus_operations')}
+              className="px-3 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+              title="Inspect live Campus Operational Ledgers, Cash Books & Vouchers"
+            >
+              <span>Campus Operational Ledger View &rarr;</span>
+            </button>
+          </div>
+        </div>
+
+        <PlatformSiteAdminHub
+          isStandalonePlatformView
+          onSwitchToCampusView={() => setAdminViewMode('campus_operations')}
+        />
+      </div>
+    );
+  }
+
+  // When viewing campus operations (or for campus accountants/staff):
+  return (
+    <div>
+      {isPlatformSiteAdmin && (
+        <div className="bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 border-b border-indigo-800/80 px-4 py-1.5 text-xs flex items-center justify-between text-indigo-200">
+          <div className="flex items-center gap-2 font-mono">
+            <span className="font-bold text-white">Platform Site Admin:</span>
+            <span>Auditing Campus Operations</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAdminViewMode('platform_control_panel')}
+            className="px-2.5 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-sm"
+          >
+            &larr; Return to Platform Site Admin Control Panel
+          </button>
+        </div>
+      )}
+      <MainApp />
+    </div>
+  );
 }
 
 export default function App() {
@@ -65,7 +124,7 @@ export default function App() {
     initFirebaseCloudSync();
     installGlobalVisibilityHook();
     window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
-    window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail;
+    window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
     window.__APLUS_VOUCHER_PRINT_LAYOUT__ = PrintableVoucherA4Layout;
     window.__APLUS_CASH_RECONCILIATION__ = PhysicalCashReconciliation;
     window.__APLUS_BUDGET_VARIANCE_WIDGET__ = BudgetVarianceWidget;

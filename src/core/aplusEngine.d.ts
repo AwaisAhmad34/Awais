@@ -14,6 +14,10 @@ export interface Campus {
   loginEnabled?: boolean;
   status: 'active' | 'inactive';
   allowedModules?: string[];
+  isMainCampus?: boolean;
+  parentCampusId?: string | null;
+  clientId?: string;
+  shortName?: string;
 }
 
 export interface VoucherEntry {

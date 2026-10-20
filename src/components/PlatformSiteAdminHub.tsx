@@ -48,6 +48,7 @@ import {
   Server,
   Zap,
   UserPlus,
+  LogOut,
 } from 'lucide-react';
 import { useAccounting, Campus, AccountHead, Transaction } from '../core/aplusEngine';
 import {
@@ -84,10 +85,56 @@ import {
 } from '../services/campusAuthSync';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
 import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
+import { GlobalRecycleBinModule } from './GlobalRecycleBinModule';
+import { GlobalRecordSearchModule } from './GlobalRecordSearchModule';
+import { PermissionEngine } from './PermissionEngine';
+import { BulkVoucherAndAccessManager } from './BulkVoucherAndAccessManager';
+import { ExpenseCategorySuggesterWidget } from './ExpenseCategorySuggesterWidget';
+import { MultiFormatReportsHub } from './MultiFormatReportsHub';
+import { SecureAuditTrail } from './SecureAuditTrail';
+import { getStoredRecycleBinRecords, softDeleteRecord } from '../services/globalRecoveryService';
+import {
+  SubCampusHierarchyView,
+  PettyCashImprestView,
+  DatabaseHubView,
+  CloudSyncCenterView,
+  OfflineQueueView,
+  SecuritySessionsView,
+  SystemConfigView,
+  IntegrationsApiView,
+  HealthMonitorView,
+  ServiceWorkerPwaView,
+  MaintenanceReleaseView,
+} from './PlatformAdminExtendedModules';
 
 export type PlatformAdminNavSection =
   | '01_dashboard'
   | '02_clients'
+  | '03_main_campuses'
+  | '04_sub_campuses'
+  | '05_users'
+  | '06_login_roles'
+  | '07_permissions'
+  | '08_approval_matrix'
+  | '09_database_hub'
+  | '10_cloud_sync'
+  | '11_offline_indexeddb'
+  | '12_service_worker'
+  | '13_backup_dr'
+  | '14_recycle_bin'
+  | '15_chart_of_accounts'
+  | '16_voucher_mgmt'
+  | '17_petty_cash'
+  | '18_ai_suggester'
+  | '19_financial_reports'
+  | '20_audit_logs'
+  | '21_security_sessions'
+  | '22_system_config'
+  | '23_integrations'
+  | '24_health_monitor'
+  | '25_maintenance_release'
+  | 'global_search'
+  // Backward compatibility with legacy keys
   | '03_campuses'
   | '04_users'
   | '05_roles_permissions'
@@ -97,13 +144,23 @@ export type PlatformAdminNavSection =
   | '09_consolidated_reports'
   | '10_audit_security'
   | '11_notifications'
-  | '12_backup_settings';
+  | '12_backup_settings'
+  | '13_recycle_bin'
+  | '14_global_search';
 
 export const PlatformSiteAdminHub: React.FC<{
   onNavigate?: (tab: string) => void;
   onClose?: () => void;
   defaultSection?: PlatformAdminNavSection;
-}> = ({ onNavigate, onClose, defaultSection = '01_dashboard' }) => {
+  onSwitchToCampusView?: () => void;
+  isStandalonePlatformView?: boolean;
+}> = ({
+  onNavigate,
+  onClose,
+  defaultSection = '01_dashboard',
+  onSwitchToCampusView,
+  isStandalonePlatformView = false,
+}) => {
   const {
     campuses,
     addCampus,
@@ -121,9 +178,11 @@ export const PlatformSiteAdminHub: React.FC<{
     isSuperAdmin,
     orgSettings,
     exportSystemState,
+    logout,
   } = useAccounting();
 
   const [activeSection, setActiveSection] = useState<PlatformAdminNavSection>(defaultSection);
+  const [sidebarSearch, setSidebarSearch] = useState('');
   const [clients, setClients] = useState<SchoolClientOrganization[]>(() => getStoredSchoolClients());
   const [settings, setSettings] = useState<PlatformSystemSettings>(() => getStoredPlatformSettings());
   const [auditLogs, setAuditLogs] = useState<PlatformAuditSecurityEvent[]>(() =>
@@ -134,11 +193,11 @@ export const PlatformSiteAdminHub: React.FC<{
   );
 
   const [feedbackNotice, setFeedbackNotice] = useState<{
-    type: 'success' | 'error' | 'info';
+    type: 'success' | 'error' | 'warning' | 'info';
     message: string;
   } | null>(null);
 
-  const triggerToast = (type: 'success' | 'error' | 'info', message: string) => {
+  const triggerToast = (type: 'success' | 'error' | 'warning' | 'info', message: string) => {
     setFeedbackNotice({ type, message });
     setTimeout(() => setFeedbackNotice(null), 4500);
   };
@@ -643,9 +702,23 @@ export const PlatformSiteAdminHub: React.FC<{
       return;
     }
 
+    softDeleteRecord({
+      recordType: 'ACCOUNT_HEAD',
+      originalPayload: account,
+      campusId: 'campus-khiali',
+      campusName: 'Aplus Central Network',
+      campusCode: 'ALL',
+      identifier: account.code,
+      title: `Account Head: ${account.name}`,
+      deletedByUserId: currentUser?.id || 'usr-admin',
+      deletedByUserName: currentUser?.name || 'Platform Site Admin',
+      deletedByUserRole: currentUser?.role || 'Super Admin',
+      deletionReason: 'Deleted via Site Admin Chart of Accounts Module (Moved to Global Recycle Bin)',
+    });
+
     const res = deleteAccountHead(account.id || account.code);
     if (res.success) {
-      triggerToast('success', `Deleted unused account head ${account.code}!`);
+      triggerToast('success', `Moved account head ${account.code} to the Global Recycle Bin!`);
     } else {
       triggerToast('error', res.message || 'Could not delete account.');
     }
@@ -701,26 +774,50 @@ export const PlatformSiteAdminHub: React.FC<{
     }
   };
 
-  // Navigation Items matching the requested 12-section architecture
+  // Navigation Items matching the 25 requested modules organized by operational domain
   const NAV_ITEMS: Array<{
     id: PlatformAdminNavSection;
     number: string;
     label: string;
+    category: string;
     icon: React.ComponentType<{ className?: string }>;
     badge?: string | number;
   }> = [
-    { id: '01_dashboard', number: '01', label: 'Global Dashboard', icon: LayoutGrid },
-    { id: '02_clients', number: '02', label: 'Clients / Organizations', icon: Building2, badge: clients.length },
-    { id: '03_campuses', number: '03', label: 'Campuses & Hierarchy', icon: FolderTree, badge: campuses.length },
-    { id: '04_users', number: '04', label: 'Users & Login Accounts', icon: Users, badge: users.length },
-    { id: '05_roles_permissions', number: '05', label: 'Roles & 5-Tier Permissions', icon: ShieldCheck },
-    { id: '06_modules', number: '06', label: 'Modules & Feature Access', icon: Sliders },
-    { id: '07_account_heads', number: '07', label: 'Account Heads & Codes', icon: Layers, badge: accountHeads.length },
-    { id: '08_voucher_controls', number: '08', label: 'Voucher & Approval Controls', icon: FileCheck2 },
-    { id: '09_consolidated_reports', number: '09', label: 'Consolidated Central Reports', icon: FileText },
-    { id: '10_audit_security', number: '10', label: 'Audit Logs & Security', icon: Activity, badge: dashboardStats.criticalAuditCount > 0 ? `${dashboardStats.criticalAuditCount} Alert` : undefined },
-    { id: '11_notifications', number: '11', label: 'Broadcasts & Notifications', icon: Bell },
-    { id: '12_backup_settings', number: '12', label: 'Backup, Recovery & Settings', icon: Settings },
+    // Category 1: Core Platform
+    { id: '01_dashboard', number: '01', label: 'Platform Dashboard', category: 'Core Platform', icon: LayoutGrid },
+    { id: '02_clients', number: '02', label: 'Organizations & Clients', category: 'Core Platform', icon: Building2, badge: clients.length },
+    { id: '03_main_campuses', number: '03', label: 'Main Campus Management', category: 'Core Platform', icon: Building2, badge: campuses.filter((c: any) => c.isMainCampus || !c.parentCampusId).length },
+    { id: '04_sub_campuses', number: '04', label: 'Sub-Campuses & Hierarchy Tree', category: 'Core Platform', icon: FolderTree, badge: campuses.filter((c: any) => c.parentCampusId).length },
+    { id: 'global_search', number: '★', label: 'Global Multi-Campus Search', category: 'Core Platform', icon: Search },
+
+    // Category 2: Identity & Access Governance
+    { id: '05_users', number: '05', label: 'Global User Management', category: 'Identity & Access', icon: Users, badge: users.length },
+    { id: '06_login_roles', number: '06', label: 'Login & Role Hierarchy (5-Tier)', category: 'Identity & Access', icon: KeyRound },
+    { id: '07_permissions', number: '07', label: 'Permission Engineering', category: 'Identity & Access', icon: ShieldCheck },
+    { id: '08_approval_matrix', number: '08', label: 'Platform Approval Matrix', category: 'Identity & Access', icon: FileCheck2 },
+
+    // Category 3: Financial Accounting Suite
+    { id: '15_chart_of_accounts', number: '09', label: 'Chart of Accounts & Codes', category: 'Financial Suite', icon: Layers, badge: accountHeads.length },
+    { id: '16_voucher_mgmt', number: '10', label: 'Voucher Management & Audit', category: 'Financial Suite', icon: FileText, badge: transactions.length },
+    { id: '17_petty_cash', number: '11', label: 'Petty Cash & Imprest Floats', category: 'Financial Suite', icon: Banknote, badge: pettyCashTransactions.length },
+    { id: '18_ai_suggester', number: '12', label: 'AI Expense Suggester', category: 'Financial Suite', icon: Sparkles },
+    { id: '19_financial_reports', number: '13', label: 'Financial Reports & Reconcile', category: 'Financial Suite', icon: Scale },
+
+    // Category 4: Data & Cloud Infrastructure
+    { id: '14_recycle_bin', number: '14', label: 'Deleted Records Recovery', category: 'Data & Recovery', icon: RotateCcw, badge: getStoredRecycleBinRecords().filter((r) => r.status === 'soft_deleted').length || undefined },
+    { id: '09_database_hub', number: '15', label: 'Database Management Hub', category: 'Data & Recovery', icon: Database },
+    { id: '10_cloud_sync', number: '16', label: 'Cloud Synchronization Center', category: 'Data & Recovery', icon: CloudUpload },
+    { id: '11_offline_indexeddb', number: '17', label: 'IndexedDB & Offline Queue', category: 'Data & Recovery', icon: Server },
+    { id: '13_backup_dr', number: '18', label: 'Backup & Disaster Recovery', category: 'Data & Recovery', icon: CloudDownload },
+
+    // Category 5: Security, System & Operations
+    { id: '20_audit_logs', number: '19', label: 'Forensic Audit Logs', category: 'Security & Operations', icon: Activity, badge: dashboardStats.criticalAuditCount > 0 ? `${dashboardStats.criticalAuditCount} Alert` : undefined },
+    { id: '21_security_sessions', number: '20', label: 'Security & Session Control', category: 'Security & Operations', icon: Lock },
+    { id: '22_system_config', number: '21', label: 'System Configuration', category: 'Security & Operations', icon: Sliders },
+    { id: '23_integrations', number: '22', label: 'Integration & API Management', category: 'Security & Operations', icon: Globe },
+    { id: '24_health_monitor', number: '23', label: 'Application Health Monitoring', category: 'Security & Operations', icon: Zap },
+    { id: '12_service_worker', number: '24', label: 'Service Worker & PWA', category: 'Security & Operations', icon: Radio },
+    { id: '25_maintenance_release', number: '25', label: 'Maintenance & Releases', category: 'Security & Operations', icon: Settings },
   ];
 
   return (
@@ -776,6 +873,30 @@ export const PlatformSiteAdminHub: React.FC<{
             <span>Disaster Backup</span>
           </button>
 
+          {onSwitchToCampusView && (
+            <button
+              type="button"
+              onClick={onSwitchToCampusView}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+              title="Open Campus Operational Ledger & Vouchers"
+            >
+              <Building2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Campus Ledger View</span>
+            </button>
+          )}
+
+          {logout && (
+            <button
+              type="button"
+              onClick={logout}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700 hover:border-rose-800"
+              title="Sign out of Platform Control Panel"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          )}
+
           {onClose && (
             <button
               type="button"
@@ -824,47 +945,95 @@ export const PlatformSiteAdminHub: React.FC<{
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         {/* Left Navigation Sequence (Sections 01 to 12) */}
         <aside className="w-full md:w-64 bg-slate-950/90 border-r border-slate-800/80 flex flex-col shrink-0">
-          <div className="p-3 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-            <span>Administration Hierarchy</span>
+          <div className="p-3 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+            <span>Platform Controls</span>
+            <span className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800">
+              25 Modules
+            </span>
           </div>
 
-          <nav className="flex-1 p-2 space-y-1 overflow-y-auto max-h-[700px]">
-            {NAV_ITEMS.map((item) => {
-              const isActive = activeSection === item.id;
-              const IconComp = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveSection(item.id)}
-                  className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30'
-                      : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className={`font-mono text-[10px] ${isActive ? 'text-indigo-200' : 'text-slate-500'}`}>
-                      {item.number}
-                    </span>
-                    <IconComp className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-indigo-400'}`} />
-                    <span className="truncate">{item.label}</span>
-                  </div>
+          {/* Module Filter Input */}
+          <div className="p-2 border-b border-slate-800">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={sidebarSearch}
+                onChange={(e) => setSidebarSearch(e.target.value)}
+                placeholder="Search modules..."
+                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500"
+              />
+            </div>
+          </div>
 
-                  {item.badge !== undefined && (
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
-                        isActive
-                          ? 'bg-indigo-800 text-white'
-                          : String(item.badge).includes('Alert')
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
+          <nav className="flex-1 p-2 space-y-3 overflow-y-auto max-h-[700px]">
+            {['Core Platform', 'Identity & Access', 'Financial Suite', 'Data & Recovery', 'Security & Operations'].map((cat) => {
+              const catItems = NAV_ITEMS.filter((item) => {
+                if (item.category !== cat) return false;
+                if (!sidebarSearch.trim()) return true;
+                const q = sidebarSearch.toLowerCase();
+                return item.label.toLowerCase().includes(q) || item.number.includes(q);
+              });
+
+              if (catItems.length === 0) return null;
+
+              return (
+                <div key={cat} className="space-y-1">
+                  <div className="px-2 pt-1 pb-0.5 text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wider">
+                    {cat}
+                  </div>
+                  {catItems.map((item) => {
+                    const isActive =
+                      activeSection === item.id ||
+                      (item.id === '03_main_campuses' && activeSection === '03_campuses') ||
+                      (item.id === '05_users' && activeSection === '04_users') ||
+                      (item.id === '06_login_roles' && activeSection === '05_roles_permissions') ||
+                      (item.id === '07_permissions' && activeSection === '06_modules') ||
+                      (item.id === '08_approval_matrix' && activeSection === '08_voucher_controls') ||
+                      (item.id === '15_chart_of_accounts' && activeSection === '07_account_heads') ||
+                      (item.id === '19_financial_reports' && activeSection === '09_consolidated_reports') ||
+                      (item.id === '14_recycle_bin' && activeSection === '13_recycle_bin') ||
+                      (item.id === '13_backup_dr' && activeSection === '12_backup_settings') ||
+                      (item.id === '20_audit_logs' && activeSection === '10_audit_security') ||
+                      (item.id === 'global_search' && activeSection === '14_global_search');
+
+                    const IconComp = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setActiveSection(item.id)}
+                        className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
+                          isActive
+                            ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30'
+                            : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`font-mono text-[10px] w-4 text-center shrink-0 ${isActive ? 'text-indigo-200' : 'text-slate-500'}`}>
+                            {item.number}
+                          </span>
+                          <IconComp className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-white' : 'text-indigo-400'}`} />
+                          <span className="truncate text-[11px]">{item.label}</span>
+                        </div>
+
+                        {item.badge !== undefined && (
+                          <span
+                            className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ml-1 ${
+                              isActive
+                                ? 'bg-indigo-800 text-white'
+                                : String(item.badge).includes('Alert')
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
           </nav>
@@ -1031,7 +1200,7 @@ export const PlatformSiteAdminHub: React.FC<{
               </div>
 
               {/* Fast Module Switchers */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
                 <button
                   type="button"
                   onClick={() => setActiveSection('02_clients')}
@@ -1039,7 +1208,7 @@ export const PlatformSiteAdminHub: React.FC<{
                 >
                   <Building2 className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform mb-1.5" />
                   <div className="font-bold text-white">Client Registry</div>
-                  <div className="text-[10px] text-slate-400">Manage school institutions</div>
+                  <div className="text-[10px] text-slate-400">School organizations</div>
                 </button>
 
                 <button
@@ -1048,8 +1217,28 @@ export const PlatformSiteAdminHub: React.FC<{
                   className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-600 text-left transition-colors cursor-pointer group"
                 >
                   <FolderTree className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform mb-1.5" />
-                  <div className="font-bold text-white">Campus Hierarchy</div>
-                  <div className="text-[10px] text-slate-400">Main vs Sub-Campus links</div>
+                  <div className="font-bold text-white">Campus Tree</div>
+                  <div className="text-[10px] text-slate-400">Parent-child hierarchy</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('13_recycle_bin')}
+                  className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500 text-left transition-colors cursor-pointer group"
+                >
+                  <RotateCcw className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform mb-1.5" />
+                  <div className="font-bold text-white">Recycle Bin</div>
+                  <div className="text-[10px] text-slate-400">Voucher & data recovery</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('14_global_search')}
+                  className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-sky-500 text-left transition-colors cursor-pointer group"
+                >
+                  <Search className="w-4 h-4 text-sky-400 group-hover:scale-110 transition-transform mb-1.5" />
+                  <div className="font-bold text-white">Global Search</div>
+                  <div className="text-[10px] text-slate-400">Multi-campus query</div>
                 </button>
 
                 <button
@@ -1058,8 +1247,8 @@ export const PlatformSiteAdminHub: React.FC<{
                   className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-purple-600 text-left transition-colors cursor-pointer group"
                 >
                   <Layers className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform mb-1.5" />
-                  <div className="font-bold text-white">COA & Child Codes</div>
-                  <div className="text-[10px] text-slate-400">Parent 1001-1 code syntax</div>
+                  <div className="font-bold text-white">COA & Codes</div>
+                  <div className="text-[10px] text-slate-400">1001-1 child syntax</div>
                 </button>
 
                 <button
@@ -1069,7 +1258,7 @@ export const PlatformSiteAdminHub: React.FC<{
                 >
                   <Activity className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform mb-1.5" />
                   <div className="font-bold text-white">Audit & Security</div>
-                  <div className="text-[10px] text-slate-400">Cross-campus isolation logs</div>
+                  <div className="text-[10px] text-slate-400">Isolation & security logs</div>
                 </button>
               </div>
             </div>
@@ -1245,7 +1434,7 @@ export const PlatformSiteAdminHub: React.FC<{
           {/* ================================================================ */}
           {/* 03: CAMPUSES & HIERARCHY                                         */}
           {/* ================================================================ */}
-          {activeSection === '03_campuses' && (
+          {(activeSection === '03_campuses' || activeSection === '03_main_campuses') && (
             <div className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -1420,7 +1609,7 @@ export const PlatformSiteAdminHub: React.FC<{
           {/* ================================================================ */}
           {/* 04: USERS & LOGIN ACCOUNTS                                       */}
           {/* ================================================================ */}
-          {activeSection === '04_users' && (
+          {(activeSection === '04_users' || activeSection === '05_users') && (
             <div className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -1537,7 +1726,7 @@ export const PlatformSiteAdminHub: React.FC<{
           {/* ================================================================ */}
           {/* 05: ROLES & PERMISSIONS                                          */}
           {/* ================================================================ */}
-          {activeSection === '05_roles_permissions' && (
+          {(activeSection === '05_roles_permissions' || activeSection === '06_login_roles') && (
             <div className="space-y-5">
               <div>
                 <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
@@ -1617,7 +1806,7 @@ export const PlatformSiteAdminHub: React.FC<{
           {/* ================================================================ */}
           {/* 07: ACCOUNT HEADS & CODE CONFIGURATION                           */}
           {/* ================================================================ */}
-          {activeSection === '07_account_heads' && (
+          {(activeSection === '07_account_heads' || activeSection === '15_chart_of_accounts') && (
             <div className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -1767,92 +1956,131 @@ export const PlatformSiteAdminHub: React.FC<{
           )}
 
           {/* ================================================================ */}
+          {/* 04: SUB-CAMPUSES & HIERARCHY TREE                                */}
+          {/* ================================================================ */}
+          {activeSection === '04_sub_campuses' && (
+            <SubCampusHierarchyView
+              campuses={campuses}
+              onUpdateCampus={updateCampus}
+              triggerToast={triggerToast}
+              onOpenRegisterModal={() => {
+                setNewCampusParentId('none');
+                setNewCampusName('');
+                setNewCampusCode(`C-${campuses.length + 1}`);
+                setNewCampusPassword(generateDynamicPassword('CAMP'));
+                setIsCampusModalOpen(true);
+              }}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* 07: PERMISSION ENGINEERING & GRANULAR MATRIX                      */}
+          {/* ================================================================ */}
+          {(activeSection === '07_permissions' || activeSection === '06_modules') && (
+            <div className="space-y-5">
+              <PermissionEngine />
+            </div>
+          )}
+
+          {/* ================================================================ */}
           {/* 08: VOUCHER & APPROVAL CONTROLS / CONFIGURABLE MATRIX            */}
           {/* ================================================================ */}
-          {activeSection === '08_voucher_controls' && (
+          {(activeSection === '08_voucher_controls' || activeSection === '08_approval_matrix') && (
             <div className="space-y-5">
               <ConfigurableApprovalMatrixModule />
             </div>
           )}
 
           {/* ================================================================ */}
-          {/* 10: AUDIT LOGS & SECURITY MONITOR                                */}
+          {/* 16: VOUCHER MANAGEMENT & AUDIT                                    */}
           {/* ================================================================ */}
-          {activeSection === '10_audit_security' && (
+          {activeSection === '16_voucher_mgmt' && (
             <div className="space-y-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-rose-400" />
-                    <span>Cross-Campus Security & Forensic Audit Logs</span>
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Live detection of permission changes, failed logins, and cross-campus data isolation integrity.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAuditLogs(getStoredPlatformAuditLogs())}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Refresh Logs</span>
-                </button>
-              </div>
-
-              {auditLogs.length === 0 ? (
-                <div className="py-12 text-center text-xs text-slate-500 bg-slate-950/60 rounded-2xl border border-slate-800">
-                  No critical security violations detected. Platform isolation is healthy.
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                  {auditLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 hover:border-slate-700 transition-colors flex items-start justify-between gap-3 text-xs"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
-                              log.severity === 'critical'
-                                ? 'bg-rose-950 text-rose-300 border border-rose-800'
-                                : log.severity === 'high'
-                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                                : 'bg-slate-800 text-slate-300'
-                            }`}
-                          >
-                            {log.severity.toUpperCase()}
-                          </span>
-                          <span className="font-bold text-white">{log.action}</span>
-                          <span className="text-[10px] text-slate-500 font-mono">({log.category})</span>
-                        </div>
-                        <p className="text-slate-300 text-[11px]">{log.details}</p>
-                        <div className="text-[10px] text-slate-500 flex items-center gap-2 font-mono">
-                          <span>Actor: {log.actorName} ({log.actorRole})</span>
-                          <span>•</span>
-                          <span>{new Date(log.timestamp).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <BulkVoucherAndAccessManager />
             </div>
           )}
 
           {/* ================================================================ */}
-          {/* 12: BACKUP, RECOVERY & SYSTEM SETTINGS                           */}
+          {/* 17: PETTY CASH & IMPREST FLOATS                                  */}
           {/* ================================================================ */}
-          {activeSection === '12_backup_settings' && (
+          {activeSection === '17_petty_cash' && (
+            <PettyCashImprestView
+              campuses={campuses}
+              pettyCashTransactions={pettyCashTransactions}
+              onUpdateCampus={updateCampus}
+              triggerToast={triggerToast}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* 18: AI EXPENSE SUGGESTER                                         */}
+          {/* ================================================================ */}
+          {activeSection === '18_ai_suggester' && (
+            <div className="space-y-5">
+              <ExpenseCategorySuggesterWidget />
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* 19: FINANCIAL REPORTS & RECONCILIATION                            */}
+          {/* ================================================================ */}
+          {(activeSection === '19_financial_reports' || activeSection === '09_consolidated_reports') && (
+            <div className="space-y-5">
+              <MultiFormatReportsHub />
+            </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* 14: GLOBAL RECYCLE BIN & FINANCIAL RECORD RECOVERY               */}
+          {/* ================================================================ */}
+          {(activeSection === '14_recycle_bin' || activeSection === '13_recycle_bin') && (
+            <GlobalRecycleBinModule
+              onRecordRestored={(item) => {
+                triggerToast('success', `Restored ${item.recordType} '${item.identifier}' back to live ledger.`);
+              }}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* 09: DATABASE MANAGEMENT HUB                                      */}
+          {/* ================================================================ */}
+          {activeSection === '09_database_hub' && (
+            <DatabaseHubView
+              campuses={campuses}
+              transactions={transactions}
+              pettyCashTransactions={pettyCashTransactions}
+              accountHeads={accountHeads}
+              users={users}
+              triggerToast={triggerToast}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* 10: CLOUD SYNCHRONIZATION CENTER                                 */}
+          {/* ================================================================ */}
+          {activeSection === '10_cloud_sync' && (
+            <CloudSyncCenterView triggerToast={triggerToast} />
+          )}
+
+          {/* ================================================================ */}
+          {/* 11: INDEXEDDB & OFFLINE QUEUE                                    */}
+          {/* ================================================================ */}
+          {activeSection === '11_offline_indexeddb' && (
+            <OfflineQueueView triggerToast={triggerToast} />
+          )}
+
+          {/* ================================================================ */}
+          {/* 13: BACKUP, DISASTER RECOVERY & MASTER SNAPSHOTS                 */}
+          {/* ================================================================ */}
+          {(activeSection === '13_backup_dr' || activeSection === '12_backup_settings') && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-indigo-400" />
-                  <span>Platform System Settings & Disaster Recovery</span>
+                  <CloudDownload className="w-5 h-5 text-indigo-400" />
+                  <span>Platform Disaster Recovery & Master Snapshots</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Platform owner controls, database health, disaster recovery snapshots, and deployment parameters.
+                  Platform owner controls, point-in-time database backups, and emergency recovery utilities.
                 </p>
               </div>
 
@@ -1909,22 +2137,93 @@ export const PlatformSiteAdminHub: React.FC<{
             </div>
           )}
 
-          {/* Fallback for other sections (06, 08, 09, 11) */}
-          {(activeSection === '06_modules' ||
-            activeSection === '08_voucher_controls' ||
-            activeSection === '09_consolidated_reports' ||
-            activeSection === '11_notifications') && (
-            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 space-y-4">
-              <h3 className="text-base font-bold text-white capitalize">
-                {activeSection.replace(/^[0-9]+_/, '').replace(/_/g, ' ')}
-              </h3>
-              <p className="text-xs text-slate-400">
-                Centralized platform configuration module is active and synchronized with the 5-Tier RBAC engine.
-              </p>
-              <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-800/60 text-xs text-indigo-200">
-                All settings are enforced on the backend via Firebase Firestore security rules and the native campus isolation boundary.
+          {/* ================================================================ */}
+          {/* 20: AUDIT LOGS & SECURITY MONITOR                                */}
+          {/* ================================================================ */}
+          {(activeSection === '20_audit_logs' || activeSection === '10_audit_security') && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-rose-400" />
+                    <span>Cross-Campus Security & Forensic Audit Logs</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Live detection of permission changes, failed logins, and cross-campus data isolation integrity.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuditLogs(getStoredPlatformAuditLogs())}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Refresh Logs</span>
+                </button>
               </div>
+
+              {/* Forensic Audit Trail Embedded Component */}
+              <SecureAuditTrail />
             </div>
+          )}
+
+          {/* ================================================================ */}
+          {/* 21: SECURITY & SESSION CONTROL                                   */}
+          {/* ================================================================ */}
+          {activeSection === '21_security_sessions' && (
+            <SecuritySessionsView
+              settings={settings}
+              onUpdateSettings={setSettings}
+              triggerToast={triggerToast}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* 22: SYSTEM CONFIGURATION                                          */}
+          {/* ================================================================ */}
+          {activeSection === '22_system_config' && (
+            <SystemConfigView
+              settings={settings}
+              onUpdateSettings={setSettings}
+              triggerToast={triggerToast}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* 23: INTEGRATION & API MANAGEMENT                                  */}
+          {/* ================================================================ */}
+          {activeSection === '23_integrations' && (
+            <IntegrationsApiView triggerToast={triggerToast} />
+          )}
+
+          {/* ================================================================ */}
+          {/* 24: APPLICATION HEALTH MONITORING                                */}
+          {/* ================================================================ */}
+          {activeSection === '24_health_monitor' && <HealthMonitorView />}
+
+          {/* ================================================================ */}
+          {/* 12: SERVICE WORKER & PWA                                          */}
+          {/* ================================================================ */}
+          {activeSection === '12_service_worker' && (
+            <ServiceWorkerPwaView triggerToast={triggerToast} />
+          )}
+
+          {/* ================================================================ */}
+          {/* 25: MAINTENANCE & RELEASES                                        */}
+          {/* ================================================================ */}
+          {activeSection === '25_maintenance_release' && (
+            <MaintenanceReleaseView
+              settings={settings}
+              onToggleMaintenance={handleToggleMaintenanceMode}
+              triggerToast={triggerToast}
+            />
+          )}
+
+          {/* ================================================================ */}
+          {/* GLOBAL MULTI-CAMPUS SEARCH                                       */}
+          {/* ================================================================ */}
+          {(activeSection === 'global_search' || activeSection === '14_global_search') && (
+            <GlobalRecordSearchModule />
           )}
         </main>
       </div>
