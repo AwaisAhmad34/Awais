@@ -106,6 +106,7 @@ import {
   ServiceWorkerPwaView,
   MaintenanceReleaseView,
 } from './PlatformAdminExtendedModules';
+import { ClientFinancialReportsPermissionsManager } from './ClientFinancialReportsPermissionsManager';
 
 export type PlatformAdminNavSection =
   | '01_dashboard'
@@ -127,6 +128,7 @@ export type PlatformAdminNavSection =
   | '17_petty_cash'
   | '18_ai_suggester'
   | '19_financial_reports'
+  | 'financial_reports_permissions'
   | '20_audit_logs'
   | '21_security_sessions'
   | '22_system_config'
@@ -201,6 +203,8 @@ export const PlatformSiteAdminHub: React.FC<{
     setFeedbackNotice({ type, message });
     setTimeout(() => setFeedbackNotice(null), 4500);
   };
+
+  const [reportsSubTab, setReportsSubTab] = useState<'permissions' | 'viewer'>('permissions');
 
   // --------------------------------------------------------------------------
   // SECTION 02: CLIENTS & ORGANIZATIONS STATE
@@ -801,7 +805,8 @@ export const PlatformSiteAdminHub: React.FC<{
     { id: '16_voucher_mgmt', number: '10', label: 'Voucher Management & Audit', category: 'Financial Suite', icon: FileText, badge: transactions.length },
     { id: '17_petty_cash', number: '11', label: 'Petty Cash & Imprest Floats', category: 'Financial Suite', icon: Banknote, badge: pettyCashTransactions.length },
     { id: '18_ai_suggester', number: '12', label: 'AI Expense Suggester', category: 'Financial Suite', icon: Sparkles },
-    { id: '19_financial_reports', number: '13', label: 'Financial Reports & Reconcile', category: 'Financial Suite', icon: Scale },
+    { id: '19_financial_reports', number: '13', label: 'Financial Reports Suite', category: 'Financial Suite', icon: Scale },
+    { id: 'financial_reports_permissions', number: '14', label: 'Client Report Permissions', category: 'Financial Suite', icon: ShieldCheck, badge: 'Policy' },
 
     // Category 4: Data & Cloud Infrastructure
     { id: '14_recycle_bin', number: '14', label: 'Deleted Records Recovery', category: 'Data & Recovery', icon: RotateCcw, badge: getStoredRecycleBinRecords().filter((r) => r.status === 'soft_deleted').length || undefined },
@@ -2022,11 +2027,53 @@ export const PlatformSiteAdminHub: React.FC<{
           )}
 
           {/* ================================================================ */}
-          {/* 19: FINANCIAL REPORTS & RECONCILIATION                            */}
+          {/* 19: FINANCIAL REPORTS SUITE & CLIENT PERMISSION MANAGER          */}
           {/* ================================================================ */}
-          {(activeSection === '19_financial_reports' || activeSection === '09_consolidated_reports') && (
+          {(activeSection === '19_financial_reports' ||
+            activeSection === '09_consolidated_reports' ||
+            activeSection === 'financial_reports_permissions') && (
             <div className="space-y-5">
-              <MultiFormatReportsHub />
+              {/* Top Sub-Tab Switcher for Platform Site Admin */}
+              <div className="flex items-center justify-between gap-3 p-1.5 bg-slate-950/80 border border-slate-800 rounded-2xl">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setReportsSubTab('permissions')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                      reportsSubTab === 'permissions' || activeSection === 'financial_reports_permissions'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                    }`}
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Client Report Permissions Manager (Which Reports Show to Which Clients)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReportsSubTab('viewer')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                      reportsSubTab === 'viewer' && activeSection !== 'financial_reports_permissions'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                    }`}
+                  >
+                    <Scale className="w-4 h-4" />
+                    <span>Multi-Format Financial Reports Suite & Reconciler</span>
+                  </button>
+                </div>
+
+                <div className="text-[11px] font-mono text-indigo-400/90 pr-3 hidden sm:block">
+                  {reportsSubTab === 'permissions' || activeSection === 'financial_reports_permissions'
+                    ? 'Configuring Client Access Boundaries'
+                    : 'Viewing Campus Ledgers & Statements'}
+                </div>
+              </div>
+
+              {reportsSubTab === 'permissions' || activeSection === 'financial_reports_permissions' ? (
+                <ClientFinancialReportsPermissionsManager triggerToast={triggerToast} />
+              ) : (
+                <MultiFormatReportsHub />
+              )}
             </div>
           )}
 

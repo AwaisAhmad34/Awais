@@ -4,6 +4,15 @@
  * restore preconditions, dependency checks, and role isolation.
  */
 
+import {
+  enforceTenantQueryFilter,
+  validateCampusPermission as testValidateCampusPermission,
+  TenantIsolatedRepository,
+  validateClientReportAccess,
+  PLATFORM_FINANCIAL_REPORTS_CATALOG,
+  generateDefaultClientReportPermissions
+} from '../src/services/tenantIsolationService';
+
 function runTenantIsolationAndRecoveryTests() {
   console.log('Running Multi-Campus Tenant Isolation, Security & Recovery Verification Tests...');
 
@@ -203,7 +212,169 @@ function runTenantIsolationAndRecoveryTests() {
   }
   console.log('✓ Test 12: Campus DB cross-client isolation and sub-campus scoping verified.');
 
-  console.log('All 12 Tenant Isolation, Security & Recovery Verification tests passed successfully!');
+  // Test 13: Automatic 'client_id' Query Filter Injection
+  const client1UserContext: any = {
+    clientId: 'client_alpha',
+    userId: 'user_01',
+    userName: 'Campus Accountant',
+    userRole: 'accountant',
+    permissionLevel: 'level_5_departmental_staff',
+    campusId: 'campus_isb_01',
+    isPlatformAdmin: false,
+    isClientAdmin: false,
+  };
+
+  const testCampuses = [
+    { id: 'campus_isb_01', code: 'ISB', name: 'Islamabad Main', clientId: 'client_alpha', isMainCampus: true, status: 'active' },
+    { id: 'campus_rwp_02', code: 'RWP', name: 'Rawalpindi Sub', clientId: 'client_alpha', isMainCampus: false, parentCampusId: 'campus_isb_01', status: 'active' },
+    { id: 'campus_lhr_99', code: 'LHR', name: 'Lahore Branch', clientId: 'client_beta', isMainCampus: true, status: 'active' },
+  ];
+
+  const incomingRawQuery = { status: 'Posted', voucherType: 'BPV' };
+  const rewritten = enforceTenantQueryFilter(client1UserContext, 'vouchers', incomingRawQuery, testCampuses);
+
+  if (rewritten.isolatedFilters.client_id !== 'client_alpha') {
+    throw new Error('Tenant Isolation Failed: Query did not automatically append enforced client_id.');
+  }
+  if (!rewritten.authorizedCampusIds.includes('campus_isb_01') || rewritten.authorizedCampusIds.includes('campus_lhr_99')) {
+    throw new Error('Tenant Scoping Failed: Campus authorization leaked unauthorized campus.');
+  }
+  console.log('✓ Test 13: Automatic client_id filter injection and campus boundary enforcement verified.');
+
+  // Test 14: Campus Permission Validation Across CRUD Operations
+  const repo = new TenantIsolatedRepository({
+    campuses: testCampuses,
+    vouchers: [
+      { id: 'v-alpha-1', voucherNo: 'BPV-101', clientId: 'client_alpha', campusId: 'campus_isb_01', totalDebit: 25000, totalCredit: 25000 },
+      { id: 'v-beta-1', voucherNo: 'BPV-901', clientId: 'client_beta', campusId: 'campus_lhr_99', totalDebit: 50000, totalCredit: 50000 }
+    ],
+    users: [
+      { id: 'u-alpha-1', name: 'Alpha Accountant', clientId: 'client_alpha', campusId: 'campus_isb_01' }
+    ],
+    financialRecords: [
+      { id: 'fin-alpha-1', recordType: 'petty_cash', amount: 5000, clientId: 'client_alpha', campusId: 'campus_isb_01' }
+    ]
+  });
+
+  // Query vouchers for client_alpha
+  const queriedVouchers = repo.queryVouchers(client1UserContext);
+  if (queriedVouchers.length !== 1 || queriedVouchers[0].id !== 'v-alpha-1') {
+    throw new Error('Tenant Query Isolation Failed: Returned vouchers from other tenants or failed lookup.');
+  }
+
+  // Attempt cross-tenant getById (MUST throw 403 TenantSecurityError)
+  let crossTenantBlocked = false;
+  try {
+    repo.getVoucherById(client1UserContext, 'v-beta-1');
+  } catch (err: any) {
+    if (err.code === 'TENANT_ISOLATION_VIOLATION') crossTenantBlocked = true;
+  }
+  if (!crossTenantBlocked) {
+    throw new Error('Cross-Tenant Security Breach: User was able to access other client voucher.');
+  }
+  console.log('✓ Test 14: Cross-tenant voucher access blocked with TENANT_ISOLATION_VIOLATION.');
+
+  // Test 15: Campus ID Permission Validation on Creation & Deletion
+  let unauthorizedCampusBlocked = false;
+  try {
+    // client1UserContext is staff of campus_isb_01; attempting to create voucher in campus_rwp_02
+    repo.createVoucher(client1UserContext, {
+      voucherNo: 'CPV-FAIL',
+      campus_id: 'campus_rwp_02',
+      totalDebit: 1000,
+      totalCredit: 1000,
+    });
+  } catch (err: any) {
+    if (err.code === 'CAMPUS_PERMISSION_DENIED') unauthorizedCampusBlocked = true;
+  }
+  if (!unauthorizedCampusBlocked) {
+    throw new Error('Campus Authorization Failed: Staff created voucher in unassigned campus.');
+  }
+  console.log('✓ Test 15: Unauthorized campus voucher creation blocked with CAMPUS_PERMISSION_DENIED.');
+
+  // Test 16: CRUD on Users and Financial Records
+  const createdFinRecord = repo.createFinancialRecord(client1UserContext, {
+    recordType: 'petty_cash',
+    amount: 1500,
+    campus_id: 'campus_isb_01',
+    narration: 'Office supplies reimbursement',
+  });
+  if (createdFinRecord.client_id !== 'client_alpha') {
+    throw new Error('Financial Record Isolation Failed: client_id was not automatically stamped.');
+  }
+
+  const alphaFinRecords = repo.queryFinancialRecords(client1UserContext, 'petty_cash');
+  if (alphaFinRecords.length !== 2) {
+    throw new Error('Financial Records Query Scoping Failed.');
+  }
+  console.log('✓ Test 16: Financial records and users CRUD with automatic client_id stamping verified.');
+
+  // Test 17: Platform Site Admin & Multi-Campus Management Hub Financial Reports Permissions
+  // Configure client_alpha report permissions: enable format_2_executive_board with minimum role Level 2 Client Super Admin
+  const alphaReportPermissions = generateDefaultClientReportPermissions('client_alpha').map(p => {
+    if (p.reportKey === 'format_2_executive_board') {
+      return { ...p, enabled: true, minimumRole: 'level_2_client_super_admin' as const };
+    }
+    return p;
+  });
+  
+  // Departmental staff (Level 5) attempting to access Executive Board report -> must be blocked
+  const staffContext = { ...client1UserContext, permissionLevel: 'level_5_departmental_staff' as const };
+  const boardReportAccess = validateClientReportAccess(
+    staffContext,
+    'format_2_executive_board',
+    'campus_isb_01',
+    false,
+    { client_alpha: alphaReportPermissions },
+    testCampuses
+  );
+  if (boardReportAccess.allowed) {
+    throw new Error('Financial Report Permission Failed: Departmental staff accessed executive board report.');
+  }
+
+  // Client Super Admin (Level 2) accessing the enabled report -> allowed
+  const clientAdminContext = {
+    ...client1UserContext,
+    userRole: 'client_super_admin',
+    permissionLevel: 'level_2_client_super_admin' as const,
+    isClientAdmin: true,
+  };
+  const adminBoardAccess = validateClientReportAccess(
+    clientAdminContext,
+    'format_2_executive_board',
+    'campus_isb_01',
+    true,
+    { client_alpha: alphaReportPermissions },
+    testCampuses
+  );
+  if (!adminBoardAccess.allowed) {
+    throw new Error('Financial Report Permission Failed: Client Super Admin was incorrectly blocked: ' + adminBoardAccess.reason);
+  }
+  console.log('✓ Test 17: Financial report permissions role-gating & client access validation verified.');
+
+  // Test 18: Disabling Financial Report by Platform Site Admin
+  const modifiedPermissions = alphaReportPermissions.map(p => {
+    if (p.reportKey === 'ext_profit_loss_statement') {
+      return { ...p, enabled: false };
+    }
+    return p;
+  });
+
+  const pnlAccessWhenDisabled = validateClientReportAccess(
+    clientAdminContext,
+    'ext_profit_loss_statement',
+    'campus_isb_01',
+    false,
+    { client_alpha: modifiedPermissions },
+    testCampuses
+  );
+
+  if (pnlAccessWhenDisabled.allowed) {
+    throw new Error('Site Admin Control Failed: Disabled report was still accessible by client.');
+  }
+  console.log('✓ Test 18: Platform Site Admin report disabling per client successfully blocks access.');
+
+  console.log('All 18 Multi-Campus Tenant Isolation, Security, Recovery & Financial Report Tests PASSED!');
 }
 
 runTenantIsolationAndRecoveryTests();

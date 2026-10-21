@@ -32,6 +32,7 @@ import {
 import { useAccounting } from '../core/aplusEngine';
 import { PettyCashCategoryAnalytics } from './PettyCashCategoryAnalytics';
 import { BudgetVarianceWidget, INSTITUTIONAL_DEPARTMENTS } from './BudgetVarianceWidget';
+import { CampusMonthlyBudgetExpenditureChart } from './CampusMonthlyBudgetExpenditureChart';
 import { saveErpStateToCloud, loadErpStateFromCloud } from '../services/firebaseSync';
 
 export interface StudentFeeChallan {
@@ -1474,7 +1475,8 @@ export const ModernErpSuite: React.FC<{
 
       {/* TAB 6: DYNAMIC BUDGETING & VARIANCE CONTROL ERP */}
       {activeTab === 'erp_budgeting' && (
-        <div className="-mx-4 sm:-mx-6">
+        <div className="space-y-6 -mx-4 sm:-mx-6">
+          <CampusMonthlyBudgetExpenditureChart />
           <BudgetVarianceWidget onNavigate={onNavigate} />
         </div>
       )}

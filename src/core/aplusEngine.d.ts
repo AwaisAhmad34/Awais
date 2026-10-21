@@ -36,6 +36,7 @@ export interface Transaction {
   voucherNo: string;
   voucherType: 'BPV' | 'BRV' | 'CPV' | 'CRV' | 'JV';
   campusId: string;
+  clientId?: string;
   date: string;
   accountingPeriod?: string;
   narration: string;
@@ -56,6 +57,7 @@ export interface PettyCashTransaction {
   voucherNo: string;
   trNo?: string | number;
   campusId: string;
+  clientId?: string;
   date: string;
   type: 'Disbursement' | 'Replenishment' | 'Opening';
   payee: string;
@@ -85,6 +87,35 @@ export interface AccountHead {
   groupName: string;
   accountType?: string;
   description?: string;
+  clientId?: string;
+}
+
+export interface AppUser {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  role:
+    | 'level_1_platform_super_admin'
+    | 'level_2_client_super_admin'
+    | 'level_3_sub_campus_admin'
+    | 'campus_accountant'
+    | 'cashier'
+    | 'principal'
+    | 'data_entry'
+    | 'read_only'
+    | 'superadmin'
+    | 'admin'
+    | string;
+  clientId?: string | null;
+  campusId?: string | null;
+  permittedCampusIds?: string[];
+  password?: string;
+  status: 'active' | 'inactive' | 'suspended';
+  allowedModules?: string[];
+  allowedReports?: string[];
+  designation?: string;
+  [key: string]: any;
 }
 
 export interface OrgSettings {
@@ -121,6 +152,7 @@ export interface AuditLogEntry {
   userRole: string;
   campusId: string;
   campusName: string;
+  clientId?: string;
   action:
     | 'CREATE_VOUCHER'
     | 'UPDATE_VOUCHER'

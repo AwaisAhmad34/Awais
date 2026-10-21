@@ -24,6 +24,7 @@ import {
 import { useAccounting } from '../core/aplusEngine';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
 import { PettyCashUtilizationComparativeChart } from './PettyCashUtilizationComparativeChart';
+import { CampusMonthlyBudgetExpenditureChart } from './CampusMonthlyBudgetExpenditureChart';
 import { DailyCashSummary } from './DailyCashSummary';
 import {
   restoreLastDeletedAccount,
@@ -58,6 +59,7 @@ export const FinancialHealthAndSuggestions: React.FC<{
 
   const [isExpanded, setIsExpanded] = useState(true);
   const [showPettyCashComparison, setShowPettyCashComparison] = useState(true);
+  const [showBudgetComparison, setShowBudgetComparison] = useState(true);
   const [activeQuickForm, setActiveQuickForm] = useState<
     | 'none'
     | 'new_campus'
@@ -909,6 +911,40 @@ export const FinancialHealthAndSuggestions: React.FC<{
                       onNavigate?.('pettycash');
                     }
                   }}
+                />
+              )}
+            </div>
+
+            {/* Comparative Bar Chart: Monthly Expenditures vs Budget Limits */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-800 flex items-center justify-center font-bold">
+                    <BarChart3 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
+                      Multi-Campus Monthly Expenditures vs Budget Limits (Comparative Bar Chart)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Comparative Recharts bar chart tracking actual disbursements against authorized monthly budget limits across campuses
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowBudgetComparison((v) => !v)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-xs font-bold text-slate-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <span>{showBudgetComparison ? 'Hide Budget Chart' : 'Show Budget Chart'}</span>
+                  {showBudgetComparison ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+              {showBudgetComparison && (
+                <CampusMonthlyBudgetExpenditureChart
+                  campuses={campuses}
+                  transactions={transactions}
                 />
               )}
             </div>

@@ -105,6 +105,24 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "keyword", "category", "accountCode"]
+    },
+    "ClientReportPermission": {
+      "title": "ClientReportPermission",
+      "description": "Multi-campus client financial reports visibility and role access policy",
+      "type": "object",
+      "properties": {
+        "clientId": { "type": "string" },
+        "reportKey": { "type": "string" },
+        "reportTitle": { "type": "string" },
+        "category": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "minimumRole": { "type": "string" },
+        "allowCrossCampusConsolidated": { "type": "boolean" },
+        "sensitivityTier": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["clientId", "reportKey", "enabled"]
     }
   },
   "firestore": {

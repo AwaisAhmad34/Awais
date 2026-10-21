@@ -16,6 +16,7 @@ import {
   Award,
   BarChart3,
   Clock,
+  Lock,
 } from 'lucide-react';
 import {
   useAccounting,
@@ -23,6 +24,10 @@ import {
   printOrDownloadElement,
   SchoolLogo,
 } from '../core/aplusEngine';
+import {
+  validateClientReportAccess,
+  getStoredClientReportPermissions,
+} from '../services/tenantIsolationService';
 import { useTenantAuth } from '../context/TenantAuthContext';
 import {
   DynamicReportSignatureBlock,
@@ -232,6 +237,7 @@ export const MultiFormatReportsHub: React.FC<{
   LegacyReportsHub?: React.ComponentType<any>;
 }> = ({ LegacyReportsHub }) => {
   const {
+    currentUser,
     accountHeads,
     transactions,
     pettyCashTransactions,
@@ -247,6 +253,36 @@ export const MultiFormatReportsHub: React.FC<{
   const isCampusAdmin = platformRole === 'campus_admin' && Boolean(activeCampusId);
 
   const [selectedFormat, setSelectedFormat] = useState<ReportFormatId>('format_1_main');
+
+  // Validate if currently authenticated user / client has permissions to view this financial report
+  const reportAccess = useMemo(() => {
+    const isPlatformAdmin = Boolean(
+      currentUser?.role === 'admin' ||
+      currentUser?.role === 'superadmin' ||
+      currentUser?.role === 'level_1_platform_super_admin'
+    );
+    if (isPlatformAdmin) return { allowed: true };
+
+    const allPerms = getStoredClientReportPermissions();
+    const tenantCtx = {
+      clientId: currentUser?.clientId || 'client-aplus',
+      userId: currentUser?.id || 'usr-active',
+      userName: currentUser?.name || 'Active User',
+      userRole: currentUser?.role || 'accountant',
+      permissionLevel: (currentUser?.permissionLevel || 'level_4_sub_campus_admin') as any,
+      campusId: activeCampusId || (currentCampusId === 'all' ? null : currentCampusId),
+      isPlatformAdmin: false,
+      isClientAdmin: currentUser?.role === 'level_2_client_super_admin',
+    };
+
+    return validateClientReportAccess(
+      tenantCtx,
+      selectedFormat,
+      currentCampusId === 'all' ? null : currentCampusId,
+      currentCampusId === 'all',
+      allPerms
+    );
+  }, [currentUser, selectedFormat, currentCampusId, activeCampusId]);
   const [dateFrom, setDateFrom] = useState<string>(() => activePeriod?.startDate || '2026-07-01');
   const [dateTo, setDateTo] = useState<string>(
     () => new Date().toISOString().slice(0, 10)
@@ -818,8 +854,28 @@ export const MultiFormatReportsHub: React.FC<{
         </div>
       </div>
 
+      {/* ACCESS CONTROL GUARD: If report is disabled for client or role is insufficient */}
+      {!reportAccess.allowed && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12">
+          <div className="bg-slate-900 border border-rose-900/60 rounded-3xl p-8 sm:p-12 text-center space-y-4 shadow-xl">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mx-auto shadow-inner">
+              <Lock className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-white">Financial Report Access Restricted</h3>
+              <p className="text-xs text-rose-300 max-w-xl mx-auto mt-2 font-mono bg-rose-950/60 py-2 px-3 rounded-xl border border-rose-900">
+                {reportAccess.reason || 'This financial report is not authorized for your organization or user role by Platform Site Admin policy.'}
+              </p>
+            </div>
+            <div className="text-xs text-slate-400 max-w-md mx-auto">
+              Platform Site Administrators can grant or revoke report permissions per client organization from the Multi-Campus Management Hub under <strong>Client Report Permissions</strong>.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FORMAT #1 (MAIN FORMAT WE ALREADY USE): Renders the complete original report suite */}
-      {selectedFormat === 'format_1_main' && (
+      {reportAccess.allowed && selectedFormat === 'format_1_main' && (
         LegacyReportsHub ? (
           <LegacyReportsHub />
         ) : (
@@ -833,7 +889,7 @@ export const MultiFormatReportsHub: React.FC<{
       )}
 
       {/* FORMATS #2 TO #10: Rendered in A4 Printable Institutional Container */}
-      {selectedFormat !== 'format_1_main' && (
+      {reportAccess.allowed && selectedFormat !== 'format_1_main' && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-10">
           <div
             ref={printRef}

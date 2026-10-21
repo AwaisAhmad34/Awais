@@ -41,6 +41,11 @@ import {
 } from '../services/platformSiteAdminService';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
 import { getStoredRecycleBinRecords } from '../services/globalRecoveryService';
+import {
+  getStoredCampusLoginActivities,
+  CampusLoginActivity,
+  clearCampusLoginActivities,
+} from '../services/campusLoginActivityService';
 
 // ============================================================================
 // 04: SUB-CAMPUSES & HIERARCHY TREE
@@ -810,16 +815,78 @@ export const SecuritySessionsView: React.FC<{
     triggerToast('warning', 'All active non-admin user sessions have been terminated. Re-login is required.');
   };
 
+  const [loginLogs, setLoginLogs] = useState<CampusLoginActivity[]>(() =>
+    getStoredCampusLoginActivities()
+  );
+  const [searchLog, setSearchLog] = useState('');
+  const [campusFilter, setCampusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'locked'>('all');
+
+  const distinctCampuses = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; code: string }>();
+    loginLogs.forEach((l) => {
+      if (!map.has(l.campusId)) {
+        map.set(l.campusId, { id: l.campusId, name: l.campusName, code: l.campusCode });
+      }
+    });
+    return Array.from(map.values());
+  }, [loginLogs]);
+
+  const filteredLogs = useMemo(() => {
+    return loginLogs.filter((l) => {
+      if (campusFilter !== 'all' && l.campusId !== campusFilter && l.campusCode !== campusFilter)
+        return false;
+      if (statusFilter !== 'all' && l.status !== statusFilter) return false;
+      if (searchLog.trim()) {
+        const q = searchLog.toLowerCase().trim();
+        const matchesUser = l.userName.toLowerCase().includes(q);
+        const matchesCampus =
+          l.campusName.toLowerCase().includes(q) || l.campusCode.toLowerCase().includes(q);
+        const matchesIp = l.ipAddress.includes(q);
+        const matchesRemarks = (l.remarks || '').toLowerCase().includes(q);
+        if (!matchesUser && !matchesCampus && !matchesIp && !matchesRemarks) return false;
+      }
+      return true;
+    });
+  }, [loginLogs, campusFilter, statusFilter, searchLog]);
+
+  const handleClearActivities = () => {
+    if (window.confirm('Clear all stored campus login activity history?')) {
+      clearCampusLoginActivities();
+      setLoginLogs([]);
+      triggerToast('info', 'Campus login activity history cleared.');
+    }
+  };
+
+  const handleRefreshActivities = () => {
+    const updated = getStoredCampusLoginActivities();
+    setLoginLogs(updated);
+    triggerToast('success', `Refreshed campus login activities (${updated.length} entries).`);
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
-          <Lock className="w-5 h-5 text-rose-400" />
-          <span>Security & Administrator Session Governance</span>
-        </h3>
-        <p className="text-xs text-slate-400 mt-0.5">
-          Platform-level authentication policies, session lifespan, failed login lockouts, and emergency revocation.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
+            <Lock className="w-5 h-5 text-rose-400" />
+            <span>Security, Sessions & Campus Login Activity</span>
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Platform-level authentication policies, live campus login tracking, failed attempt audit, and emergency revocation.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleRefreshActivities}
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Refresh Log</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -894,6 +961,167 @@ export const SecuritySessionsView: React.FC<{
         >
           Save Security Policies
         </button>
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* CAMPUS LOGIN ACTIVITY TELEMETRY & AUDIT TABLE                      */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/70 p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400">
+              <Activity className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>Campus Login Activity & Authentication Audit Trail</span>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-800">
+                  {loginLogs.length} Total Logins Tracked
+                </span>
+              </h4>
+              <p className="text-[11px] text-slate-400">
+                Real-time forensic monitoring of all campus logins, security tokens, and authentication attempts.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchLog}
+                onChange={(e) => setSearchLog(e.target.value)}
+                placeholder="Search user, campus, IP..."
+                className="pl-8 pr-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-44 sm:w-56 focus:border-indigo-500"
+              />
+            </div>
+
+            <select
+              value={campusFilter}
+              onChange={(e) => setCampusFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white outline-none focus:border-indigo-500"
+            >
+              <option value="all">All Campuses</option>
+              {distinctCampuses.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.code})
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white outline-none focus:border-indigo-500"
+            >
+              <option value="all">All Statuses</option>
+              <option value="success">Successful</option>
+              <option value="failed">Failed Attempt</option>
+              <option value="locked">Locked Out</option>
+            </select>
+
+            {loginLogs.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearActivities}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-rose-950 text-slate-400 hover:text-rose-300 text-xs font-semibold border border-slate-800 hover:border-rose-800 transition-colors cursor-pointer"
+              >
+                Clear Log
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Activity Table */}
+        <div className="border border-slate-800/80 rounded-xl overflow-hidden bg-slate-900/50">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                <th className="py-2.5 px-3">Timestamp</th>
+                <th className="py-2.5 px-3">Campus Branch</th>
+                <th className="py-2.5 px-3">User & Role</th>
+                <th className="py-2.5 px-3">Device / IP</th>
+                <th className="py-2.5 px-3">Method</th>
+                <th className="py-2.5 px-3">Status</th>
+                <th className="py-2.5 px-3">Remarks</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 font-sans">
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-slate-500 text-xs">
+                    No campus login activities matching current filters.
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-900/80 transition-colors">
+                    <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap font-mono text-[11px]">
+                      {new Date(log.timestamp).toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+                          {log.campusCode}
+                        </span>
+                        <span className="text-white font-medium truncate max-w-[140px]">
+                          {log.campusName}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="font-bold text-white">{log.userName}</div>
+                      <div className="text-[10px] text-slate-400">{log.userRole}</div>
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
+                      <div>{log.ipAddress}</div>
+                      <div className="text-[10px] text-slate-500 font-sans truncate max-w-[120px]">
+                        {log.device}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                        {log.method === 'dynamic_auth'
+                          ? 'Token / Dynamic'
+                          : log.method === 'vault_one_click'
+                          ? 'Vault Emulate'
+                          : 'Portal Form'}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                          log.status === 'success'
+                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                            : log.status === 'locked'
+                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                            : 'bg-rose-950 text-rose-300 border border-rose-800'
+                        }`}
+                      >
+                        {log.status === 'success' ? (
+                          <Check className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <AlertCircle className="w-3 h-3 text-rose-400" />
+                        )}
+                        <span className="capitalize">{log.status}</span>
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-slate-400 text-[11px] truncate max-w-xs">
+                      {log.remarks || 'Standard campus authentication session'}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

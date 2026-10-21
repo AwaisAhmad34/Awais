@@ -28,6 +28,8 @@ import { DynamicReportSignatureBlock } from './components/ReportSignatureManager
 import { DynamicCampusLoginPortal } from './components/DynamicCampusLoginPortal';
 import { PermissionEngine } from './components/PermissionEngine';
 import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
+import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub';
+import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
 
 initFirebaseCloudSync();
@@ -47,24 +49,30 @@ window.__APLUS_MULTI_FORMAT_REPORTS__ = MultiFormatReportsHub;
 window.__APLUS_REPORT_SIGNATURES_BLOCK__ = DynamicReportSignatureBlock;
 window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;
 window.__APLUS_TOP_BAR__ = AplusTopBar;
+(window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
 
 function InnerApp() {
-  const { currentUser, isSuperAdmin } = useAccounting();
+  const { currentUser, isSuperAdmin, setCurrentCampusId, campuses } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
+  const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
 
   // Login is required for everyone
   if (!currentUser) {
     return <DynamicCampusLoginPortal />;
   }
 
-  // Check if authenticated user is a Platform Site Admin (Platform Creator / Super Admin)
+  // Hierarchy Level 1: Platform Super Admin (Site Owner)
   const isPlatformSiteAdmin =
-    currentUser.role === 'admin' ||
-    currentUser.role === 'superadmin' ||
     currentUser.role === 'level_1_platform_super_admin' ||
-    (isSuperAdmin && (!currentUser.campusId || currentUser.campusAccess === 'all'));
+    currentUser.role === 'admin' ||
+    (isSuperAdmin && (!currentUser.campusId || currentUser.campusAccess === 'all') && !currentUser.clientId);
 
-  // Dedicated Platform-Level Control Panel (Site Admin does NOT enter through a campus branch)
+  // Hierarchy Level 2: Main Campus Administrator (Client Owner)
+  const isClientOwnerMainAdmin =
+    currentUser.role === 'level_2_client_super_admin' ||
+    (currentUser.clientId && currentUser.role?.includes('client_super_admin'));
+
+  // Dedicated Platform-Level Control Panel (Level 1)
   if (isPlatformSiteAdmin && adminViewMode === 'platform_control_panel') {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 p-2 sm:p-4">
@@ -73,7 +81,7 @@ function InnerApp() {
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs font-mono font-bold text-slate-300">
-              Platform Administration Workspace • Signed in as <strong className="text-white">{currentUser.name || currentUser.username}</strong>
+              Platform Administration Workspace • Signed in as <strong className="text-white">{currentUser.name || currentUser.username}</strong> (Site Owner)
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -96,7 +104,21 @@ function InnerApp() {
     );
   }
 
-  // When viewing campus operations (or for campus accountants/staff):
+  // Dedicated Client Owner Management Panel (Level 2)
+  if (isClientOwnerMainAdmin && clientViewMode === 'client_hub') {
+    return (
+      <ClientOwnerManagementHub
+        onSwitchToCampusOperationalView={(campusId) => {
+          if (campusId && setCurrentCampusId) {
+            setCurrentCampusId(campusId);
+          }
+          setClientViewMode('campus_operations');
+        }}
+      />
+    );
+  }
+
+  // Campus Operational View (Level 2 when inspecting branch, or Level 3/4 sub-campus users)
   return (
     <div>
       {isPlatformSiteAdmin && (
@@ -114,6 +136,23 @@ function InnerApp() {
           </button>
         </div>
       )}
+
+      {isClientOwnerMainAdmin && clientViewMode === 'campus_operations' && (
+        <div className="bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-950 border-b border-indigo-800/80 px-4 py-1.5 text-xs flex items-center justify-between text-indigo-200">
+          <div className="flex items-center gap-2 font-mono">
+            <span className="font-bold text-white">Client Owner:</span>
+            <span>Viewing Branch Operations</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setClientViewMode('client_hub')}
+            className="px-2.5 py-0.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-sm"
+          >
+            &larr; Return to Organization Management Hub
+          </button>
+        </div>
+      )}
+
       <MainApp />
     </div>
   );
@@ -138,6 +177,7 @@ export default function App() {
     window.__APLUS_REPORT_SIGNATURES_BLOCK__ = DynamicReportSignatureBlock;
     window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;
     window.__APLUS_TOP_BAR__ = AplusTopBar;
+    (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
   }, []);
 
   return (

@@ -42,6 +42,7 @@ import {
   synchronizeCredentialsWithEngineUsers,
 } from '../services/campusAuthSync';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
 
 interface DynamicCampusAuthModalProps {
   isOpen: boolean;
@@ -414,6 +415,21 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
       campuses,
     });
     setIsSimulating(false);
+
+    recordCampusLoginActivity({
+      campusId: targetCred.campusId,
+      campusName: targetCred.campusName,
+      campusCode: targetCred.campusCode,
+      userName: targetCred.username,
+      userRole: targetCred.role || 'Campus Accountant',
+      ipAddress: '192.168.12.99',
+      device: 'Security Vault Simulator',
+      status: authRes.success ? 'success' : 'failed',
+      method: 'dynamic_auth',
+      remarks: authRes.success
+        ? `Authentication verified against Firestore DB [${firebaseConfig.firestoreDatabaseId}]`
+        : `Authentication Denied: ${authRes.message}`,
+    });
 
     if (authRes.success) {
       setSimResult({
@@ -797,6 +813,18 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
                                   <button
                                     type="button"
                                     onClick={() => {
+                                      recordCampusLoginActivity({
+                                        campusId: cred.campusId,
+                                        campusName: cred.campusName,
+                                        campusCode: cred.campusCode,
+                                        userName: cred.username,
+                                        userRole: cred.role || 'Campus Accountant',
+                                        ipAddress: '192.168.12.' + (Math.floor(Math.random() * 80) + 20),
+                                        device: 'Security Vault Console',
+                                        status: 'success',
+                                        method: 'vault_one_click',
+                                        remarks: `Instant Campus Login authenticated from Security Vault for ${cred.campusName} (${cred.campusCode})`,
+                                      });
                                       onClose();
                                       setTimeout(() => {
                                         loginAsCampus(cred.campusId);

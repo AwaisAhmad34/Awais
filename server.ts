@@ -14,12 +14,17 @@ const isProd = process.env.NODE_ENV === 'production';
 
 app.use(express.json());
 
+// Multi-Campus Tenant Isolation & Financial Reports Access Router
+import { tenantRouter } from './src/server/tenantApiRoutes';
+app.use('/api/tenants', tenantRouter);
+
 // API health check
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
+    service: 'Multi-Campus Tenant Isolation & Financial Management Hub',
   });
 });
 

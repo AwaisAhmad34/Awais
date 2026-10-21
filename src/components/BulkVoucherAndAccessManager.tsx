@@ -254,7 +254,7 @@ export const DEFAULT_VISIBILITY_CONFIG: VisibilityAccessConfig = {
       },
       permissions: {
         canBulkApproveReject: true,
-        canDeleteVouchers: false,
+        canDeleteVouchers: true,
         canEditApprovedVouchers: true,
         canApproveHighValue: true,
         canExportData: true,
@@ -280,13 +280,13 @@ export const DEFAULT_VISIBILITY_CONFIG: VisibilityAccessConfig = {
         showTopBarErpButton: true,
         showTopBarCashReconButton: true,
         showTopBarA4PrintButton: true,
-        showTopBarAuditTrailButton: false,
+        showTopBarAuditTrailButton: true,
       },
       permissions: {
         canBulkApproveReject: true,
-        canDeleteVouchers: false,
-        canEditApprovedVouchers: false,
-        canApproveHighValue: false,
+        canDeleteVouchers: true,
+        canEditApprovedVouchers: true,
+        canApproveHighValue: true,
         canExportData: true,
       },
     },
@@ -660,6 +660,46 @@ export const BulkVoucherAndAccessManager: React.FC<{
     });
     setSelectedIds([]);
     showToast('reject', `Moved ${count} voucher(s) to the Global Recycle Bin (recoverable).`);
+  };
+
+  const handleDeleteSingleVoucher = (v: any) => {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete voucher #${v.voucherNo} (${v.voucherType} - PKR ${(
+          Number(v.totalDebit) || 0
+        ).toLocaleString()})?\n\nIt will be safely archived to the Global Recycle Bin where it can be recovered if needed.`
+      )
+    ) {
+      return;
+    }
+
+    const c = campuses.find((cmp) => cmp.id === v.campusId);
+    softDeleteRecord({
+      recordType: 'VOUCHER',
+      originalPayload: v,
+      campusId: v.campusId,
+      campusName: c?.name || 'Campus Branch',
+      campusCode: c?.code || 'CMP',
+      identifier: v.voucherNo,
+      title: `${v.voucherType} - ${v.narration || 'General Ledger Voucher'}`,
+      date: v.date,
+      deletedByUserId: currentUser?.id || 'usr-campus-admin',
+      deletedByUserName: currentUser?.name || 'Campus Administrator',
+      deletedByUserRole: currentUser?.role || 'Campus Admin',
+      deletionReason: 'Deleted by Campus Administrator (Moved to Global Recycle Bin for safe recovery)',
+    });
+
+    deleteTransaction(v.id);
+    setSelectedIds((prev) => prev.filter((id) => id !== v.id));
+    logActivity(
+      'DELETE_VOUCHER',
+      'Voucher',
+      v.id,
+      `Voucher #${v.voucherNo} deleted by Campus Administrator ${currentUser?.name || ''} and archived to Global Recycle Bin`,
+      v.campusId,
+      v.totalDebit
+    );
+    showToast('reject', `Voucher #${v.voucherNo} deleted and moved to Global Recycle Bin (recoverable).`);
   };
 
   const handleDeleteAllPreviousEntriesAndCampuses = async () => {
@@ -1963,6 +2003,15 @@ export const BulkVoucherAndAccessManager: React.FC<{
                                       Reject
                                     </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSingleVoucher(voucher)}
+                                    className="px-2.5 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[11px] cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                                    title="Delete voucher (preserves in Global Recycle Bin)"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span>Delete</span>
+                                  </button>
                                 </div>
                               </td>
                             </tr>

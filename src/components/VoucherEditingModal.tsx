@@ -27,6 +27,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { useAccounting, Transaction, VoucherEntry, AccountHead, Campus } from '../core/aplusEngine';
+import { softDeleteRecord } from '../services/globalRecoveryService';
 
 interface VoucherEditingModalProps {
   initialVoucherId?: string;
@@ -44,6 +45,7 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
   const {
     transactions,
     updateTransaction,
+    deleteTransaction,
     campuses,
     accountHeads,
     currentUser,
@@ -302,6 +304,61 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
     setTimeout(() => {
       setFeedback(null);
     }, 4000);
+  };
+
+  // Delete Active Voucher & Soft Delete to Global Recycle Bin
+  const handleDeleteCurrentVoucher = () => {
+    if (!activeVoucher) return;
+
+    if (
+      !window.confirm(
+        `Are you sure you want to delete voucher #${activeVoucher.voucherNo} (${activeVoucher.voucherType} - PKR ${(
+          activeVoucher.totalDebit || 0
+        ).toLocaleString()})?\n\nThis voucher will be safely preserved in the Global Recycle Bin where it can be recovered.`
+      )
+    ) {
+      return;
+    }
+
+    const c = campuses.find((cmp) => cmp.id === activeVoucher.campusId);
+    softDeleteRecord({
+      recordType: 'VOUCHER',
+      originalPayload: activeVoucher,
+      campusId: activeVoucher.campusId,
+      campusName: c?.name || 'Campus Branch',
+      campusCode: c?.code || 'CMP',
+      identifier: activeVoucher.voucherNo,
+      title: `${activeVoucher.voucherType} - ${activeVoucher.narration || 'General Ledger Voucher'}`,
+      date: activeVoucher.date,
+      deletedByUserId: currentUser?.id || 'usr-campus-admin',
+      deletedByUserName: currentUser?.name || 'Campus Administrator',
+      deletedByUserRole: currentUser?.role || 'Campus Admin',
+      deletionReason: 'Deleted via Full-Edge Voucher Editor (Preserved in Global Recycle Bin)',
+    });
+
+    deleteTransaction(activeVoucher.id);
+
+    logActivity(
+      'DELETE_VOUCHER',
+      'Voucher',
+      activeVoucher.id,
+      `Voucher #${activeVoucher.voucherNo} deleted by Campus Administrator ${currentUser?.name || ''} and archived to Global Recycle Bin`,
+      activeVoucher.campusId,
+      activeVoucher.totalDebit
+    );
+
+    // If there are other vouchers in the list, advance to the next or previous
+    const remaining = voucherPool.filter((v) => v.id !== activeVoucher.id);
+    if (remaining.length > 0) {
+      const nextIndex = Math.min(currentIndex, remaining.length - 1);
+      setCurrentVoucherId(remaining[nextIndex].id);
+      setFeedback({
+        type: 'warning',
+        msg: `Voucher #${activeVoucher.voucherNo} was deleted and moved to Global Recycle Bin. Loaded next voucher.`,
+      });
+    } else {
+      onClose();
+    }
   };
 
   if (!isOpen) return null;
@@ -942,6 +999,16 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleDeleteCurrentVoucher}
+              className="px-3.5 py-2 rounded-xl bg-rose-950/70 hover:bg-rose-900 border border-rose-800/80 text-rose-300 hover:text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              title="Delete this voucher from ledger (archived to Global Recycle Bin for safe recovery)"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Delete Voucher</span>
+            </button>
+
             <button
               type="button"
               onClick={onClose}
