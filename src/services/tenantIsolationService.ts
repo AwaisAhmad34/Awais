@@ -445,9 +445,9 @@ export function validateCampusPermission(
 
   // 3. Level 3 Main Campus Admin
   if (context.permissionLevel === 'level_3_main_campus_admin') {
-    const mainCampusId = context.campusId || clientCampuses.find((c) => c.isMainCampus)?.id || clientCampuses[0]?.id;
+    const mainCampusId = clientCampusIds.includes(context.campusId || '') ? context.campusId : null;
     const childBranches = clientCampuses.filter((c) => c.parentCampusId === mainCampusId).map((c) => c.id);
-    const delegated = context.delegatedCampusIds || [];
+    const delegated = (context.delegatedCampusIds || []).filter(id => clientCampusIds.includes(id));
     const authorized = Array.from(new Set([mainCampusId, ...childBranches, ...delegated].filter(Boolean) as string[]));
 
     if (!requestedCampusId || requestedCampusId === 'all') {
@@ -473,7 +473,7 @@ export function validateCampusPermission(
   }
 
   // 4. Level 4 Sub-Campus Admin & Level 5 Staff: Strictly assigned campus only
-  const assignedCampusId = context.campusId || clientCampuses[0]?.id;
+  const assignedCampusId = clientCampusIds.includes(context.campusId || '') ? context.campusId : null;
   const authorized = assignedCampusId ? [assignedCampusId] : [];
 
   if (!requestedCampusId || requestedCampusId === 'all') {
@@ -607,7 +607,7 @@ export class TenantIsolatedRepository {
 
     return this.vouchers.filter((v) => {
       // Must match client_id
-      if (v.client_id !== isolatedFilters.client_id && !context.isPlatformAdmin) {
+      if ((!context.isPlatformAdmin || filters.client_id) && v.client_id !== isolatedFilters.client_id) {
         return false;
       }
       // Must belong to authorized campuses
@@ -668,11 +668,9 @@ export class TenantIsolatedRepository {
       );
     }
 
-    // Debit/Credit validation
-    const totalDebit = Number(payload.totalDebit || 0);
-    const totalCredit = Number(payload.totalCredit || 0);
-    if (Math.abs(totalDebit - totalCredit) > 0.01 && totalDebit > 0) {
-      throw new TenantSecurityError('Financial integrity failure: Total Debit must equal Total Credit.', 'UNBALANCED_VOUCHER', 400);
+    validateVoucherAmounts(payload);
+    if (this.vouchers.some(v => v.id === payload.id || (payload.voucherNo && v.voucherNo === payload.voucherNo && v.campus_id === targetCampusId && v.client_id === context.clientId))) {
+      throw new TenantSecurityError('Duplicate voucher ID or number.', 'DUPLICATE_VOUCHER', 409);
     }
 
     // Inforce client_id automatically
@@ -706,6 +704,8 @@ export class TenantIsolatedRepository {
       );
     }
 
+    assertImmutableRecord(existing, updates);
+    validateVoucherAmounts({ ...existing, ...updates });
     // Prevent changing client_id or transferring across tenants
     if (updates.client_id && updates.client_id !== existing.client_id) {
       throw new TenantSecurityError('Immutable field violation: client_id cannot be altered.', 'IMMUTABLE_TENANT_FIELD', 400);
@@ -756,10 +756,11 @@ export class TenantIsolatedRepository {
     );
 
     return this.users.filter((u) => {
-      if (u.client_id !== isolatedFilters.client_id && !context.isPlatformAdmin) {
+      if ((!context.isPlatformAdmin || filters.client_id) && u.client_id !== isolatedFilters.client_id) {
         return false;
       }
       const campId = u.campus_id || u.campusId;
+      if (typeof isolatedFilters.campus_id === 'string' && campId !== isolatedFilters.campus_id) return false;
       if (campId && campId !== 'all') {
         if (!authorizedCampusIds.includes(campId)) return false;
       }
@@ -768,8 +769,8 @@ export class TenantIsolatedRepository {
   }
 
   public createUser(context: TenantContext, payload: any): any {
-    // Only admins can create users
-    if (context.permissionLevel === 'level_5_departmental_staff') {
+    // Account provisioning is restricted to platform/client administrators.
+    if (!context.isPlatformAdmin && !context.isClientAdmin) {
       throw new TenantSecurityError('Access denied: Staff members cannot create users.', 'UNAUTHORIZED_USER_CREATION', 403);
     }
 
@@ -786,6 +787,7 @@ export class TenantIsolatedRepository {
       throw new TenantSecurityError('Privilege escalation blocked: Only Platform Super Admin can create Level 1 admins.', 'PRIVILEGE_ESCALATION', 403);
     }
 
+    validateUserAuthority(context, payload);
     const newUser = {
       ...payload,
       id: payload.id || `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -813,6 +815,8 @@ export class TenantIsolatedRepository {
       throw new TenantSecurityError(perm.reason || 'User campus permission denied.', 'CAMPUS_PERMISSION_DENIED', 403);
     }
 
+    assertImmutableRecord(user, updates);
+    validateUserAuthority(context, { ...user, ...updates });
     const updated = {
       ...user,
       ...updates,
@@ -854,9 +858,10 @@ export class TenantIsolatedRepository {
     );
 
     return this.financialRecords.filter((r) => {
-      if (r.client_id !== isolatedFilters.client_id && !context.isPlatformAdmin) {
+      if ((!context.isPlatformAdmin || filters.client_id) && r.client_id !== isolatedFilters.client_id) {
         return false;
       }
+      if (typeof isolatedFilters.campus_id === 'string' && (r.campus_id || r.campusId) !== isolatedFilters.campus_id) return false;
       if (recordType && r.recordType !== recordType) return false;
       const campId = r.campus_id || r.campusId;
       if (!authorizedCampusIds.includes(campId)) return false;
@@ -899,6 +904,7 @@ export class TenantIsolatedRepository {
       throw new TenantSecurityError(perm.reason || 'Campus permission denied.', 'CAMPUS_PERMISSION_DENIED', 403);
     }
 
+    assertImmutableRecord(rec, updates);
     const updated = {
       ...rec,
       ...updates,
@@ -925,6 +931,45 @@ export class TenantIsolatedRepository {
 
     this.financialRecords = this.financialRecords.filter((r) => r.id !== rec.id);
     return { success: true, id: rec.id };
+  }
+}
+
+function assertImmutableRecord(existing: any, updates: any) {
+  for (const field of ['id', 'client_id', 'clientId', 'campus_id', 'campusId', 'createdAt', 'createdById']) {
+    if (Object.prototype.hasOwnProperty.call(updates, field) && updates[field] !== existing[field]) {
+      throw new TenantSecurityError(`Immutable field: ${field}.`, 'IMMUTABLE_RECORD_FIELD', 400);
+    }
+  }
+}
+function validateUserAuthority(context: TenantContext, payload: any) {
+  if (!context.isPlatformAdmin && !context.isClientAdmin) {
+    throw new TenantSecurityError('Account administration requires client or platform admin.', 'PRIVILEGE_ESCALATION', 403);
+  }
+  if (!context.isPlatformAdmin && (
+    payload.permissionLevel === 'level_1_platform_super_admin' ||
+    ['admin', 'superadmin', 'super_admin', 'level_1_platform_super_admin'].includes(payload.role) ||
+    payload.isSuperAdmin === true || payload.isPlatformAdmin === true ||
+    (payload.clientId && payload.clientId !== context.clientId)
+  )) throw new TenantSecurityError('Privilege escalation blocked.', 'PRIVILEGE_ESCALATION', 403);
+  if (Object.prototype.hasOwnProperty.call(payload, 'password')) {
+    throw new TenantSecurityError('Provision passwords using Firebase Authentication, not user profiles.', 'PLAINTEXT_PASSWORD_FORBIDDEN', 400);
+  }
+}
+export function validateVoucherAmounts(payload: any) {
+  const debit = Number(payload.totalDebit);
+  const credit = Number(payload.totalCredit);
+  if (![debit, credit].every(Number.isFinite) || debit < 0 || credit < 0 || Math.abs(Math.round(debit * 100) - Math.round(credit * 100)) > 0) {
+    throw new TenantSecurityError('Voucher totals must be finite, nonnegative and balanced to the cent.', 'UNBALANCED_VOUCHER', 400);
+  }
+  if (payload.entries !== undefined) {
+    if (!Array.isArray(payload.entries) || payload.entries.length < 2) throw new TenantSecurityError('At least two entries are required.', 'INVALID_ENTRIES', 400);
+    let dr = 0, cr = 0;
+    for (const entry of payload.entries) {
+      const d = Number(entry.debit ?? 0), c = Number(entry.credit ?? 0);
+      if (![d, c].every(Number.isFinite) || d < 0 || c < 0 || (d > 0 && c > 0)) throw new TenantSecurityError('Invalid debit/credit entry.', 'INVALID_ENTRIES', 400);
+      dr += Math.round(d * 100); cr += Math.round(c * 100);
+    }
+    if (dr !== cr || dr !== Math.round(debit * 100) || cr !== Math.round(credit * 100)) throw new TenantSecurityError('Entries disagree with voucher totals.', 'UNBALANCED_VOUCHER', 400);
   }
 }
 

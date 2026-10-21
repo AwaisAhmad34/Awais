@@ -213,7 +213,7 @@ export interface AccountingContextType {
   currentUser: any;
   users: any[];
   isSuperAdmin: boolean;
-  login: (username: string, password?: string) => { success: boolean; message?: string };
+  login: (username: string, password?: string) => Promise<{ success: boolean; message?: string }>;
   loginAsUser?: (userId: string, isSuperAdmin?: boolean) => void;
   loginAsCampus?: (campusId: string) => void;
   logout?: () => void;

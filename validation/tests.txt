@@ -1,0 +1,52 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> react-example@0.0.0 test
+> node --import tsx --test tests/*.test.ts
+
+✔ invalid dates are client errors, including impossible months and leap days (1.459414ms)
+✔ cross-tenant and cross-campus reads/writes are denied (4.61625ms)
+✔ concurrent duplicate voucher numbers produce exactly one record and audit (1.828779ms)
+✔ stale revisions and unauthorized approvals do not overwrite a voucher (6.070376ms)
+✔ soft delete and restore retain identity, prevent duplicate restore, and audit atomically (2.001169ms)
+✔ cash retries are idempotent and concurrent overspending rolls back (6.899543ms)
+✔ period close rejects drafts and blocks backdated entries after posting (1.792505ms)
+✔ monthly invoices snapshot campuses and cannot silently change rates (1.467837ms)
+✔ membership denies suspended, missing and unknown roles (1.031981ms)
+✔ anonymous requests cannot claim admin through headers or query (35.849767ms)
+✔ tenant and campus query filters cannot leak other clients (1.408046ms)
+✔ delegation cannot smuggle campuses from another client (0.255244ms)
+✔ voucher create and edit reject invalid money and immutable-field changes (0.893704ms)
+✔ account updates cannot escalate roles, move campuses or store passwords (0.450968ms)
+✔ financial record filters honor a specific campus (0.356646ms)
+✔ recovery blocks missing account dependencies, non-finite totals and same-campus duplicates (14.546258ms)
+✔ recovery override cannot bypass missing account dependencies (1.005181ms)
+✔ a deleted campus can be restored once its parent exists (0.503367ms)
+Running Multi-Campus Tenant Isolation, Security & Recovery Verification Tests...
+✓ Test 1: Campus code uniqueness verified.
+✓ Test 2: Hierarchical campus mapping verified.
+✓ Test 3: Voucher segregation and namespace isolation verified.
+✓ Test 4: Soft deletion preservation of IDs, metadata, and financial impact verified.
+✓ Test 5: Restore dependency check correctly flags missing account head 5001-1.
+✓ Test 6: Duplicate voucher number conflict detection verified.
+✓ Test 7: Controlled permanent deletion authorization phrase verified.
+✓ Test 8: Platform Site Admin access separation from campus roles verified.
+✓ Test 9: Financial balance equation validation (Debit === Credit) verified.
+✓ Test 10: Circular campus hierarchy loop detection verified.
+✓ Test 11: Deleted COA restoration privilege boundary (Site Owner & Main Branch only) verified.
+✓ Test 12: Campus DB cross-client isolation and sub-campus scoping verified.
+✓ Test 13: Automatic client_id filter injection and campus boundary enforcement verified.
+✓ Test 14: Cross-tenant voucher access blocked with TENANT_ISOLATION_VIOLATION.
+✓ Test 15: Unauthorized campus voucher creation blocked with CAMPUS_PERMISSION_DENIED.
+✓ Test 16: Financial records and users CRUD with automatic client_id stamping verified.
+✓ Test 17: Financial report permissions role-gating & client access validation verified.
+✓ Test 18: Platform Site Admin report disabling per client successfully blocks access.
+All 18 Multi-Campus Tenant Isolation, Security, Recovery & Financial Report Tests PASSED!
+✔ tests/tenantIsolation.test.ts (462.747787ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1025.753232

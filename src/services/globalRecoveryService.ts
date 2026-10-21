@@ -255,18 +255,13 @@ export const INITIAL_SOFT_DELETED_RECORDS: SoftDeletedRecord[] = [
 // ----------------------------------------------------------------------------
 
 export function getStoredRecycleBinRecords(): SoftDeletedRecord[] {
-  try {
-    if (typeof window === 'undefined') return INITIAL_SOFT_DELETED_RECORDS;
-    const raw = localStorage.getItem(RECYCLE_BIN_STORAGE_KEY);
-    if (!raw) {
-      saveStoredRecycleBinRecords(INITIAL_SOFT_DELETED_RECORDS);
-      return INITIAL_SOFT_DELETED_RECORDS;
-    }
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_SOFT_DELETED_RECORDS;
-  } catch {
-    return INITIAL_SOFT_DELETED_RECORDS;
-  }
+  if (typeof window === 'undefined') return [];
+  const raw = localStorage.getItem(RECYCLE_BIN_STORAGE_KEY);
+  if (!raw) return [];
+  // Corruption is an error, never a reason to invent deleted financial records.
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error('Recycle bin is invalid. Restore from a verified backup.');
+  return parsed;
 }
 
 export function saveStoredRecycleBinRecords(records: SoftDeletedRecord[]): void {
@@ -425,7 +420,7 @@ export function softDeleteRecord(params: {
     deletedByUserRole,
     deletionReason,
     financialImpact,
-    originalPayload,
+    originalPayload: structuredClone(originalPayload),
     status: 'soft_deleted',
   };
 
@@ -470,23 +465,29 @@ export function validateRestorePreconditions(
   let duplicateIdentifier: string | undefined;
   const missingAccountCodes: string[] = [];
   let missingCampusId: string | undefined;
+  let missingParentId: string | undefined;
 
   const { activeTransactions, activePettyCash, activeAccountHeads, activeCampuses } = context;
 
   // 1. Campus existence validation
   const targetCampus = activeCampuses.find((c) => c.id === trashRecord.campusId);
-  if (!targetCampus) {
+  if (!targetCampus && trashRecord.recordType !== 'CAMPUS') {
     missingCampusId = trashRecord.campusId;
     errors.push(
       `Target campus '${trashRecord.campusName}' (ID: ${trashRecord.campusId}) is not active or has been archived.`
     );
   }
 
+  if (trashRecord.recordType === 'CAMPUS' && trashRecord.originalPayload.parentCampusId && !activeCampuses.some(c => c.id === trashRecord.originalPayload.parentCampusId)) {
+    missingParentId = trashRecord.originalPayload.parentCampusId;
+    errors.push('Parent campus must be restored first.');
+  }
+
   // 2. Record-Type Specific Validations
   if (trashRecord.recordType === 'VOUCHER') {
-    const rawVoucherNo = trashRecord.originalPayload.voucherNo;
+    const rawVoucherNo = String(trashRecord.originalPayload.voucherNo || '');
     const exists = activeTransactions.some(
-      (tx) => tx.voucherNo.trim().toUpperCase() === rawVoucherNo.trim().toUpperCase()
+      (tx) => tx.campusId === trashRecord.campusId && (tx.id === trashRecord.originalId || String(tx.voucherNo || '').trim().toUpperCase() === rawVoucherNo.trim().toUpperCase())
     );
     if (exists) {
       duplicateConflict = true;
@@ -510,17 +511,17 @@ export function validateRestorePreconditions(
     });
 
     // Balanced check
-    const totalDebit = Number(trashRecord.originalPayload.totalDebit) || 0;
-    const totalCredit = Number(trashRecord.originalPayload.totalCredit) || 0;
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    const totalDebit = Number(trashRecord.originalPayload.totalDebit);
+    const totalCredit = Number(trashRecord.originalPayload.totalCredit);
+    if (![totalDebit, totalCredit].every(Number.isFinite) || totalDebit < 0 || totalCredit < 0 || Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) {
       errors.push(
         `Financial Imbalance: Debit (PKR ${totalDebit.toLocaleString()}) does not match Credit (PKR ${totalCredit.toLocaleString()}). Cannot post unadjusted voucher!`
       );
     }
   } else if (trashRecord.recordType === 'PETTY_CASH') {
-    const rawVoucherNo = trashRecord.originalPayload.voucherNo;
+    const rawVoucherNo = String(trashRecord.originalPayload.voucherNo || '');
     const exists = activePettyCash.some(
-      (pc) => pc.voucherNo?.trim().toUpperCase() === rawVoucherNo?.trim().toUpperCase()
+      (pc) => pc.campusId === trashRecord.campusId && (pc.id === trashRecord.originalId || String(pc.voucherNo || '').trim().toUpperCase() === rawVoucherNo.trim().toUpperCase())
     );
     if (exists) {
       duplicateConflict = true;
@@ -549,13 +550,14 @@ export function validateRestorePreconditions(
     }
   }
 
-  const hasMissingDependencies = missingAccountCodes.length > 0 || !!missingCampusId;
-  const canRestoreSafely = errors.length === 0;
+  const hasMissingDependencies = missingAccountCodes.length > 0 || !!missingCampusId || !!missingParentId;
+  const canRestoreSafely = errors.length === 0 && !hasMissingDependencies;
 
   return {
     hasMissingDependencies,
     missingAccountCodes,
     missingCampusId,
+    missingParentId,
     duplicateConflict,
     duplicateIdentifier,
     warnings,
@@ -644,42 +646,25 @@ export function executeRecordRestore(
     }
   }
 
-  // Run preconditions check
-  const precheck = validateRestorePreconditions(trashItem, context);
-  if (!precheck.canRestoreSafely && !options?.overrideDuplicateVoucherNo) {
+  if (!['VOUCHER', 'PETTY_CASH', 'ACCOUNT_HEAD', 'CAMPUS'].includes(trashItem.recordType) || trashItem.status !== 'soft_deleted') {
+    return { success: false, message: 'This record cannot be restored by this workflow.', restoredRecordId: trashRecordId, restoredEntityPayload: null };
+  }
+  const payload = structuredClone(trashItem.originalPayload);
+  if (options?.overrideDuplicateVoucherNo) {
+    payload.voucherNo = options.overrideDuplicateVoucherNo.trim();
+    if (!payload.voucherNo) return { success: false, message: 'Voucher number is required.', restoredRecordId: trashRecordId, restoredEntityPayload: null };
+    payload.narration = `${payload.narration || ''} [Restored with alternate voucher #${payload.voucherNo}]`;
+  }
+  // An alternate number resolves only a number conflict. It cannot bypass a
+  // missing campus/account, an ID collision or a financial imbalance.
+  const precheck = validateRestorePreconditions({ ...trashItem, originalPayload: payload }, context);
+  if (!precheck.canRestoreSafely) {
     return {
       success: false,
-      message: precheck.errors.join(' | '),
+      message: [...precheck.errors, ...precheck.warnings].join(' | ') || 'Restore prerequisites are not satisfied.',
       restoredRecordId: trashRecordId,
       restoredEntityPayload: null,
     };
-  }
-
-  const payload = { ...trashItem.originalPayload };
-
-  // If a duplicate override voucher number was supplied, apply it
-  if (options?.overrideDuplicateVoucherNo) {
-    payload.voucherNo = options.overrideDuplicateVoucherNo;
-    payload.narration = `${payload.narration || ''} [Restored with alternate voucher #${options.overrideDuplicateVoucherNo}]`;
-  }
-
-  // Auto recreate missing account heads if chosen
-  if (options?.autoRecreateMissingAccountHeads && precheck.missingAccountCodes.length > 0) {
-    precheck.missingAccountCodes.forEach((missingCode) => {
-      const parentGroup = missingCode.split('-')[0] || '5000';
-      context.addAccountHead({
-        id: `acc-auto-restored-${missingCode}-${Date.now()}`,
-        code: missingCode,
-        name: `Restored Account (${missingCode})`,
-        category: missingCode.startsWith('5') ? 'Expense' : missingCode.startsWith('4') ? 'Revenue' : 'Asset',
-        type: 'General',
-        balance: 0,
-        mainCode: `${parentGroup.slice(0, 2)}00`,
-        mainAccount: 'Restored Ledger Heads',
-        groupCode: parentGroup,
-        groupName: 'Auto-Restored Dependencies',
-      });
-    });
   }
 
   // Restore into the corresponding engine state

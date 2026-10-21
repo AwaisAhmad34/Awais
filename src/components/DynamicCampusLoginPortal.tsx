@@ -43,18 +43,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  // Synchronize seed users if missing in local engine
-  React.useEffect(() => {
-    SEED_MULTI_TENANT_USERS.forEach((seedU) => {
-      const exists = users.find((u) => u.username?.toLowerCase() === seedU.username.toLowerCase());
-      if (!exists && addUser) {
-        addUser({
-          ...seedU,
-        });
-      }
-    });
-  }, [users, addUser]);
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     setIsCapsLockOn(e.getModifierState('CapsLock'));
   };
@@ -65,7 +53,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     setSuccessNotice(null);
 
     const cleanUser = username.trim().toLowerCase();
-    const cleanPass = password.trim();
+    const cleanPass = password;
 
     if (!cleanUser) {
       setErrorMessage('Please enter your username or email address.');
@@ -79,123 +67,13 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     setIsAuthenticating(true);
 
     try {
-      // Step 1: Call authoritative server backend authentication endpoint
-      let serverAuthOk = false;
-      let authenticatedUserData: any = null;
-
-      try {
-        const resp = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: cleanUser, password: cleanPass }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          serverAuthOk = true;
-          authenticatedUserData = data.user;
-        }
-      } catch {
-        // In local/offline preview mode, server call fallback
-      }
-
-      // Step 2: Fallback to local trusted store if server is unreachable
-      const allKnownUsers = [...users, ...SEED_MULTI_TENANT_USERS];
-      const matchedUser = allKnownUsers.find(
-        (u) =>
-          u.username?.toLowerCase() === cleanUser ||
-          u.email?.toLowerCase() === cleanUser
-      );
-
-      if (!serverAuthOk && (!matchedUser || matchedUser.password !== cleanPass)) {
-        setIsAuthenticating(false);
-        setErrorMessage('Invalid username or password. Please verify your credentials.');
-        recordCampusLoginActivity({
-          campusId: campuses[0]?.id || 'unknown',
-          campusName: campuses[0]?.name || 'Unknown Campus',
-          campusCode: campuses[0]?.code || 'UNK',
-          userName: username.trim(),
-          userRole: 'Unauthenticated User',
-          ipAddress: '192.168.1.105',
-          device: 'Browser Client',
-          status: 'failed',
-          method: 'portal_login',
-          remarks: 'Invalid password attempt',
-        });
-        return;
-      }
-
-      const activeUser = authenticatedUserData || matchedUser;
-      const assignedCampusId = activeUser.campusId || campuses[0]?.id;
-      const targetCampus = campuses.find((c) => c.id === assignedCampusId) || campuses[0];
-
-      if (activeUser.status === 'suspended' || activeUser.status === 'inactive') {
-        setIsAuthenticating(false);
-        setErrorMessage(`Your account is currently ${activeUser.status}. Contact your Administrator.`);
-        recordCampusLoginActivity({
-          campusId: activeUser.campusId || campuses[0]?.id || 'unknown',
-          campusName: targetCampus?.name || 'Suspended Account',
-          campusCode: targetCampus?.code || 'LCK',
-          clientId: activeUser.clientId,
-          userName: activeUser.name,
-          userRole: activeUser.role,
-          userEmail: activeUser.email,
-          ipAddress: '192.168.1.105',
-          device: 'Browser Client',
-          status: 'locked',
-          method: 'portal_login',
-          remarks: `Login blocked: Account is ${activeUser.status}`,
-        });
-        return;
-      }
-
-      recordCampusLoginActivity({
-        campusId: targetCampus?.id || 'campus-main',
-        campusName: targetCampus?.name || 'Campus Branch',
-        campusCode: targetCampus?.code || 'CMP',
-        clientId: activeUser.clientId,
-        clientName: activeUser.clientId === 'client-apex' ? 'Apex Group of Colleges & Schools' : 'Aplus School System Network',
-        userName: activeUser.name,
-        userRole: activeUser.role,
-        userEmail: activeUser.email,
-        ipAddress: '192.168.10.' + (Math.floor(Math.random() * 80) + 20),
-        device: navigator.userAgent.includes('Mac') ? 'Safari (macOS)' : 'Chrome (Windows 11)',
-        status: 'success',
-        method: 'portal_login',
-        remarks: `Logged into ${targetCampus?.name} with authorized role: ${activeUser.role}`,
-      });
-
-      setSuccessNotice(`Authenticated as ${activeUser.name} (${activeUser.role}). Loading authorized workspace...`);
-
-      // Remember credentials preference
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('aplus_authenticated_user_id', activeUser.id);
-        if (activeUser.clientId) {
-          localStorage.setItem('aplus_authenticated_client_id', activeUser.clientId);
-        }
-      }
-
-      // Trigger engine login
-      setTimeout(() => {
-        if (login) {
-          const res = login(activeUser.username, cleanPass);
-          if (!res.success && loginAsCampus && targetCampus) {
-            loginAsCampus(targetCampus.id);
-          }
-        } else if (loginAsCampus && targetCampus) {
-          loginAsCampus(targetCampus.id);
-        }
-      }, 400);
-    } catch (err: any) {
+      const result = await login(cleanUser, cleanPass);
+      if (!result.success) setErrorMessage(result.message || 'Sign-in failed.');
+    } catch {
+      setErrorMessage('Unable to sign in. Check your connection and try again.');
+    } finally {
       setIsAuthenticating(false);
-      setErrorMessage(err?.message || 'An unexpected authentication error occurred.');
     }
-  };
-
-  // Helper for 1-Click Fast Role Fill (Testing & Evaluation)
-  const applyPresetLogin = (presetUsername: string, presetPass: string) => {
-    setUsername(presetUsername);
-    setPassword(presetPass);
-    setErrorMessage(null);
   };
 
   return (
@@ -268,7 +146,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Username or Email Address
+                  Account Email Address
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -328,59 +206,17 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               </button>
             </form>
 
-            {/* Quick-Fill Demonstration Selector (For Evaluating All 4 Hierarchy Levels) */}
-            <div className="mt-6 pt-5 border-t border-slate-800/80">
-              <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider block mb-2.5">
-                Quick Test Roles & Client Isolation:
-              </span>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => applyPresetLogin('admin', 'admin')}
-                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition-colors cursor-pointer"
-                >
-                  <div className="font-bold text-purple-300">Level 1: Platform Admin</div>
-                  <div className="text-[10px] text-slate-400 font-mono">admin / admin</div>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={() => applyPresetLogin('aplus_admin', 'aplus')}
-                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition-colors cursor-pointer"
-                >
-                  <div className="font-bold text-indigo-300">Level 2: Aplus Main Admin</div>
-                  <div className="text-[10px] text-slate-400 font-mono">aplus_admin / aplus</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => applyPresetLogin('apex_admin', 'apex')}
-                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition-colors cursor-pointer"
-                >
-                  <div className="font-bold text-emerald-300">Level 2: Apex Main Admin</div>
-                  <div className="text-[10px] text-slate-400 font-mono">apex_admin / apex</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => applyPresetLogin('aplus_khiali', 'khiali')}
-                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition-colors cursor-pointer"
-                >
-                  <div className="font-bold text-amber-300">Level 3: Aplus Sub-Campus</div>
-                  <div className="text-[10px] text-slate-400 font-mono">aplus_khiali / khiali</div>
-                </button>
-              </div>
-            </div>
           </div>
 
           {/* Privacy & Multi-Tenant Isolation Guarantee Badge */}
           <div className="text-center space-y-1 text-slate-500 text-xs">
             <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
               <Lock className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Multi-Tenant Row & Workspace Isolation Guarantee</span>
+              <span>School Financial Workspace</span>
             </div>
             <p className="text-[11px] text-slate-500">
-              Aplus School System & Apex School System data sets are strictly quarantined.
+              Use your approved account email to sign in.
             </p>
           </div>
         </div>

@@ -1,0 +1,34 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> react-example@0.0.0 build
+> vite build
+
+vite v8.3.4 building client environment for production...
+transforming...
+✓ 2509 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/manifest.webmanifest                            0.60 kB
+dist/index.html                                      2.22 kB │ gzip:   0.84 kB
+dist/assets/index-D-4zFyEy.css                     162.79 kB │ gzip:  21.72 kB
+dist/assets/rolldown-runtime-XKyaHtl9.js             0.72 kB │ gzip:   0.42 kB
+dist/assets/workbox-window.prod.es5-Bd17z0YL.js      5.65 kB │ gzip:   2.20 kB
+dist/assets/purify.es-BZxk_wWO.js                   29.02 kB │ gzip:  11.45 kB
+dist/assets/index.es-23WpM7KC.js                   151.42 kB │ gzip:  48.91 kB
+dist/assets/html2canvas-iod3n_YB.js                199.47 kB │ gzip:  46.77 kB
+dist/assets/index-AX_lU_9g.js                      794.12 kB │ gzip: 239.56 kB
+dist/assets/LegacyApp-BXwiUXSO.js                4,041.96 kB │ gzip: 994.39 kB
+
+✓ built in 1.29s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+PWA v1.3.0
+mode      generateSW
+precache  20 entries (5270.30 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-835c8c05.js
