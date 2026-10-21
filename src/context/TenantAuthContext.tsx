@@ -58,43 +58,6 @@ export const TenantAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
 export function useTenantAuth(): TenantAuthContextType {
   const context = useContext(TenantAuthContext);
-  if (context) return context;
-
-  // Fallback if rendered outside TenantAuthProvider: derive directly from useAccounting
-  try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { currentUser, isSuperAdmin, currentCampusId, campuses } = useAccounting();
-    const isSuper = Boolean(isSuperAdmin || currentUser?.isSuperAdmin || currentUser?.role === 'super_admin');
-    const role = isSuper
-      ? 'super_admin'
-      : (currentUser?.role === 'campus_admin' || currentUser?.campusId)
-      ? 'campus_admin'
-      : 'accountant';
-
-    const campusId = isSuper
-      ? currentCampusId === 'all'
-        ? null
-        : currentCampusId
-      : currentUser?.campusId || currentCampusId || null;
-
-    const campusNode = campusId ? campuses.find((c) => c.id === campusId) || null : null;
-
-    return {
-      platformRole: role,
-      activeCampusId: campusId,
-      activeCampusNode: campusNode,
-      isSuperAdmin: isSuper,
-      isCampusAdmin: role === 'campus_admin' && Boolean(campusId),
-      campusName: campusNode ? campusNode.name : 'Consolidated Campuses',
-    };
-  } catch {
-    return {
-      platformRole: 'super_admin',
-      activeCampusId: null,
-      activeCampusNode: null,
-      isSuperAdmin: true,
-      isCampusAdmin: false,
-      campusName: 'Central HQ',
-    };
-  }
+  if (!context) throw new Error('TenantAuthProvider is required for tenant-aware reports.');
+  return context;
 }

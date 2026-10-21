@@ -12,26 +12,10 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 // Silence noisy internal Firestore WebChannel connection retry logs in iframe/proxy environments
 try {
-  setLogLevel('silent');
+  setLogLevel('error');
 } catch {}
 
-// In browser environment, purge any legacy/corrupted IndexedDB databases that caused
-// "Cannot read properties of null (reading 'prefixPath')" in Firestore's IndexedDbRemoteDocumentCache.
-if (typeof window !== 'undefined' && 'indexedDB' in window) {
-  try {
-    if (window.indexedDB && typeof window.indexedDB.databases === 'function') {
-      window.indexedDB.databases().then((dbs) => {
-        dbs.forEach((dbInfo) => {
-          if (dbInfo.name && dbInfo.name.startsWith('firestore/')) {
-            try {
-              window.indexedDB.deleteDatabase(dbInfo.name);
-            } catch {}
-          }
-        });
-      }).catch(() => {});
-    }
-  } catch {}
-}
+// Preserve existing offline data. Cache repair must be explicit and backed up.
 
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 

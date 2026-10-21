@@ -3,20 +3,6 @@ import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import './index.css';
 
-// Suppress harmless [vite] HMR/WebSocket console errors in preview iframe environment
-const origConsoleError = console.error.bind(console);
-console.error = (...args: unknown[]) => {
-  const first = typeof args[0] === 'string' ? args[0] : '';
-  if (
-    first.startsWith('[vite]') ||
-    first.includes('WebSocket') ||
-    first.includes('vite')
-  ) {
-    return;
-  }
-  origConsoleError(...args);
-};
-
 // Register Service Worker for offline asset & app-shell caching across intermittent campus networks
 try {
   registerSW({

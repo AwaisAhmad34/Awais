@@ -224,7 +224,7 @@ function runTenantIsolationAndRecoveryTests() {
     isClientAdmin: false,
   };
 
-  const testCampuses = [
+  const testCampuses: import('../src/services/tenantIsolationService').CampusNode[] = [
     { id: 'campus_isb_01', code: 'ISB', name: 'Islamabad Main', clientId: 'client_alpha', isMainCampus: true, status: 'active' },
     { id: 'campus_rwp_02', code: 'RWP', name: 'Rawalpindi Sub', clientId: 'client_alpha', isMainCampus: false, parentCampusId: 'campus_isb_01', status: 'active' },
     { id: 'campus_lhr_99', code: 'LHR', name: 'Lahore Branch', clientId: 'client_beta', isMainCampus: true, status: 'active' },

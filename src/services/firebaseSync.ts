@@ -1,3 +1,4 @@
+import { getVerifiedProfile } from './secureAuthentication';
 import {
   doc,
   setDoc,
@@ -24,6 +25,8 @@ const listeners = new Set<Listener>();
 const CLIENT_SESSION_ID = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let syncInitialized = false;
+let cloudHydrated = false;
+let stopRealtimeListener: (() => void) | null = null;
 
 // ============================================================================
 // NATIVE INDEXEDDB OFFLINE LEDGER CACHE & OUTBOX ENGINE (For Intermittent Campus Wi-Fi)
@@ -109,7 +112,7 @@ export async function loadSnapshotFromIndexedDB(): Promise<{
 
 let currentStats: CloudSyncStats = {
   lastSyncedAt: null,
-  status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'connected',
+  status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'idle',
   message:
     typeof navigator !== 'undefined' && !navigator.onLine
       ? 'Offline Mode — Caching to IndexedDB & Service Worker'
@@ -132,7 +135,9 @@ export function subscribeCloudSync(fn: Listener) {
 }
 
 function sanitizeForFirestore<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj ?? {}));
+  return JSON.parse(JSON.stringify(obj ?? {}, (key, value) =>
+    /^(password|passwordHash|dynamicToken|idToken|refreshToken)$/i.test(key) ? undefined : value
+  ));
 }
 
 function mergeArraysById<T extends { id?: string }>(cloudArr: T[] = [], localArr: T[] = []): T[] {
@@ -166,7 +171,7 @@ export function initFirebaseCloudSync() {
           message: `Synced campus ${campus.code || campus.name}`,
         });
       } catch {
-        notify({ status: navigator.onLine ? 'connected' : 'offline' });
+        notify({ status: navigator.onLine ? 'error' : 'offline', message: 'Cloud operation failed; local data retained.' });
       }
     },
 
@@ -195,7 +200,7 @@ export function initFirebaseCloudSync() {
           message: `Cached & synced voucher ${voucher.voucherNo || voucher.id}`,
         });
       } catch {
-        notify({ status: navigator.onLine ? 'connected' : 'offline' });
+        notify({ status: navigator.onLine ? 'error' : 'offline', message: 'Cloud operation failed; local data retained.' });
       }
     },
 
@@ -224,7 +229,7 @@ export function initFirebaseCloudSync() {
           message: `Cached & synced petty cash ${pettyCash.voucherNo || pettyCash.id}`,
         });
       } catch {
-        notify({ status: navigator.onLine ? 'connected' : 'offline' });
+        notify({ status: navigator.onLine ? 'error' : 'offline', message: 'Cloud operation failed; local data retained.' });
       }
     },
 
@@ -281,7 +286,7 @@ export function initFirebaseCloudSync() {
 
     // AUTOMATIC DEBOUNCED SAVE TO BOTH INDEXEDDB AND FIREBASE CLOUD
     autoSaveMasterState(state: any) {
-      if (!state) return;
+      if (!state || !cloudHydrated || getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') return;
       // Immediately cache in IndexedDB so zero data is lost if campus Wi-Fi drops mid-session
       const isOnlineNow = typeof navigator !== 'undefined' ? navigator.onLine : true;
       saveSnapshotToIndexedDB(state, !isOnlineNow).catch(() => {});
@@ -298,7 +303,7 @@ export function initFirebaseCloudSync() {
       if (autoSaveTimer) clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(async () => {
         try {
-          if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+          if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin' || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
           notify({ status: 'syncing', message: 'Syncing IndexedDB & Firestore Cloud...' });
           const payload = JSON.stringify(sanitizeForFirestore(state));
           await setDoc(doc(db, 'system_state', 'master_ledger'), {
@@ -321,7 +326,7 @@ export function initFirebaseCloudSync() {
           });
         } catch {
           notify({
-            status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'connected',
+            status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
             indexedDbCached: true,
           });
         }
@@ -368,8 +373,20 @@ export function initFirebaseCloudSync() {
     });
   }
 
-  // Boot & Real-Time Cross-Browser Listener
+  // Wait for verified owner sign-in before touching the legacy global ledger.
+  window.addEventListener('aplus-logout', () => {
+    cloudHydrated = false;
+    stopRealtimeListener?.();
+    stopRealtimeListener = null;
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  });
+  window.addEventListener('aplus-verified-login', () => {
+    if (getVerifiedProfile()?.permissionLevel === 'level_1_platform_super_admin') {
+      void startCrossBrowserRealtimeSync();
+    }
+  });
   setTimeout(() => {
+    if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') return;
     startCrossBrowserRealtimeSync().catch(() => {
       window.__APLUS_MARK_CLOUD_READY__?.();
     });
@@ -377,6 +394,7 @@ export function initFirebaseCloudSync() {
 }
 
 async function startCrossBrowserRealtimeSync() {
+  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') return;
   try {
     // Step 1: Immediately check IndexedDB offline cache first so intermittent/offline boots are instant
     const idbCached = await loadSnapshotFromIndexedDB();
@@ -397,10 +415,10 @@ async function startCrossBrowserRealtimeSync() {
     notify({ status: 'syncing', message: 'Loading entries from Firebase Cloud & IndexedDB...' });
 
     const [masterSnap, vouchersSnap, pettySnap, campusesSnap] = await Promise.all([
-      getDoc(doc(db, 'system_state', 'master_ledger')).catch(() => null),
-      getDocs(collection(db, 'vouchers')).catch(() => null),
-      getDocs(collection(db, 'petty_cash')).catch(() => null),
-      getDocs(collection(db, 'campuses')).catch(() => null),
+      getDoc(doc(db, 'system_state', 'master_ledger')),
+      getDocs(collection(db, 'vouchers')),
+      getDocs(collection(db, 'petty_cash')),
+      getDocs(collection(db, 'campuses')),
     ]);
 
     let cloudState: any = null;
@@ -465,6 +483,7 @@ async function startCrossBrowserRealtimeSync() {
     };
 
     window.__APLUS_HYDRATE_FROM_CLOUD__?.(mergedState);
+    cloudHydrated = true;
     window.__APLUS_MARK_CLOUD_READY__?.();
     await saveSnapshotToIndexedDB(mergedState, false);
 
@@ -494,10 +513,11 @@ async function startCrossBrowserRealtimeSync() {
       message: `Cloud & IndexedDB Synced (${mergedTransactions.length} Vouchers · ${mergedCampuses.length} Campuses)`,
     });
 
-    onSnapshot(
+    stopRealtimeListener?.();
+    stopRealtimeListener = onSnapshot(
       doc(db, 'system_state', 'master_ledger'),
       (snap) => {
-        if (!snap.exists()) return;
+        if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin' || !snap.exists()) return;
         const data = snap.data();
         if (!data?.payload || data.clientId === CLIENT_SESSION_ID) return;
         try {
@@ -521,7 +541,7 @@ async function startCrossBrowserRealtimeSync() {
   } catch {
     window.__APLUS_MARK_CLOUD_READY__?.();
     notify({
-      status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'connected',
+      status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error',
       indexedDbCached: true,
       message: 'IndexedDB Offline Persistence Ready',
     });
@@ -529,6 +549,7 @@ async function startCrossBrowserRealtimeSync() {
 }
 
 export async function pushMasterCloudSnapshot(systemState: any): Promise<void> {
+  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') throw new Error('Verified site owner required.');
   const fullState = window.__APLUS_GET_CURRENT_STATE__?.() || systemState;
   await saveSnapshotToIndexedDB(fullState, !navigator.onLine);
   try {
@@ -554,7 +575,7 @@ export async function pushMasterCloudSnapshot(systemState: any): Promise<void> {
     });
   } catch {
     notify({
-      status: navigator.onLine ? 'connected' : 'offline',
+      status: navigator.onLine ? 'error' : 'offline',
       indexedDbCached: true,
       message: 'Saved to IndexedDB Offline Cache (will auto-sync when online)',
     });
@@ -562,6 +583,7 @@ export async function pushMasterCloudSnapshot(systemState: any): Promise<void> {
 }
 
 export async function pullMasterCloudSnapshot(): Promise<any | null> {
+  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') throw new Error('Verified site owner required.');
   try {
     notify({ status: 'syncing', message: 'Fetching cloud snapshot from Firebase...' });
     const snap = await getDoc(doc(db, 'system_state', 'master_ledger'));
