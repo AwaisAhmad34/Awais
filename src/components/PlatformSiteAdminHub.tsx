@@ -1618,7 +1618,11 @@ export const PlatformSiteAdminHub: React.FC<{
                             >
                               <option value="none">-- Main (None) --</option>
                               {campuses
-                                .filter((c) => c.id !== campus.id)
+                                .filter(
+                                  (c) =>
+                                    c.id !== campus.id &&
+                                    (!campus.clientId || !c.clientId || c.clientId === campus.clientId)
+                                )
                                 .map((c) => (
                                   <option key={c.id} value={c.id}>
                                     Parent: {c.name} ({c.code})

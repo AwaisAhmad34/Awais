@@ -151,6 +151,37 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [printSlipsContent, setPrintSlipsContent] = useState('');
+
+  // Check if current user is authorized to view / copy / rotate the executive password for a given campus
+  const isPasswordVisibleForUser = (targetCampusId: string): boolean => {
+    // 1. Root Platform Super Admin (Level 1) can view all
+    if (isPlatformAdmin) return true;
+
+    const targetCampus = campuses.find((c) => c.id === targetCampusId);
+    if (!targetCampus) return false;
+
+    // Strict multi-client isolation: never view passwords of another client
+    const myCampus = campuses.find((c) => c.id === effectiveCampusId);
+    const myClientId = currentUser?.clientId || myCampus?.clientId;
+    if (myClientId && targetCampus.clientId && myClientId !== targetCampus.clientId) {
+      return false;
+    }
+
+    // 2. Executive Password Rule: Sub-campus password is JUST shown to its own direct main parent campus!
+    if (targetCampus.parentCampusId) {
+      const isDirectParentAdmin =
+        effectiveCampusId === targetCampus.parentCampusId ||
+        currentUser?.campusId === targetCampus.parentCampusId;
+      const isOwnCampus =
+        effectiveCampusId === targetCampus.id || currentUser?.campusId === targetCampus.id;
+      return Boolean(isDirectParentAdmin || isOwnCampus);
+    }
+
+    // 3. For main parent campuses: only own campus administrator can view its executive password
+    return effectiveCampusId === targetCampus.id || currentUser?.campusId === targetCampus.id;
+  };
 
   // Custom Password Change Modal State
   const [editingCred, setEditingCred] = useState<CampusCredential | null>(null);
@@ -199,18 +230,41 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  const handleTogglePassword = (id: string) => {
+  const handleTogglePassword = (id: string, campusId: string) => {
+    if (!isPasswordVisibleForUser(campusId)) {
+      showToast(
+        'error',
+        'Security Policy: Executive passwords for sub-campuses are restricted exclusively to their designated Main Parent Campus administrator.'
+      );
+      return;
+    }
     setShowPasswords((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleCopyText = (text: string, id: string) => {
+  const handleCopyText = (text: string, id: string, campusId?: string) => {
+    if (campusId && !isPasswordVisibleForUser(campusId)) {
+      showToast(
+        'error',
+        'Security Policy: Executive passwords for sub-campuses are restricted exclusively to their designated Main Parent Campus administrator.'
+      );
+      return;
+    }
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+    showToast('success', 'Copied to clipboard!');
   };
 
   // 1-Click Generate / Rotate Password for a single campus
   const handleRotateCampusPassword = async (campusId: string) => {
+    if (!isPasswordVisibleForUser(campusId)) {
+      showToast(
+        'error',
+        'Security Policy: Only the designated Main Parent Campus administrator can rotate this sub-campus password.'
+      );
+      return;
+    }
+
     const targetCampus = campuses.find((c) => c.id === campusId);
     if (!targetCampus) return;
 
@@ -253,6 +307,15 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
     setPassError(null);
 
     if (!editingCred) return;
+
+    if (!isPasswordVisibleForUser(editingCred.campusId)) {
+      setPassError('Unauthorized: Only the designated Main Parent Campus administrator can modify this sub-campus password.');
+      showToast(
+        'error',
+        'Security Policy: Only the designated Main Parent Campus administrator can modify this sub-campus password.'
+      );
+      return;
+    }
 
     if (!customPassword.trim() || customPassword.length < 5) {
       setPassError('Password must be at least 5 characters long.');
@@ -444,12 +507,15 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
     }
   };
 
-  // Print all slips
+  // Print all slips (with strict executive password protection)
   const handlePrintSlips = () => {
     const printContent = visibleCredentials
-      .map(
-        (c) => `
-=========================================
+      .map((c) => {
+        const canView = isPasswordVisibleForUser(c.campusId);
+        const passText = canView
+          ? c.password
+          : '[RESTRICTED — ACCESSIBLE ONLY TO DESIGNATED PARENT CAMPUS ADMINISTRATOR]';
+        return `=========================================
 CAMPUS DATABASE AUTHENTICATION SLIP
 =========================================
 Branch: ${c.campusName} (${c.campusCode})
@@ -457,25 +523,20 @@ City: ${c.city || 'Punjab'}
 Accountant: ${c.accountantName || 'Designated Accountant'}
 ------------------------------------------
 Campus Portal Username: ${c.username}
-Dynamic Password:       ${c.password}
+Executive Password:     ${passText}
 Role Scope:             ${c.role}
 Database ID:            ${firebaseConfig.firestoreDatabaseId}
 Dynamic Token:          ${c.dynamicToken}
 Status:                 ${c.status.toUpperCase()}
 Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
-=========================================
-`
-      )
+=========================================`;
+      })
       .join('\n\n');
 
-    const win = window.open('', '_blank');
-    if (win) {
-      win.document.write(
-        `<pre style="font-family: monospace; padding: 20px; font-size: 13px;">${printContent}</pre>`
-      );
-      win.document.close();
-      win.print();
-    }
+    setPrintSlipsContent(printContent);
+    setIsPrintModalOpen(true);
+    navigator.clipboard?.writeText(printContent);
+    showToast('success', 'Authentication slips generated & copied to clipboard!');
   };
 
   if (!isOpen) return null;
@@ -684,7 +745,12 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
                       </tr>
                     ) : (
                       visibleCredentials.map((cred) => {
-                        const isVisible = showPasswords[cred.id] || false;
+                        const targetCampusObj = campuses.find((c) => c.id === cred.campusId);
+                        const parentCampusObj = targetCampusObj?.parentCampusId
+                          ? campuses.find((c) => c.id === targetCampusObj.parentCampusId)
+                          : null;
+                        const canViewExecutivePassword = isPasswordVisibleForUser(cred.campusId);
+                        const isVisible = showPasswords[cred.id] && canViewExecutivePassword;
                         return (
                           <tr key={cred.id} className="hover:bg-slate-50/80 transition-colors">
                             <td className="p-3">
@@ -715,31 +781,50 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
                             </td>
 
                             <td className="p-3">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono font-black text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-300">
-                                  {isVisible ? cred.password : '••••••••••••'}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleTogglePassword(cred.id)}
-                                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
-                                  title={isVisible ? 'Hide password' : 'Show password'}
-                                >
-                                  {isVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyText(cred.password, `pass-${cred.id}`)}
-                                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
-                                  title="Copy password"
-                                >
-                                  {copiedId === `pass-${cred.id}` ? (
-                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                                  ) : (
-                                    <Copy className="w-3.5 h-3.5" />
-                                  )}
-                                </button>
-                              </div>
+                              {canViewExecutivePassword ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-black text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded border border-slate-300">
+                                    {isVisible ? cred.password : '••••••••••••'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTogglePassword(cred.id, cred.campusId)}
+                                    className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
+                                    title={isVisible ? 'Hide password' : 'Show password'}
+                                  >
+                                    {isVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyText(cred.password, `pass-${cred.id}`, cred.campusId)}
+                                    className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
+                                    title="Copy password"
+                                  >
+                                    {copiedId === `pass-${cred.id}` ? (
+                                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                    ) : (
+                                      <Copy className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-slate-400 bg-slate-100/70 px-2 py-0.5 rounded border border-slate-200 text-xs select-none">
+                                    ••••••••••••
+                                  </span>
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200"
+                                    title={
+                                      parentCampusObj
+                                        ? `Restricted: Executive password only shown to designated Parent Campus (${parentCampusObj.name})`
+                                        : 'Restricted: Visible to Main Parent Campus only'
+                                    }
+                                  >
+                                    <Lock className="w-3 h-3 text-amber-600" />
+                                    <span>Parent Only</span>
+                                  </span>
+                                </div>
+                              )}
                             </td>
 
                             <td className="p-3">
@@ -765,33 +850,41 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
 
                             <td className="p-3 text-right">
                               <div className="flex items-center justify-end gap-1.5">
-                                {/* Change Password Button */}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingCred(cred);
-                                    setCustomPassword('');
-                                    setConfirmPassword('');
-                                    setPassError(null);
-                                  }}
-                                  className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                                  title="Set a custom password for this campus"
-                                >
-                                  <Key className="w-3 h-3 text-indigo-600" />
-                                  <span>Change Password</span>
-                                </button>
+                                {canViewExecutivePassword ? (
+                                  <>
+                                    {/* Change Password Button */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingCred(cred);
+                                        setCustomPassword('');
+                                        setConfirmPassword('');
+                                        setPassError(null);
+                                      }}
+                                      className="px-2.5 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Set a custom password for this campus"
+                                    >
+                                      <Key className="w-3 h-3 text-indigo-600" />
+                                      <span>Change Password</span>
+                                    </button>
 
-                                {/* Auto-Rotate Password */}
-                                <button
-                                  type="button"
-                                  onClick={() => handleRotateCampusPassword(cred.campusId)}
-                                  disabled={isSyncing}
-                                  className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                                  title="Regenerate dynamic password and sync to Firestore"
-                                >
-                                  <RefreshCw className="w-3 h-3" />
-                                  <span>Rotate</span>
-                                </button>
+                                    {/* Auto-Rotate Password */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRotateCampusPassword(cred.campusId)}
+                                      disabled={isSyncing}
+                                      className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Regenerate dynamic password and sync to Firestore"
+                                    >
+                                      <RefreshCw className="w-3 h-3" />
+                                      <span>Rotate</span>
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 italic">
+                                    Managed by {parentCampusObj?.code || 'Parent Campus'}
+                                  </span>
+                                )}
 
                                 {onSelectCampusLogin && (
                                   <button
@@ -1182,6 +1275,66 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Printable Slips Modal (Zero window.open, strictly adheres to environment constraints) */}
+      {isPrintModalOpen && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+                  <Printer className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">
+                    Authorized Campus Login Slips
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Executive passwords for sub-campuses are protected & restricted to designated parent campuses.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto bg-slate-950 p-4 rounded-xl border border-slate-800 text-slate-200 font-mono text-xs whitespace-pre select-all leading-relaxed">
+              {printSlipsContent}
+            </div>
+
+            <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+              <span className="text-[11px] text-slate-500">
+                Slips copied to clipboard automatically.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(printSlipsContent);
+                    showToast('success', 'Copied to clipboard!');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Again</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPrintModalOpen(false)}
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

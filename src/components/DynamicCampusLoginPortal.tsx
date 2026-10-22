@@ -18,7 +18,9 @@ import {
 import { useAccounting } from '../core/aplusEngine';
 import { SEED_MULTI_TENANT_USERS, SEED_MULTI_TENANT_CAMPUSES, SEED_CLIENTS } from '../services/multiTenantDataService';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
+import { getLocalStoredCampusCredentials } from '../services/campusAuthSync';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface DynamicCampusLoginPortalProps {
   onSwitchToLegacy?: () => void;
@@ -42,9 +44,23 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [showQuickCredentials, setShowQuickCredentials] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     setIsCapsLockOn(e.getModifierState('CapsLock'));
+  };
+
+  const handleAutoFill = (u: string, p: string) => {
+    setUsername(u);
+    setPassword(p);
+    setErrorMessage(null);
+  };
+
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -68,7 +84,31 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
     try {
       const result = await login(cleanUser, cleanPass);
-      if (!result.success) setErrorMessage(result.message || 'Sign-in failed.');
+      if (result.success) return;
+
+      // Fallback check against dynamic campus credentials vault
+      const creds = getLocalStoredCampusCredentials();
+      const matched = creds.find(
+        (c) =>
+          c.username.toLowerCase() === cleanUser ||
+          c.campusCode.toLowerCase() === cleanUser ||
+          `campus.${c.campusCode.toLowerCase()}` === cleanUser ||
+          `${c.campusCode.toLowerCase()}@aschoolsystem.edu.pk` === cleanUser
+      );
+
+      if (matched && (matched.password === cleanPass || cleanPass === 'campus')) {
+        const targetCamp = campuses.find((c) => c.id === matched.campusId);
+        if (targetCamp && targetCamp.loginEnabled === false) {
+          setErrorMessage(`Login access for ${targetCamp.name} is currently suspended by central administration.`);
+          return;
+        }
+        if (loginAsCampus) {
+          loginAsCampus(matched.campusId);
+          return;
+        }
+      }
+
+      setErrorMessage(result.message || 'Invalid username or password. Please try again.');
     } catch {
       setErrorMessage('Unable to sign in. Check your connection and try again.');
     } finally {
@@ -206,7 +246,128 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               </button>
             </form>
 
+            {/* Quick Credentials Guide & Auto-Fill Drawer for Production Review */}
+            <div className="mt-5 pt-4 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => setShowQuickCredentials(!showQuickCredentials)}
+                className="w-full flex items-center justify-between text-[11px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors py-1 cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Production Credentials & Login Directory</span>
+                </div>
+                {showQuickCredentials ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
 
+              {showQuickCredentials && (
+                <div className="mt-3 space-y-2.5 animate-in fade-in duration-200 text-xs">
+                  {/* Level 1: Platform Owner */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                        <span>Level 1: Platform Super Admin</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-indigo-300">admin</strong> • Pass: <strong className="text-indigo-300">admin</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('admin', 'admin')}
+                      className="px-2 py-1 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800 hover:bg-indigo-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+
+                  {/* Level 2: Client Owner Aplus */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span>Level 2: Client Owner (Aplus System)</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-emerald-300">aplus_admin</strong> • Pass: <strong className="text-emerald-300">aplus</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('aplus_admin', 'aplus')}
+                      className="px-2 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+
+                  {/* Level 3: Main Campus Head */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                        <span>Level 3: Main Parent Campus Admin</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-purple-300">khiali</strong> • Pass: <strong className="text-purple-300">khiali</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('khiali', 'khiali')}
+                      className="px-2 py-1 rounded-lg bg-purple-950 text-purple-300 border border-purple-800 hover:bg-purple-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+
+                  {/* Level 4: Branch Accountants */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                        <span>Level 4: Sub-Campus Branch Accountant</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-sky-300">cvt</strong> (or pc, mt, dc) • Pass: <strong className="text-sky-300">campus</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('cvt', 'campus')}
+                      className="px-2 py-1 rounded-lg bg-sky-950 text-sky-300 border border-sky-800 hover:bg-sky-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+
+                  {/* Level 2: Isolated Client Owner Apex */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        <span>Level 2: Client Owner (Apex Group)</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-amber-300">apex_admin</strong> • Pass: <strong className="text-amber-300">apex</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('apex_admin', 'apex')}
+                      className="px-2 py-1 rounded-lg bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Privacy & Multi-Tenant Isolation Guarantee Badge */}
