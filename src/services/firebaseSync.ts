@@ -140,13 +140,17 @@ function sanitizeForFirestore<T>(obj: T): T {
   ));
 }
 
-function mergeArraysById<T extends { id?: string }>(cloudArr: T[] = [], localArr: T[] = []): T[] {
+function mergeArraysById<T extends { id?: string; username?: string }>(cloudArr: T[] = [], localArr: T[] = []): T[] {
   const map = new Map<string, T>();
   (localArr || []).forEach((item) => {
-    if (item?.id) map.set(String(item.id), item);
+    if (!item) return;
+    const key = item.id ? String(item.id) : (item.username ? `uname_${String(item.username).toLowerCase().trim()}` : '');
+    if (key) map.set(key, item);
   });
   (cloudArr || []).forEach((item) => {
-    if (item?.id) map.set(String(item.id), item);
+    if (!item) return;
+    const key = item.id ? String(item.id) : (item.username ? `uname_${String(item.username).toLowerCase().trim()}` : '');
+    if (key) map.set(key, item);
   });
   return Array.from(map.values());
 }
@@ -454,7 +458,20 @@ async function startCrossBrowserRealtimeSync() {
           mergeArraysById(cloudState?.pettyCashTransactions || [], colPettyCash),
           localState.pettyCashTransactions || []
         );
-    const mergedUsers = mergeArraysById(cloudState?.users || [], localState.users || []);
+    const rawMergedUsers = mergeArraysById(cloudState?.users || [], localState.users || []);
+    const dedupUsersMap = new Map<string, any>();
+    const seenUsernames = new Set<string>();
+    for (const u of rawMergedUsers) {
+      if (!u) continue;
+      const uid = u.id ? String(u.id).trim() : '';
+      const uname = u.username ? String(u.username).toLowerCase().trim() : '';
+      if (uid && dedupUsersMap.has(uid)) continue;
+      if (uname && seenUsernames.has(uname)) continue;
+      if (uid) dedupUsersMap.set(uid, u);
+      else if (uname) dedupUsersMap.set(uname, u);
+      if (uname) seenUsernames.add(uname);
+    }
+    const mergedUsers = Array.from(dedupUsersMap.values());
 
     const cloudHeads = Array.isArray(cloudState?.accountHeads) ? cloudState.accountHeads : [];
     const localHeads = Array.isArray(localState?.accountHeads) ? localState.accountHeads : [];
@@ -551,6 +568,21 @@ async function startCrossBrowserRealtimeSync() {
 export async function pushMasterCloudSnapshot(systemState: any): Promise<void> {
   if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') throw new Error('Verified site owner required.');
   const fullState = window.__APLUS_GET_CURRENT_STATE__?.() || systemState;
+  if (fullState && Array.isArray(fullState.users)) {
+    const dedupUsersMap = new Map<string, any>();
+    const seenUsernames = new Set<string>();
+    for (const u of fullState.users) {
+      if (!u) continue;
+      const uid = u.id ? String(u.id).trim() : '';
+      const uname = u.username ? String(u.username).toLowerCase().trim() : '';
+      if (uid && dedupUsersMap.has(uid)) continue;
+      if (uname && seenUsernames.has(uname)) continue;
+      if (uid) dedupUsersMap.set(uid, u);
+      else if (uname) dedupUsersMap.set(uname, u);
+      if (uname) seenUsernames.add(uname);
+    }
+    fullState.users = Array.from(dedupUsersMap.values());
+  }
   await saveSnapshotToIndexedDB(fullState, !navigator.onLine);
   try {
     notify({ status: 'syncing', message: 'Uploading master snapshot to Firebase...' });

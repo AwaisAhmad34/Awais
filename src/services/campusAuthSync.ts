@@ -420,12 +420,25 @@ export function synchronizeCredentialsWithEngineUsers(params: {
   // Defer execution outside React's render/reconciliation phase
   setTimeout(() => {
     try {
+      const processedCampuses = new Set<string>();
+      const processedUsernames = new Set<string>();
+
       credentials.forEach((cred) => {
-        // Find user by campusId and role campus_accountant or username
+        if (!cred) return;
+        const campusKey = String(cred.campusId || '').trim();
+        const unameKey = String(cred.username || '').toLowerCase().trim();
+
+        if (campusKey && processedCampuses.has(campusKey)) return;
+        if (unameKey && processedUsernames.has(unameKey)) return;
+        if (campusKey) processedCampuses.add(campusKey);
+        if (unameKey) processedUsernames.add(unameKey);
+
+        // Find user by campusId, ID, or username
         const existingUser = users.find(
           (u) =>
-            (u.campusId === cred.campusId && u.role === 'campus_accountant') ||
-            u.username?.toLowerCase() === cred.username.toLowerCase()
+            (u.id && (u.id === `user-${cred.campusId}` || u.id === cred.campusId)) ||
+            (u.campusId && u.campusId === cred.campusId) ||
+            (u.username && cred.username && u.username.toLowerCase() === cred.username.toLowerCase())
         );
 
         const targetName = cred.accountantName || `${cred.campusName} Accountant`;

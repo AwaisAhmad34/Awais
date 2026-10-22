@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { tenantRouter } from './src/server/tenantApiRoutes';
 
 dotenv.config();
 
@@ -21,7 +22,6 @@ app.use('/api', (_req, res, next) => {
 });
 
 // Multi-Campus Tenant Isolation & Financial Reports Access Router
-import { tenantRouter } from './src/server/tenantApiRoutes';
 app.use('/api/tenants', tenantRouter);
 app.use('/api/tenant', tenantRouter);
 

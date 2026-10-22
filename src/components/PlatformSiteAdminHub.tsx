@@ -269,6 +269,29 @@ export const PlatformSiteAdminHub: React.FC<{
   }, [parentAccountSelect, accountHeads]);
 
   // --------------------------------------------------------------------------
+  // DEDUPLICATED USERS (Defensive deduplication by unique ID and Username)
+  // --------------------------------------------------------------------------
+  const deduplicatedUsers = useMemo(() => {
+    const seenIds = new Set<string>();
+    const seenUsernames = new Set<string>();
+    const result: typeof users = [];
+
+    for (const u of users || []) {
+      if (!u) continue;
+      const idKey = u.id ? String(u.id).trim() : '';
+      const nameKey = u.username ? u.username.toLowerCase().trim() : '';
+
+      if (idKey && seenIds.has(idKey)) continue;
+      if (nameKey && seenUsernames.has(nameKey)) continue;
+
+      if (idKey) seenIds.add(idKey);
+      if (nameKey) seenUsernames.add(nameKey);
+      result.push(u);
+    }
+    return result;
+  }, [users]);
+
+  // --------------------------------------------------------------------------
   // STATS & AGGREGATIONS FOR DASHBOARD
   // --------------------------------------------------------------------------
   const dashboardStats = useMemo(() => {
@@ -277,7 +300,7 @@ export const PlatformSiteAdminHub: React.FC<{
     const totalCampuses = campuses.length;
     const mainCampuses = campuses.filter((c: any) => c.isMainCampus || !c.parentCampusId).length;
     const subCampuses = totalCampuses - mainCampuses;
-    const totalUsers = users.length;
+    const totalUsers = deduplicatedUsers.length;
     const totalTx = transactions.length;
     const totalPetty = pettyCashTransactions.length;
     const pendingTx = transactions.filter((t) => t.status === 'Pending').length;
@@ -795,7 +818,7 @@ export const PlatformSiteAdminHub: React.FC<{
     { id: 'global_search', number: '★', label: 'Global Multi-Campus Search', category: 'Core Platform', icon: Search },
 
     // Category 2: Identity & Access Governance
-    { id: '05_users', number: '05', label: 'Global User Management', category: 'Identity & Access', icon: Users, badge: users.length },
+    { id: '05_users', number: '05', label: 'Global User Management', category: 'Identity & Access', icon: Users, badge: deduplicatedUsers.length },
     { id: '06_login_roles', number: '06', label: 'Login & Role Hierarchy (5-Tier)', category: 'Identity & Access', icon: KeyRound },
     { id: '07_permissions', number: '07', label: 'Permission Engineering', category: 'Identity & Access', icon: ShieldCheck },
     { id: '08_approval_matrix', number: '08', label: 'Platform Approval Matrix', category: 'Identity & Access', icon: FileCheck2 },
@@ -1663,19 +1686,19 @@ export const PlatformSiteAdminHub: React.FC<{
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/80">
-                    {users
+                    {deduplicatedUsers
                       .filter(
                         (u) =>
                           u.username?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
                           u.name?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
                           u.role?.toLowerCase().includes(userSearchQuery.toLowerCase())
                       )
-                      .map((u) => {
+                      .map((u, idx) => {
                         const targetCampus = campuses.find((c) => c.id === u.campusId);
                         const isCreator = u.role === 'admin' || u.isSuperAdmin;
 
                         return (
-                          <tr key={u.id} className="hover:bg-slate-900/60 transition-colors">
+                          <tr key={`${u.id || u.username || 'user'}-${idx}`} className="hover:bg-slate-900/60 transition-colors">
                             <td className="py-3 px-4">
                               <div className="flex items-center gap-2">
                                 <span className="w-7 h-7 rounded-lg bg-indigo-950 text-indigo-300 font-bold flex items-center justify-center font-mono text-xs border border-indigo-800">
