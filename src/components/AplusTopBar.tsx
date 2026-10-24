@@ -319,11 +319,14 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   );
 
   const activeProfile = resolveActiveProfileForUser(visConfig, currentUser, currentCampusId);
-  const isPlatformSiteAdmin =
-    currentUser?.role === 'admin' ||
-    currentUser?.role === 'superadmin' ||
-    currentUser?.role === 'level_1_platform_super_admin' ||
-    (isSuperAdmin && (!currentUser?.campusId || currentUser?.campusAccess === 'all'));
+  // Super Administration Account ONLY: Level 1 Platform Super Admin / Root Site Owner (no client attachment)
+  const isPlatformSiteAdmin = Boolean(
+    currentUser &&
+    !currentUser.clientId &&
+    (currentUser.role === 'level_1_platform_super_admin' ||
+     currentUser.username?.toLowerCase() === 'admin' ||
+     (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
+  );
   const isAuthorizedForCampusDb =
     isPlatformSiteAdmin ||
     isSuperAdmin ||
@@ -1180,8 +1183,8 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         </div>
       )}
 
-      {/* Platform Site Admin Hub Modal (12-Section Architecture & Security Audit) */}
-      {isSiteAdminHubOpen && (
+      {/* Platform Site Admin Hub Modal - ONLY accessible for Super Administration account */}
+      {isSiteAdminHubOpen && isPlatformSiteAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
           <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
             <PlatformSiteAdminHub

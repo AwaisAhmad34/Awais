@@ -848,6 +848,49 @@ export const PlatformSiteAdminHub: React.FC<{
     { id: '25_maintenance_release', number: '25', label: 'Maintenance & Releases', category: 'Security & Operations', icon: Settings },
   ];
 
+  // STRICT SECURITY CHECK: Show Super Admin Panel ONLY in Super Administration Account
+  const isSuperAdminAccountOnly = Boolean(
+    currentUser &&
+    !currentUser.clientId &&
+    (currentUser.role === 'level_1_platform_super_admin' ||
+     currentUser.username?.toLowerCase() === 'admin' ||
+     (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
+  );
+
+  if (!isSuperAdminAccountOnly) {
+    return (
+      <div className="bg-slate-900 border border-rose-800/60 rounded-3xl p-8 text-center text-slate-200 max-w-lg mx-auto my-12 shadow-2xl">
+        <div className="w-14 h-14 rounded-2xl bg-rose-950/80 border border-rose-700/60 text-rose-400 flex items-center justify-center mx-auto mb-4">
+          <ShieldAlert className="w-7 h-7" />
+        </div>
+        <h3 className="text-xl font-bold text-white mb-2">Access Restricted: Super Administrator Only</h3>
+        <p className="text-xs text-slate-400 leading-relaxed mb-6">
+          The Super Admin Panel is confidential and restricted exclusively to the Super Administration account. Your current account does not have authorization to view or modify platform-wide infrastructure, client organizations, or system security settings.
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          {onSwitchToCampusView && (
+            <button
+              type="button"
+              onClick={onSwitchToCampusView}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            >
+              Go to Campus Operational View
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden text-slate-100 max-w-7xl mx-auto my-4 flex flex-col min-h-[820px] transition-all">
       {/* Platform Creator Header Bar */}
@@ -1356,14 +1399,43 @@ export const PlatformSiteAdminHub: React.FC<{
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/80">
-                    {clients
-                      .filter(
-                        (c) =>
-                          c.name.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
-                          c.code.toLowerCase().includes(clientSearchQuery.toLowerCase())
-                      )
-                      .map((c) => (
-                        <tr key={c.id} className="hover:bg-slate-900/60 transition-colors">
+                    {clients.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-12 px-4 text-center text-slate-400">
+                          <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
+                            <Building2 className="w-10 h-10 text-slate-600" />
+                            <span className="font-bold text-white text-sm">No Client Organizations Registered</span>
+                            <span className="text-xs text-slate-400">All demo client organizations, campuses, and entries have been completely deleted. Database is in a fresh, clean production state.</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setClientFormId(null);
+                                setClientFormName('');
+                                setClientFormCode('');
+                                setClientFormTier('Enterprise');
+                                setClientFormContact('');
+                                setClientFormEmail('');
+                                setClientFormPhone('');
+                                setClientFormMaxCampuses('10');
+                                setClientFormMaxUsers('40');
+                                setIsClientModalOpen(true);
+                              }}
+                              className="mt-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow-sm"
+                            >
+                              + Register First Client Organization
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      clients
+                        .filter(
+                          (c) =>
+                            c.name.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                            c.code.toLowerCase().includes(clientSearchQuery.toLowerCase())
+                        )
+                        .map((c) => (
+                          <tr key={c.id} className="hover:bg-slate-900/60 transition-colors">
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2.5">
                               <span className="font-mono text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
@@ -1452,7 +1524,7 @@ export const PlatformSiteAdminHub: React.FC<{
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      )))}
                   </tbody>
                 </table>
               </div>

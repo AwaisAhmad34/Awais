@@ -438,13 +438,17 @@ async function startCrossBrowserRealtimeSync() {
 
     const localState = window.__APLUS_GET_CURRENT_STATE__?.() || idbCached?.state || {};
 
-    const mergedCampuses = mergeArraysById(
-      mergeArraysById(cloudState?.campuses || [], colCampuses),
-      localState.campuses || []
-    );
     const isDataPurged =
       typeof localStorage !== 'undefined' &&
-      localStorage.getItem('aplus_dummy_data_purged_v2') === 'true';
+      (localStorage.getItem('aplus_all_data_purged_production') === 'true' ||
+       localStorage.getItem('aplus_dummy_data_purged_v2') === 'true');
+
+    const mergedCampuses = isDataPurged
+      ? (localState.campuses || [])
+      : mergeArraysById(
+          mergeArraysById(cloudState?.campuses || [], colCampuses),
+          localState.campuses || []
+        );
 
     const mergedTransactions = isDataPurged
       ? (localState.transactions || [])

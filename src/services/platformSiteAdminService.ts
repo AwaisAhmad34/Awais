@@ -22,6 +22,133 @@ export interface SchoolClientOrganization {
   notes?: string;
 }
 
+export interface ERPModuleDefinition {
+  id: string;
+  name: string;
+  category: 'Core Financials' | 'Audit & Compliance' | 'Analytics & Operations' | 'Governance & Tools';
+  description: string;
+  iconName?: string;
+  isCore?: boolean;
+}
+
+export const PLATFORM_CLIENT_MODULES: ERPModuleDefinition[] = [
+  {
+    id: 'dashboard',
+    name: 'Executive KPI Dashboard',
+    category: 'Core Financials',
+    description: 'High-level financial summaries, revenue vs expenditure metrics, and operational cards.',
+    isCore: true,
+  },
+  {
+    id: 'transaction',
+    name: 'Single Voucher Entry',
+    category: 'Core Financials',
+    description: 'Create individual Cash and Bank vouchers (BPV, BRV, CPV, CRV, JV) with multi-row double entry.',
+  },
+  {
+    id: 'alltransactions',
+    name: 'Transaction Ledger & Approval Queue',
+    category: 'Core Financials',
+    description: 'Searchable ledger, verification queue, status approvals (Pending, Approved, Posted), and batch actions.',
+  },
+  {
+    id: 'pettycash',
+    name: 'Petty Cash Imprest & Float',
+    category: 'Core Financials',
+    description: 'Petty cash log, imprest float replenishments, expense disbursements, and category vouchers.',
+  },
+  {
+    id: 'accounts',
+    name: 'Chart of Accounts (COA)',
+    category: 'Core Financials',
+    description: 'Hierarchical 4-digit Chart of Accounts, head balances, debit/credit tracking, and ledger codes.',
+  },
+  {
+    id: 'openingbalance',
+    name: 'Opening Balances & IAS-1 Balancing',
+    category: 'Core Financials',
+    description: 'Campus opening ledger balances with automatic IAS-1 compliant equity balancing journal vouchers.',
+  },
+  {
+    id: 'reconciliation',
+    name: 'Bank Transaction Reconciliation',
+    category: 'Audit & Compliance',
+    description: 'Monthly bank statement matching, uncleared cheque audit, and reconciliation status tracking.',
+  },
+  {
+    id: 'cashreconciliation',
+    name: '7-Day Physical Cash Audit',
+    category: 'Audit & Compliance',
+    description: 'Physical vault note denomination counting, safe balance certificates, and 7-day auditor sign-offs.',
+  },
+  {
+    id: 'reports',
+    name: 'Multi-Format Financial Reports',
+    category: 'Analytics & Operations',
+    description: 'Trial Balance, Profit & Loss (P&L), Balance Sheet, Campus Comparisons, and Ledger PDFs.',
+  },
+  {
+    id: 'budget_variance',
+    name: 'Budget Planning & Variance Analytics',
+    category: 'Analytics & Operations',
+    description: 'Campus monthly expense budget limits, real-time variance gauges, and overspend threshold alerts.',
+  },
+  {
+    id: 'ai_suggester',
+    name: 'AI Expense Categorization Suggester',
+    category: 'Analytics & Operations',
+    description: 'Intelligent suggestion of Chart of Accounts categories from transaction narrations and historical trends.',
+  },
+  {
+    id: 'activity',
+    name: 'Forensic Audit Trail & Security Logs',
+    category: 'Audit & Compliance',
+    description: 'Tamper-evident system activity logging, voucher modification histories, and login forensics.',
+  },
+  {
+    id: 'approval_matrix',
+    name: 'Configurable Voucher Approval Matrix',
+    category: 'Governance & Tools',
+    description: 'Custom threshold rules, role-based authorization limits, and dual-sign-off policies.',
+  },
+  {
+    id: 'multischool_admin',
+    name: 'Campus Database Credentials Vault',
+    category: 'Governance & Tools',
+    description: 'Management of campus dynamic passwords, PIN tokens, and direct branch login access.',
+  },
+  {
+    id: 'campuses',
+    name: 'Sub-Campus Management & Hierarchy',
+    category: 'Governance & Tools',
+    description: 'Branch registration, parent-child satellite reporting, and campus-level parameter configuration.',
+  },
+  {
+    id: 'docs',
+    name: 'System Manual & SOP Documentation',
+    category: 'Governance & Tools',
+    description: 'Standard Operating Procedures, role handbooks, and regulatory accounting compliance guidelines.',
+  },
+];
+
+export const DEFAULT_CLIENT_MODULES = [
+  'dashboard',
+  'transaction',
+  'alltransactions',
+  'pettycash',
+  'accounts',
+  'openingbalance',
+  'reconciliation',
+  'cashreconciliation',
+  'reports',
+  'budget_variance',
+  'ai_suggester',
+  'activity',
+  'approval_matrix',
+  'campuses',
+  'docs',
+];
+
 export interface ExtendedCampusNode extends Campus {
   clientId?: string;
   isMainCampus?: boolean;
@@ -90,70 +217,7 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSystemSettings = {
   systemVersion: 'v4.2.0-Enterprise',
 };
 
-export const INITIAL_SCHOOL_CLIENTS: SchoolClientOrganization[] = [
-  {
-    id: 'client-aplus',
-    name: 'Aplus School System Network',
-    code: 'APLUS',
-    tier: 'Enterprise',
-    status: 'active',
-    contactPerson: 'Director Administration',
-    contactEmail: 'director@aplus.edu.pk',
-    contactPhone: '+92 300 1234567',
-    address: 'Central Campus Complex, Khiali Bypass Road, Gujranwala',
-    mainCampusId: 'campus-khiali',
-    maxCampuses: 12,
-    maxUsers: 50,
-    billingRenewalDate: '2027-12-31',
-    enabledModules: [
-      'dashboard',
-      'campuses',
-      'multischool_admin',
-      'transaction',
-      'alltransactions',
-      'pettycash',
-      'erp_overview',
-      'reports',
-      'accounts',
-      'reconciliation',
-      'cashreconciliation',
-      'activity',
-      'docs',
-    ],
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: new Date().toISOString(),
-    notes: 'Flagship client institution with four-voucher & imprest petty cash workflow.',
-  },
-  {
-    id: 'client-beaconcrest',
-    name: 'Beacon Crest Education Group',
-    code: 'BCEG',
-    tier: 'Professional',
-    status: 'active',
-    contactPerson: 'Mr. Tariq Mehmood (CFO)',
-    contactEmail: 'cfo@beaconcrest.edu.pk',
-    contactPhone: '+92 321 9876543',
-    address: 'City Campus Tower, Civil Lines, Gujranwala',
-    mainCampusId: 'campus-beacon-main',
-    maxCampuses: 6,
-    maxUsers: 25,
-    billingRenewalDate: '2027-06-30',
-    enabledModules: [
-      'dashboard',
-      'campuses',
-      'transaction',
-      'alltransactions',
-      'pettycash',
-      'reports',
-      'accounts',
-      'reconciliation',
-      'activity',
-    ],
-    createdAt: '2026-03-15T00:00:00.000Z',
-    updatedAt: new Date().toISOString(),
-    notes: 'Secondary educational group client with 3 regional branches.',
-  },
-];
+export const INITIAL_SCHOOL_CLIENTS: SchoolClientOrganization[] = [];
 
 // ----------------------------------------------------------------------------
 // CLIENTS PERSISTENCE & CLOUD SYNC
@@ -161,16 +225,68 @@ export const INITIAL_SCHOOL_CLIENTS: SchoolClientOrganization[] = [
 
 export function getStoredSchoolClients(): SchoolClientOrganization[] {
   try {
-    if (typeof window === 'undefined') return INITIAL_SCHOOL_CLIENTS;
+    if (typeof window === 'undefined') return [];
+    const isPurged =
+      localStorage.getItem('aplus_all_data_purged_production') === 'true' ||
+      localStorage.getItem('aplus_dummy_data_purged_v2') === 'true';
+    if (isPurged) {
+      const raw = localStorage.getItem(CLIENTS_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    }
     const raw = localStorage.getItem(CLIENTS_STORAGE_KEY);
     if (!raw) {
-      saveStoredSchoolClients(INITIAL_SCHOOL_CLIENTS);
-      return INITIAL_SCHOOL_CLIENTS;
+      saveStoredSchoolClients([]);
+      return [];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_SCHOOL_CLIENTS;
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return INITIAL_SCHOOL_CLIENTS;
+    return [];
+  }
+}
+
+export function purgeAllProductionData(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    localStorage.setItem('aplus_all_data_purged_production', 'true');
+    localStorage.setItem('aplus_dummy_data_purged_v2', 'true');
+    localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify([]));
+    localStorage.setItem('aplus_transactions', JSON.stringify([]));
+    localStorage.setItem('aplus_petty_cash', JSON.stringify([]));
+    localStorage.setItem('aplus_campuses', JSON.stringify([]));
+    localStorage.setItem('aplus_activity_logs', JSON.stringify([]));
+    localStorage.setItem(PLATFORM_AUDIT_STORAGE_KEY, JSON.stringify([]));
+    localStorage.setItem('aplus_global_recycle_bin_v1', JSON.stringify([]));
+    localStorage.setItem('aplus_global_recycle_bin_v2', JSON.stringify([]));
+    localStorage.setItem('aplus_campus_login_activities_v1', JSON.stringify([]));
+    localStorage.removeItem('aplus_current_campus');
+
+    // Keep only the Level 1 Platform Super Admin (Site Owner)
+    const superAdminOnly = [
+      {
+        id: 'user-platform-owner',
+        username: 'admin',
+        name: 'Platform Super Admin (Site Owner)',
+        email: 'siteowner@platform.org',
+        role: 'level_1_platform_super_admin',
+        isSuperAdmin: true,
+        status: 'active',
+        password: 'admin',
+        clientId: null,
+        campusId: 'all',
+        permittedCampusIds: ['all'],
+        allowedModules: ['all'],
+        designation: 'Platform Site Owner',
+      },
+    ];
+    localStorage.setItem('ams_users_v5_clean', JSON.stringify(superAdminOnly));
+    localStorage.setItem('aplus_users', JSON.stringify(superAdminOnly));
+  } catch (err) {
+    console.error('Failed to purge production data:', err);
   }
 }
 

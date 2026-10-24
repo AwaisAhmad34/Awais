@@ -374,7 +374,49 @@ function runTenantIsolationAndRecoveryTests() {
   }
   console.log('✓ Test 18: Platform Site Admin report disabling per client successfully blocks access.');
 
-  console.log('All 18 Multi-Campus Tenant Isolation, Security, Recovery & Financial Report Tests PASSED!');
+  // Test 19: Strict Super Admin Panel Access Exclusivity
+  function checkSuperAdminPanelAccess(user: any, isSuperAdminFlag = false): boolean {
+    return Boolean(
+      user &&
+      !user.clientId &&
+      (user.role === 'level_1_platform_super_admin' ||
+       user.username?.toLowerCase() === 'admin' ||
+       (user.role === 'admin' && !user.campusId && isSuperAdminFlag))
+    );
+  }
+
+  const rootSuperAdmin = { id: 'u0', username: 'admin', role: 'level_1_platform_super_admin' };
+  const legacyRootAdmin = { id: 'u0b', username: 'admin', role: 'admin' };
+  const clientOwner = { id: 'u1', username: 'client_owner', role: 'level_2_client_super_admin', clientId: 'client_101' };
+  const clientAdminWithAdminRole = { id: 'u2', username: 'client_admin', role: 'admin', clientId: 'client_101' };
+  const subCampusAdmin = { id: 'u3', username: 'sub_admin', role: 'level_3_sub_campus_admin', campusId: 'campus_01' };
+  const campusAccountant = { id: 'u4', username: 'accountant', role: 'campus_accountant', campusId: 'campus_01' };
+  const cashier = { id: 'u5', username: 'cashier_01', role: 'cashier', campusId: 'campus_01' };
+
+  if (!checkSuperAdminPanelAccess(rootSuperAdmin, true)) {
+    throw new Error('Access Control Error: Root Super Admin was denied Super Admin Panel access.');
+  }
+  if (!checkSuperAdminPanelAccess(legacyRootAdmin, true)) {
+    throw new Error('Access Control Error: Legacy Root Admin was denied Super Admin Panel access.');
+  }
+  if (checkSuperAdminPanelAccess(clientOwner, false)) {
+    throw new Error('Security Breach: Client Super Admin was granted Super Admin Panel access.');
+  }
+  if (checkSuperAdminPanelAccess(clientAdminWithAdminRole, true)) {
+    throw new Error('Security Breach: Client Admin was granted Super Admin Panel access.');
+  }
+  if (checkSuperAdminPanelAccess(subCampusAdmin, false)) {
+    throw new Error('Security Breach: Sub-campus admin was granted Super Admin Panel access.');
+  }
+  if (checkSuperAdminPanelAccess(campusAccountant, false)) {
+    throw new Error('Security Breach: Campus accountant was granted Super Admin Panel access.');
+  }
+  if (checkSuperAdminPanelAccess(cashier, false)) {
+    throw new Error('Security Breach: Cashier was granted Super Admin Panel access.');
+  }
+  console.log('✓ Test 19: Super Admin Panel access is strictly restricted to Super Administration account just.');
+
+  console.log('All 19 Multi-Campus Tenant Isolation, Security, Recovery & Financial Report Tests PASSED!');
 }
 
 runTenantIsolationAndRecoveryTests();

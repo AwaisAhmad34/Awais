@@ -31,6 +31,8 @@ import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
 import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub';
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
+import { purgeAllProductionData } from './services/platformSiteAdminService';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // ----------------------------------------------------------------------------
 // DEFENSIVE DATA SANITIZATION: Clean duplicate user records from localStorage
@@ -65,6 +67,8 @@ function purgeDuplicateUsersFromStorage() {
   } catch {}
 }
 
+// One-time cleanup utility available on window.__PURGE_PRODUCTION_DATA__ for emergency resets
+(window as any).__PURGE_PRODUCTION_DATA__ = purgeAllProductionData;
 purgeDuplicateUsersFromStorage();
 initFirebaseCloudSync();
 installGlobalVisibilityHook();
@@ -95,11 +99,14 @@ function InnerApp() {
     return <DynamicCampusLoginPortal />;
   }
 
-  // Hierarchy Level 1: Platform Super Admin (Site Owner)
-  const isPlatformSiteAdmin =
-    currentUser.role === 'level_1_platform_super_admin' ||
-    currentUser.role === 'admin' ||
-    (isSuperAdmin && (!currentUser.campusId || currentUser.campusAccess === 'all') && !currentUser.clientId);
+  // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly Super Administration account ONLY
+  const isPlatformSiteAdmin = Boolean(
+    currentUser &&
+    !currentUser.clientId &&
+    (currentUser.role === 'level_1_platform_super_admin' ||
+     currentUser.username?.toLowerCase() === 'admin' ||
+     (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
+  );
 
   // Hierarchy Level 2: Main Campus Administrator (Client Owner)
   const isClientOwnerMainAdmin =
@@ -215,8 +222,12 @@ export default function App() {
   }, []);
 
   return (
-    <AccountingProvider>
-      <InnerApp />
-    </AccountingProvider>
+    <ErrorBoundary>
+      <AccountingProvider>
+        <ErrorBoundary>
+          <InnerApp />
+        </ErrorBoundary>
+      </AccountingProvider>
+    </ErrorBoundary>
   );
 }

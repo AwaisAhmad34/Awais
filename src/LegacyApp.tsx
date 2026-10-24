@@ -33,6 +33,7 @@ import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
 import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub';
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 initFirebaseCloudSync();
 installGlobalVisibilityHook();
@@ -71,11 +72,14 @@ function InnerApp() {
     </div>;
   }
 
-  // Hierarchy Level 1: Platform Super Admin (Site Owner)
-  const isPlatformSiteAdmin =
-    currentUser.role === 'level_1_platform_super_admin' ||
-    currentUser.role === 'admin' ||
-    (isSuperAdmin && (!currentUser.campusId || currentUser.campusAccess === 'all') && !currentUser.clientId);
+  // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly Super Administration account ONLY
+  const isPlatformSiteAdmin = Boolean(
+    currentUser &&
+    !currentUser.clientId &&
+    (currentUser.role === 'level_1_platform_super_admin' ||
+     currentUser.username?.toLowerCase() === 'admin' ||
+     (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
+  );
 
   // Hierarchy Level 2: Main Campus Administrator (Client Owner)
   const isClientOwnerMainAdmin =
@@ -191,8 +195,14 @@ export default function App() {
   }, []);
 
   return (
-    <AccountingProvider>
-      <TenantAuthProvider><InnerApp /></TenantAuthProvider>
-    </AccountingProvider>
+    <ErrorBoundary>
+      <AccountingProvider>
+        <TenantAuthProvider>
+          <ErrorBoundary>
+            <InnerApp />
+          </ErrorBoundary>
+        </TenantAuthProvider>
+      </AccountingProvider>
+    </ErrorBoundary>
   );
 }

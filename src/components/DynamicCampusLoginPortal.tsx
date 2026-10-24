@@ -266,12 +266,18 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
               {showQuickCredentials && (
                 <div className="mt-3 space-y-2.5 animate-in fade-in duration-200 text-xs">
+                  {/* Production Status Notice */}
+                  <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/80 text-[11px] text-indigo-200">
+                    <span className="font-bold text-white block mb-0.5">Production Clean Slate Active</span>
+                    All previous demo client organizations, campuses, and entries have been purged. Sign in as Platform Super Admin to create new client organizations.
+                  </div>
+
                   {/* Level 1: Platform Owner */}
                   <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                        <span>Level 1: Platform Super Admin</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                        <span>Level 1: Platform Super Admin (Site Owner)</span>
                       </div>
                       <div className="text-[10px] text-slate-400 font-mono mt-0.5">
                         User: <strong className="text-indigo-300">admin</strong> • Pass: <strong className="text-indigo-300">admin</strong>
@@ -281,86 +287,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                       type="button"
                       onClick={() => handleAutoFill('admin', 'admin')}
                       className="px-2 py-1 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800 hover:bg-indigo-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-
-                  {/* Level 2: Client Owner Aplus */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        <span>Level 2: Client Owner (Aplus System)</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-emerald-300">aplus_admin</strong> • Pass: <strong className="text-emerald-300">aplus</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('aplus_admin', 'aplus')}
-                      className="px-2 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-
-                  {/* Level 3: Main Campus Head */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                        <span>Level 3: Main Parent Campus Admin</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-purple-300">khiali</strong> • Pass: <strong className="text-purple-300">khiali</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('khiali', 'khiali')}
-                      className="px-2 py-1 rounded-lg bg-purple-950 text-purple-300 border border-purple-800 hover:bg-purple-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-
-                  {/* Level 4: Branch Accountants */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-                        <span>Level 4: Sub-Campus Branch Accountant</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-sky-300">cvt</strong> (or pc, mt, dc) • Pass: <strong className="text-sky-300">campus</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('cvt', 'campus')}
-                      className="px-2 py-1 rounded-lg bg-sky-950 text-sky-300 border border-sky-800 hover:bg-sky-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-
-                  {/* Level 2: Isolated Client Owner Apex */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        <span>Level 2: Client Owner (Apex Group)</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-amber-300">apex_admin</strong> • Pass: <strong className="text-amber-300">apex</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('apex_admin', 'apex')}
-                      className="px-2 py-1 rounded-lg bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900 text-[10px] font-bold cursor-pointer"
                     >
                       Auto-Fill
                     </button>

@@ -38,6 +38,7 @@ import {
   SchoolClientOrganization,
   PlatformSystemSettings,
   validateCampusHierarchy,
+  purgeAllProductionData,
 } from '../services/platformSiteAdminService';
 import { pushMasterCloudSnapshot } from '../services/firebaseSync';
 import { getStoredRecycleBinRecords } from '../services/globalRecoveryService';
@@ -165,8 +166,15 @@ export const SubCampusHierarchyView: React.FC<{
       </div>
 
       {/* Campus Hierarchy Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredSubs.map((sub: any) => {
+      {filteredSubs.length === 0 ? (
+        <div className="p-8 rounded-2xl bg-slate-950/70 border border-slate-800 text-center text-slate-400">
+          <FolderTree className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+          <span className="font-bold text-white text-sm block">No Sub-Campuses Registered</span>
+          <span className="text-xs text-slate-500">All demo sub-campuses have been deleted. Register new campuses when setting up organizations.</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredSubs.map((sub: any) => {
           const parent = campuses.find((p) => p.id === sub.parentCampusId);
           const isReassigning = reassigningCampusId === sub.id;
 
@@ -257,7 +265,8 @@ export const SubCampusHierarchyView: React.FC<{
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -562,6 +571,22 @@ export const DatabaseHubView: React.FC<{
     triggerToast('success', 'Complete database JSON dump downloaded successfully!');
   };
 
+  const handleWipeAllData = async () => {
+    purgeAllProductionData();
+    try {
+      await pushMasterCloudSnapshot({
+        campuses: [],
+        transactions: [],
+        pettyCashTransactions: [],
+        accountHeads: [],
+      });
+    } catch {}
+    triggerToast('success', 'All client organizations and financial entries have been deleted! Database is in clean production state.');
+    setTimeout(() => {
+      window.location.reload();
+    }, 600);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -577,6 +602,15 @@ export const DatabaseHubView: React.FC<{
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleWipeAllData}
+            className="px-3.5 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Wipe all client organizations, campuses, and entries"
+          >
+            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            <span>Delete All Data (Clients + Entries)</span>
+          </button>
           <button
             type="button"
             onClick={handleDownloadJsonBackup}
