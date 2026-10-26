@@ -49,6 +49,8 @@ import {
   Zap,
   UserPlus,
   LogOut,
+  Edit3,
+  Trash2,
 } from 'lucide-react';
 import { useAccounting, Campus, AccountHead, Transaction } from '../core/aplusEngine';
 import {
@@ -69,6 +71,8 @@ import {
   generateNextChildAccountCode,
   resolveUserCampusDataScope,
   DEFAULT_PLATFORM_SETTINGS,
+  PLATFORM_CLIENT_MODULES,
+  DEFAULT_CLIENT_MODULES,
 } from '../services/platformSiteAdminService';
 import {
   PermissionLevel,
@@ -167,6 +171,7 @@ export const PlatformSiteAdminHub: React.FC<{
     campuses,
     addCampus,
     updateCampus,
+    deleteCampus,
     users,
     addUser,
     updateUser,
@@ -235,6 +240,24 @@ export const PlatformSiteAdminHub: React.FC<{
   const [newCampusPassword, setNewCampusPassword] = useState('');
   const [newCampusFloat, setNewCampusFloat] = useState('35000');
   const [newCampusParentId, setNewCampusParentId] = useState<string>('none');
+
+  // Campus Edit Modal State
+  const [editingCampus, setEditingCampus] = useState<ExtendedCampusNode | null>(null);
+  const [editCampusName, setEditCampusName] = useState('');
+  const [editCampusCode, setEditCampusCode] = useState('');
+  const [editCampusCity, setEditCampusCity] = useState('');
+  const [editCampusAccountant, setEditCampusAccountant] = useState('');
+  const [editCampusFloat, setEditCampusFloat] = useState('35000');
+  const [editCampusParentId, setEditCampusParentId] = useState<string>('none');
+  const [editCampusStatus, setEditCampusStatus] = useState<'active' | 'inactive'>('active');
+  const [editCampusLoginEnabled, setEditCampusLoginEnabled] = useState(true);
+
+  // Campus Delete Confirmation State
+  const [deletingCampus, setDeletingCampus] = useState<ExtendedCampusNode | null>(null);
+
+  // Client Module Governance State
+  const [managingModulesClient, setManagingModulesClient] = useState<SchoolClientOrganization | null>(null);
+  const [clientSelectedModules, setClientSelectedModules] = useState<string[]>([]);
 
   // --------------------------------------------------------------------------
   // SECTION 04: USERS & LOGIN ACCOUNTS STATE
@@ -559,6 +582,209 @@ export const PlatformSiteAdminHub: React.FC<{
     );
 
     setIsCampusModalOpen(false);
+  };
+
+  // --------------------------------------------------------------------------
+  // CAMPUS EDIT, DELETE & RETRIEVAL HANDLERS
+  // --------------------------------------------------------------------------
+  const handleOpenEditCampus = (campus: ExtendedCampusNode) => {
+    setEditingCampus(campus);
+    setEditCampusName(campus.name || '');
+    setEditCampusCode(campus.code || '');
+    setEditCampusCity(campus.city || 'Punjab');
+    setEditCampusAccountant(campus.accountantName || '');
+    setEditCampusFloat(String(campus.pettyCashFloat || 35000));
+    setEditCampusParentId(campus.parentCampusId || 'none');
+    setEditCampusStatus((campus.status as any) || 'active');
+    setEditCampusLoginEnabled(campus.loginEnabled !== false);
+  };
+
+  const handleSaveEditCampus = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCampus) return;
+    if (!editCampusName.trim() || !editCampusCode.trim()) {
+      triggerToast('error', 'Branch name and branch code are required.');
+      return;
+    }
+
+    const cleanCode = editCampusCode.trim().toUpperCase();
+    if (campuses.some((c) => c.id !== editingCampus.id && c.code.toUpperCase() === cleanCode)) {
+      triggerToast('error', `Campus code '${cleanCode}' is already registered to another branch.`);
+      return;
+    }
+
+    const targetParent = editCampusParentId === 'none' || !editCampusParentId ? null : editCampusParentId;
+    if (targetParent) {
+      const hierarchyCheck = validateCampusHierarchy(campuses as ExtendedCampusNode[], editingCampus.id, targetParent);
+      if (!hierarchyCheck.isValid) {
+        triggerToast('error', hierarchyCheck.error || 'Invalid parent hierarchy loop.');
+        return;
+      }
+    }
+
+    const updates: Partial<ExtendedCampusNode> = {
+      name: editCampusName.trim(),
+      code: cleanCode,
+      city: editCampusCity.trim() || 'Punjab',
+      accountantName: editCampusAccountant.trim() || 'Branch Accountant',
+      pettyCashFloat: Number(editCampusFloat) || 35000,
+      parentCampusId: targetParent,
+      isMainCampus: !targetParent,
+      status: editCampusStatus,
+      loginEnabled: editCampusLoginEnabled,
+    };
+
+    updateCampus(editingCampus.id, updates as any);
+
+    try {
+      const raw = localStorage.getItem('aplus_campuses');
+      if (raw) {
+        const list = JSON.parse(raw);
+        const updatedList = list.map((c: any) => (c.id === editingCampus.id ? { ...c, ...updates } : c));
+        localStorage.setItem('aplus_campuses', JSON.stringify(updatedList));
+      }
+    } catch {}
+
+    recordSiteAdminSecurityEvent({
+      actorName: currentUser?.name || 'Platform Site Admin',
+      actorRole: 'Level 1 Platform Creator',
+      severity: 'medium',
+      category: 'CAMPUS_HIERARCHY',
+      action: 'UPDATE_CAMPUS_DETAILS',
+      targetEntity: 'Campus',
+      targetId: editingCampus.id,
+      details: `Updated campus details for '${updates.name}' (${updates.code}). Parent: ${targetParent || 'None (Main)'}, Status: ${updates.status}.`,
+    });
+
+    triggerToast('success', `Campus '${updates.name}' updated successfully!`);
+    setEditingCampus(null);
+  };
+
+  const handleOpenDeleteCampus = (campus: ExtendedCampusNode) => {
+    setDeletingCampus(campus);
+  };
+
+  const handleConfirmDeleteCampus = () => {
+    if (!deletingCampus) return;
+    const campusId = deletingCampus.id;
+    const campusName = deletingCampus.name;
+    const campusCode = deletingCampus.code;
+
+    // Gracefully detach any child campuses reporting to this campus so they become independent main campuses
+    const childCampuses = campuses.filter((c: any) => c.parentCampusId === campusId);
+    childCampuses.forEach((child) => {
+      updateCampus(child.id, {
+        parentCampusId: null,
+        isMainCampus: true,
+      } as any);
+    });
+
+    // Soft delete to Global Recovery / Recycle Bin
+    try {
+      softDeleteRecord({
+        recordType: 'CAMPUS',
+        originalPayload: deletingCampus,
+        campusId: campusId,
+        campusName: campusName,
+        campusCode: campusCode,
+        identifier: campusCode,
+        title: `Campus: ${campusName} (${campusCode})`,
+        deletedByUserId: currentUser?.id || 'admin',
+        deletedByUserName: currentUser?.name || 'Platform Super Admin',
+        deletedByUserRole: 'Platform Super Admin',
+        deletionReason: 'Administrative campus removal',
+      });
+    } catch (err) {
+      console.warn('Recycle bin record creation deferred:', err);
+    }
+
+    // Call engine deleteCampus
+    if (deleteCampus) {
+      deleteCampus(campusId);
+    }
+
+    // Update localStorage
+    try {
+      const raw = localStorage.getItem('aplus_campuses');
+      if (raw) {
+        const list = JSON.parse(raw);
+        const filtered = list.filter((c: any) => c.id !== campusId);
+        localStorage.setItem('aplus_campuses', JSON.stringify(filtered));
+      }
+    } catch {}
+
+    recordSiteAdminSecurityEvent({
+      actorName: currentUser?.name || 'Platform Site Admin',
+      actorRole: 'Level 1 Platform Creator',
+      severity: 'high',
+      category: 'CAMPUS_HIERARCHY',
+      action: 'DELETE_CAMPUS',
+      targetEntity: 'Campus',
+      targetId: campusId,
+      details: `Deleted campus '${campusName}' (${campusCode}). Detached ${childCampuses.length} child branches. Preserved in Recycle Bin.`,
+    });
+
+    triggerToast(
+      'warning',
+      `Campus '${campusName}' deleted and moved to the Global Recycle Bin.`
+    );
+    setDeletingCampus(null);
+  };
+
+  // --------------------------------------------------------------------------
+  // CLIENT MODULE GOVERNANCE HANDLERS
+  // --------------------------------------------------------------------------
+  const handleOpenManageModules = (client: SchoolClientOrganization) => {
+    setManagingModulesClient(client);
+    setClientSelectedModules(
+      client.enabledModules && client.enabledModules.length > 0
+        ? [...client.enabledModules]
+        : [...DEFAULT_CLIENT_MODULES]
+    );
+  };
+
+  const handleToggleClientModule = (moduleId: string) => {
+    if (moduleId === 'dashboard') {
+      triggerToast('info', 'Executive Dashboard is a core module and must remain enabled.');
+      return;
+    }
+    setClientSelectedModules((prev) =>
+      prev.includes(moduleId) ? prev.filter((id) => id !== moduleId) : [...prev, moduleId]
+    );
+  };
+
+  const handleSaveClientModules = () => {
+    if (!managingModulesClient) return;
+    const finalModules = clientSelectedModules.length > 0 ? clientSelectedModules : ['dashboard'];
+    const updated = clients.map((c) =>
+      c.id === managingModulesClient.id
+        ? {
+            ...c,
+            enabledModules: finalModules,
+            updatedAt: new Date().toISOString(),
+          }
+        : c
+    );
+    setClients(updated);
+    saveStoredSchoolClients(updated);
+    syncSchoolClientsToCloud(updated);
+
+    recordSiteAdminSecurityEvent({
+      actorName: currentUser?.name || 'Platform Site Admin',
+      actorRole: 'Level 1 Platform Creator',
+      severity: 'medium',
+      category: 'CLIENT_MANAGEMENT',
+      action: 'UPDATE_CLIENT_MODULES',
+      targetEntity: 'SchoolClientOrganization',
+      targetId: managingModulesClient.id,
+      details: `Updated active ERP modules for client '${managingModulesClient.name}'. Total Active: ${finalModules.length} modules.`,
+    });
+
+    triggerToast(
+      'success',
+      `Updated module permissions for '${managingModulesClient.name}' (${finalModules.length} active modules)!`
+    );
+    setManagingModulesClient(null);
   };
 
   const handleOpenAddUserModal = (preselectedCampusId?: string, userToEdit?: any) => {
@@ -1521,6 +1747,16 @@ export const PlatformSiteAdminHub: React.FC<{
                               >
                                 Edit
                               </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenManageModules(c)}
+                                className="px-2.5 py-1 rounded bg-indigo-950 hover:bg-indigo-900 text-indigo-300 font-bold text-[10px] border border-indigo-800 transition-colors cursor-pointer flex items-center gap-1"
+                                title="Manage which ERP modules are visible and permitted to this client organization"
+                              >
+                                <Sliders className="w-3 h-3 text-indigo-400" />
+                                <span>Modules ({c.enabledModules?.length || DEFAULT_CLIENT_MODULES.length}/16)</span>
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1650,9 +1886,9 @@ export const PlatformSiteAdminHub: React.FC<{
                           </div>
                         )}
 
-                        {/* Direct Sub-Campus and User Quick Creation Buttons */}
+                        {/* Direct Sub-Campus, Edit, Delete, and User Quick Creation Buttons */}
                         <div className="mt-3 pt-2.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <button
                               type="button"
                               onClick={() => {
@@ -1672,11 +1908,31 @@ export const PlatformSiteAdminHub: React.FC<{
 
                             <button
                               type="button"
-                              onClick={() => handleOpenAddUserModal(campus.id)}
+                              onClick={() => handleOpenEditCampus(campus)}
                               className="px-2.5 py-1 rounded-lg bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/80 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                              title={`Edit campus parameters for ${campus.name}`}
+                            >
+                              <Edit3 className="w-3 h-3 text-indigo-400" />
+                              <span>Edit</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteCampus(campus)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-950/90 hover:bg-rose-900 text-rose-300 border border-rose-700/80 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                              title={`Delete campus ${campus.name} (safely moves to Global Recycle Bin)`}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-400" />
+                              <span>Delete</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddUserModal(campus.id)}
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
                               title={`Create a login user account assigned to ${campus.name}`}
                             >
-                              <UserPlus className="w-3 h-3 text-indigo-400" />
+                              <UserPlus className="w-3 h-3 text-slate-400" />
                               <span>+ Add User</span>
                             </button>
                           </div>
@@ -2066,6 +2322,8 @@ export const PlatformSiteAdminHub: React.FC<{
             <SubCampusHierarchyView
               campuses={campuses}
               onUpdateCampus={updateCampus}
+              onEditCampus={handleOpenEditCampus}
+              onDeleteCampus={handleOpenDeleteCampus}
               triggerToast={triggerToast}
               onOpenRegisterModal={() => {
                 setNewCampusParentId('none');
@@ -2867,6 +3125,404 @@ export const PlatformSiteAdminHub: React.FC<{
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* EDIT CAMPUS PARAMETERS MODAL                                      */}
+      {/* ================================================================ */}
+      {editingCampus && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-xl w-full p-6 text-slate-100 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white">Edit Campus Branch Parameters</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Modify branch operational details, parent hierarchy, and accountant assignment.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingCampus(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditCampus} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Campus Branch Name</label>
+                  <input
+                    type="text"
+                    value={editCampusName}
+                    onChange={(e) => setEditCampusName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Campus Code</label>
+                  <input
+                    type="text"
+                    value={editCampusCode}
+                    onChange={(e) => setEditCampusCode(e.target.value.toUpperCase())}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold outline-none focus:border-indigo-500 uppercase"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">City / Location</label>
+                  <input
+                    type="text"
+                    value={editCampusCity}
+                    onChange={(e) => setEditCampusCity(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Branch Accountant</label>
+                  <input
+                    type="text"
+                    value={editCampusAccountant}
+                    onChange={(e) => setEditCampusAccountant(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Petty Cash Float (PKR)</label>
+                  <input
+                    type="number"
+                    value={editCampusFloat}
+                    onChange={(e) => setEditCampusFloat(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Operational Status</label>
+                  <select
+                    value={editCampusStatus}
+                    onChange={(e) => setEditCampusStatus(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="active">Active (Operational)</option>
+                    <option value="inactive">Inactive (Suspended)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-bold">
+                  Parent Campus Hierarchy Relationship:
+                </label>
+                <select
+                  value={editCampusParentId}
+                  onChange={(e) => setEditCampusParentId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  <option value="none">-- Standalone Main Campus (No Parent) --</option>
+                  {campuses
+                    .filter((c) => c.id !== editingCampus.id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        Parent: {c.name} ({c.code}) {(c as any).isMainCampus || !(c as any).parentCampusId ? '— Main Campus' : '— Branch'}
+                      </option>
+                    ))}
+                </select>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Selecting a parent campus makes this branch a satellite sub-campus that reports financial transactions upward.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                <div>
+                  <span className="font-bold text-white block">Direct Login Access</span>
+                  <span className="text-[11px] text-slate-400">Allow accountants to sign in using this campus identity</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={editCampusLoginEnabled}
+                  onChange={(e) => setEditCampusLoginEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingCampus(null)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Save Changes</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* DELETE CAMPUS CONFIRMATION MODAL                                  */}
+      {/* ================================================================ */}
+      {deletingCampus && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-900/80 rounded-3xl shadow-2xl max-w-lg w-full p-6 text-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-white">
+                  Confirm Deletion of Campus Branch
+                </h3>
+                <p className="text-xs text-rose-300 font-bold mt-0.5">
+                  {deletingCampus.name} ({deletingCampus.code})
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Are you sure you want to delete this campus branch from the system?
+                </p>
+              </div>
+            </div>
+
+            {/* Check child sub-campuses */}
+            {(() => {
+              const childSubs = campuses.filter((c: any) => c.parentCampusId === deletingCampus.id);
+              const branchTxCount = transactions.filter((t) => t.campusId === deletingCampus.id).length;
+
+              return (
+                <div className="space-y-2.5 p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs">
+                  {childSubs.length > 0 && (
+                    <div className="p-2.5 rounded-xl bg-amber-950/60 border border-amber-800 text-amber-200 text-[11px] space-y-1">
+                      <span className="font-bold flex items-center gap-1.5 text-amber-300">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{childSubs.length} Sub-Campuses Report to this Parent</span>
+                      </span>
+                      <p className="text-[11px] leading-relaxed">
+                        To protect database integrity and prevent circular crashes, all {childSubs.length} child sub-branches will be safely detached and converted to standalone main campuses.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                    <span>Linked Vouchers:</span>
+                    <strong className="text-white font-mono">{branchTxCount} transactions</strong>
+                  </div>
+
+                  <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                    <span>Imprest Cash Float:</span>
+                    <strong className="text-emerald-400 font-mono">
+                      PKR {(deletingCampus.pettyCashFloat || 0).toLocaleString()}
+                    </strong>
+                  </div>
+
+                  <div className="p-2 rounded-xl bg-indigo-950/40 border border-indigo-900 text-indigo-300 text-[10px]">
+                    🛡️ <strong>Safety Guarantee:</strong> This campus and its metadata will be preserved in the <strong>Global Recycle Bin</strong> for 1-click recovery if needed.
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeletingCampus(null)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCampus}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Confirm & Delete Campus</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* CLIENT ERP MODULES GOVERNANCE MODAL                               */}
+      {/* ================================================================ */}
+      {managingModulesClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-3xl w-full p-6 text-slate-100 max-h-[94vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white flex items-center gap-2">
+                    <span>Manage ERP Modules</span>
+                    <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+                      {managingModulesClient.name} ({managingModulesClient.code})
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Control which accounting, audit, reporting, and governance modules are visible to this client organization.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManagingModulesClient(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Quick Preset Selector Toolbar */}
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 mb-4 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <span className="text-xs font-bold text-slate-300">
+                Quick Module Presets:
+              </span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setClientSelectedModules(PLATFORM_CLIENT_MODULES.map((m) => m.id))}
+                  className="px-2.5 py-1 rounded-lg bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  Enterprise (All 16)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClientSelectedModules([...DEFAULT_CLIENT_MODULES])}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  Standard ERP (15)
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setClientSelectedModules(['dashboard', 'transaction', 'alltransactions', 'pettycash', 'reports'])
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  Minimal Cashbook (5)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClientSelectedModules(['dashboard'])}
+                  className="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  Clear Non-Core
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable Module Checklist by Category */}
+            <div className="flex-1 overflow-y-auto pr-1 space-y-4">
+              {(['Core Financials', 'Audit & Compliance', 'Analytics & Operations', 'Governance & Tools'] as const).map(
+                (category) => {
+                  const categoryModules = PLATFORM_CLIENT_MODULES.filter((m) => m.category === category);
+                  const activeInCategory = categoryModules.filter((m) => clientSelectedModules.includes(m.id)).length;
+
+                  return (
+                    <div key={category} className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-300 pb-1 border-b border-slate-800">
+                        <span className="uppercase tracking-wider text-[11px] text-indigo-400">
+                          {category}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {activeInCategory} / {categoryModules.length} Active
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {categoryModules.map((module) => {
+                          const isChecked = clientSelectedModules.includes(module.id);
+                          const isCore = module.isCore;
+
+                          return (
+                            <div
+                              key={module.id}
+                              onClick={() => !isCore && handleToggleClientModule(module.id)}
+                              className={`p-3 rounded-xl border text-xs transition-all cursor-pointer select-none flex items-start gap-2.5 ${
+                                isChecked
+                                  ? 'bg-slate-950 border-indigo-700/80 shadow-xs'
+                                  : 'bg-slate-950/50 border-slate-800/80 opacity-70 hover:opacity-100 hover:border-slate-700'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                disabled={isCore}
+                                onChange={() => handleToggleClientModule(module.id)}
+                                className="w-4 h-4 rounded accent-indigo-600 mt-0.5 cursor-pointer"
+                              />
+                              <div className="flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white text-xs">{module.name}</span>
+                                  {isCore && (
+                                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+                                      Core
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                                  {module.description}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+              )}
+            </div>
+
+            {/* Modal Footer with Active Summary & Save Button */}
+            <div className="flex items-center justify-between pt-4 border-t border-slate-800 mt-4 shrink-0">
+              <div className="text-xs text-slate-400">
+                Total Modules Active: <strong className="text-indigo-400">{clientSelectedModules.length}</strong> of{' '}
+                {PLATFORM_CLIENT_MODULES.length}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setManagingModulesClient(null)}
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveClientModules}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Save Client Modules</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

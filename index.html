@@ -19,6 +19,115 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Gracefully neutralize Vite dev-server HMR WebSocket disconnects in proxied sandbox
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        // 1. Stub Vite HMR WebSocket so it cleanly connects and resolves without error
+        var OrigWebSocket = window.WebSocket;
+        if (OrigWebSocket) {
+          function ViteHmrDummySocket(url, protocol) {
+            this.url = String(url || '');
+            this.protocol = protocol || 'vite-hmr';
+            this.readyState = 1; // WebSocket.OPEN
+            this.bufferedAmount = 0;
+            this.binaryType = 'blob';
+            this._listeners = {};
+            var self = this;
+            setTimeout(function() {
+              self._emit('open', new Event('open'));
+            }, 0);
+          }
+          ViteHmrDummySocket.prototype.addEventListener = function(type, listener, opts) {
+            if (!this._listeners[type]) this._listeners[type] = [];
+            this._listeners[type].push({ fn: listener, once: !!(opts && opts.once) });
+          };
+          ViteHmrDummySocket.prototype.removeEventListener = function(type, listener) {
+            if (!this._listeners[type]) return;
+            this._listeners[type] = this._listeners[type].filter(function(item) { return item.fn !== listener; });
+          };
+          ViteHmrDummySocket.prototype.dispatchEvent = function(event) {
+            this._emit(event.type, event);
+            return true;
+          };
+          ViteHmrDummySocket.prototype._emit = function(type, event) {
+            var list = (this._listeners[type] || []).slice();
+            for (var i = 0; i < list.length; i++) {
+              if (list[i].once) this.removeEventListener(type, list[i].fn);
+              try {
+                if (typeof list[i].fn === 'function') list[i].fn.call(this, event);
+                else if (list[i].fn && typeof list[i].fn.handleEvent === 'function') list[i].fn.handleEvent(event);
+              } catch (e) {}
+            }
+            if (typeof this['on' + type] === 'function') {
+              try { this['on' + type](event); } catch (e) {}
+            }
+          };
+          ViteHmrDummySocket.prototype.send = function() {};
+          ViteHmrDummySocket.prototype.close = function() {
+            this.readyState = 3; // WebSocket.CLOSED
+            var closeEvt = typeof CloseEvent !== 'undefined'
+              ? new CloseEvent('close', { wasClean: true, code: 1000 })
+              : new Event('close');
+            this._emit('close', closeEvt);
+          };
+
+          ViteHmrDummySocket.CONNECTING = 0;
+          ViteHmrDummySocket.OPEN = 1;
+          ViteHmrDummySocket.CLOSING = 2;
+          ViteHmrDummySocket.CLOSED = 3;
+
+          window.WebSocket = function(url, protocols) {
+            var isViteHmr =
+              protocols === 'vite-hmr' ||
+              (Array.isArray(protocols) && protocols.indexOf('vite-hmr') !== -1) ||
+              (typeof url === 'string' && (url.indexOf('vite-hmr') !== -1 || url.indexOf('token=') !== -1));
+            if (isViteHmr) {
+              return new ViteHmrDummySocket(url, protocols);
+            }
+            return protocols !== undefined ? new OrigWebSocket(url, protocols) : new OrigWebSocket(url);
+          };
+          window.WebSocket.prototype = OrigWebSocket.prototype;
+          window.WebSocket.CONNECTING = 0;
+          window.WebSocket.OPEN = 1;
+          window.WebSocket.CLOSING = 2;
+          window.WebSocket.CLOSED = 3;
+        }
+
+        // 2. Global error catchers for any residual WebSocket or Vite connection messages
+        var isWsError = function(str) {
+          if (!str) return false;
+          var s = String(str).toLowerCase();
+          return s.includes('websocket') || s.includes('vite') || s.includes('closed without opened');
+        };
+        window.addEventListener('error', function(e) {
+          var msg = (e && (e.message || (e.error && e.error.message))) || '';
+          if (isWsError(msg)) {
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            if (e.preventDefault) e.preventDefault();
+            return true;
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          var reason = e && (e.reason ? (e.reason.message || String(e.reason)) : '');
+          if (isWsError(reason)) {
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            if (e.preventDefault) e.preventDefault();
+          }
+        });
+        var originalOnError = window.onerror;
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+          if (isWsError(msg) || (error && isWsError(error.message))) {
+            return true;
+          }
+          if (typeof originalOnError === 'function') {
+            return originalOnError.apply(this, arguments);
+          }
+          return false;
+        };
+      })();
+    </script>
   </head>
   <body class="bg-slate-50 text-slate-800 antialiased font-['Public_Sans',sans-serif]">
     <div id="root"></div>

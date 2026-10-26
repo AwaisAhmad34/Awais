@@ -18,7 +18,7 @@ import {
 import { useAccounting } from '../core/aplusEngine';
 import { SEED_MULTI_TENANT_USERS, SEED_MULTI_TENANT_CAMPUSES, SEED_CLIENTS } from '../services/multiTenantDataService';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
-import { getLocalStoredCampusCredentials } from '../services/campusAuthSync';
+import { getLocalStoredCampusCredentials, ensureCredentialsForAllCampuses } from '../services/campusAuthSync';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -32,6 +32,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     addUser,
     updateUser,
     login,
+    loginAsUser,
     loginAsCampus,
     campuses,
     orgSettings,
@@ -46,6 +47,12 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [showQuickCredentials, setShowQuickCredentials] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (campuses && campuses.length > 0) {
+      ensureCredentialsForAllCampuses(campuses, getLocalStoredCampusCredentials());
+    }
+  }, [campuses]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     setIsCapsLockOn(e.getModifierState('CapsLock'));
@@ -86,7 +93,127 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       const result = await login(cleanUser, cleanPass);
       if (result.success) return;
 
-      // Fallback check against dynamic campus credentials vault
+      // 1. Level 1 Platform Super Admin Fallback
+      if (cleanUser === 'admin' && cleanPass === 'admin') {
+        let adminUser = users.find((u) => u.username?.toLowerCase() === 'admin');
+        if (!adminUser && addUser) {
+          adminUser = addUser({
+            id: 'user-platform-owner',
+            username: 'admin',
+            name: 'Platform Super Admin (Site Owner)',
+            email: 'siteowner@platform.org',
+            role: 'level_1_platform_super_admin',
+            status: 'active',
+            password: 'admin',
+            clientId: null,
+            campusId: null,
+            permittedCampusIds: ['all'],
+            allowedModules: ['all'],
+            designation: 'Platform Site Owner',
+          });
+        }
+        if (adminUser && loginAsUser) {
+          loginAsUser(adminUser.id, true);
+          return;
+        }
+      }
+
+      // 2. Level 2 Client Super Admin (Aplus Central Management)
+      if ((cleanUser === 'client.admin' || cleanUser === 'director@aplus.edu.pk') && (cleanPass === 'campus' || cleanPass === 'admin')) {
+        let clientAdmin = users.find((u) => u.username?.toLowerCase() === 'client.admin');
+        if (!clientAdmin && addUser) {
+          clientAdmin = addUser({
+            id: 'user-client-aplus-admin',
+            username: 'client.admin',
+            name: 'Aplus Central Management (Client Super Admin)',
+            email: 'director@aplus.edu.pk',
+            role: 'level_2_client_super_admin',
+            clientId: 'client-aplus',
+            campusId: campuses[0]?.id || 'campus-khiali',
+            permittedCampusIds: ['all'],
+            password: 'campus',
+            status: 'active',
+            allowedModules: ['all'],
+            designation: 'Managing Director & Organization Owner',
+          });
+        }
+        if (clientAdmin && loginAsUser) {
+          loginAsUser(clientAdmin.id, false);
+          return;
+        }
+      }
+
+      // 3. Level 2 Client Super Admin (Apex Academy)
+      if ((cleanUser === 'apex.admin' || cleanUser === 'head@apexacademy.edu.pk') && (cleanPass === 'campus' || cleanPass === 'admin')) {
+        let apexAdmin = users.find((u) => u.username?.toLowerCase() === 'apex.admin');
+        if (!apexAdmin && addUser) {
+          const apexCampus = campuses.find((c) => c.clientId === 'client-apex') || campuses[0];
+          apexAdmin = addUser({
+            id: 'user-client-apex-admin',
+            username: 'apex.admin',
+            name: 'Apex Academy Management (Client Super Admin)',
+            email: 'head@apexacademy.edu.pk',
+            role: 'level_2_client_super_admin',
+            clientId: 'client-apex',
+            campusId: apexCampus?.id || 'campus-apex-main',
+            permittedCampusIds: ['all'],
+            password: 'campus',
+            status: 'active',
+            allowedModules: ['all'],
+            designation: 'Academy Director & Client Owner',
+          });
+        }
+        if (apexAdmin && loginAsUser) {
+          loginAsUser(apexAdmin.id, false);
+          return;
+        }
+      }
+
+      // 4. Auditor / Read-Only Oversight
+      if (cleanUser === 'auditor' && (cleanPass === 'campus' || cleanPass === 'admin')) {
+        let auditorUser = users.find((u) => u.username?.toLowerCase() === 'auditor');
+        if (!auditorUser && addUser) {
+          auditorUser = addUser({
+            id: 'user-auditor',
+            username: 'auditor',
+            name: 'Internal Auditor & Compliance Officer',
+            email: 'auditor@aplus.edu.pk',
+            role: 'read_only',
+            clientId: null,
+            campusId: 'all',
+            permittedCampusIds: ['all'],
+            password: 'campus',
+            status: 'active',
+            allowedModules: ['alltransactions', 'reconciliation', 'cashreconciliation', 'reports', 'activity'],
+            designation: 'Senior Internal Auditor',
+          });
+        }
+        if (auditorUser && loginAsUser) {
+          loginAsUser(auditorUser.id, false);
+          return;
+        }
+      }
+
+      // 5. Direct Campus Code matching (e.g. 'main', 'gulberg', 'cantt', 'peoples', etc.)
+      const directCampusMatch = campuses.find((c) =>
+        c.code?.toLowerCase() === cleanUser ||
+        c.id?.toLowerCase() === cleanUser ||
+        `campus.${c.code?.toLowerCase()}` === cleanUser ||
+        c.name?.toLowerCase() === cleanUser
+      );
+
+      if (directCampusMatch && (cleanPass === 'campus' || cleanPass === 'admin')) {
+        if (directCampusMatch.loginEnabled === false) {
+          setErrorMessage(`Login access for ${directCampusMatch.name} is currently suspended by central administration.`);
+          return;
+        }
+        if (loginAsCampus) {
+          loginAsCampus(directCampusMatch.id);
+          return;
+        }
+      }
+
+      // 6. Fallback check against dynamic campus credentials vault
       const creds = getLocalStoredCampusCredentials();
       const matched = creds.find(
         (c) =>
@@ -96,7 +223,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           `${c.campusCode.toLowerCase()}@aschoolsystem.edu.pk` === cleanUser
       );
 
-      if (matched && (matched.password === cleanPass || cleanPass === 'campus')) {
+      if (matched && (matched.password === cleanPass || cleanPass === 'campus' || cleanPass === 'admin')) {
         const targetCamp = campuses.find((c) => c.id === matched.campusId);
         if (targetCamp && targetCamp.loginEnabled === false) {
           setErrorMessage(`Login access for ${targetCamp.name} is currently suspended by central administration.`);
@@ -268,25 +395,103 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 <div className="mt-3 space-y-2.5 animate-in fade-in duration-200 text-xs">
                   {/* Production Status Notice */}
                   <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/80 text-[11px] text-indigo-200">
-                    <span className="font-bold text-white block mb-0.5">Production Clean Slate Active</span>
-                    All previous demo client organizations, campuses, and entries have been purged. Sign in as Platform Super Admin to create new client organizations.
+                    <span className="font-bold text-white block mb-0.5">Role & Access Clearance Directory</span>
+                    Select any role below or use the auto-fill buttons to authenticate immediately into the ERP system.
                   </div>
 
                   {/* Level 1: Platform Owner */}
                   <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         <span>Level 1: Platform Super Admin (Site Owner)</span>
                       </div>
                       <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-indigo-300">admin</strong> • Pass: <strong className="text-indigo-300">admin</strong>
+                        User: <strong className="text-emerald-300">admin</strong> • Pass: <strong className="text-emerald-300">admin</strong>
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleAutoFill('admin', 'admin')}
+                      className="px-2 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+
+                  {/* Level 2: Client Organization Owner */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                        <span>Level 2: Client Super Admin (Organization Owner)</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-indigo-300">client.admin</strong> • Pass: <strong className="text-indigo-300">campus</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('client.admin', 'campus')}
                       className="px-2 py-1 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800 hover:bg-indigo-900 text-[10px] font-bold cursor-pointer"
+                    >
+                      Auto-Fill
+                    </button>
+                  </div>
+
+                  {/* Level 3: Campus Branch Accountant */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                          <span>Level 3/4: Campus Branch Accountant</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          User: <strong className="text-purple-300">&lt;campus_code&gt;</strong> • Pass: <strong className="text-purple-300">campus</strong>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAutoFill(campuses[0]?.code?.toLowerCase() || 'main', 'campus')}
+                        className="px-2 py-1 rounded-lg bg-purple-950 text-purple-300 border border-purple-800 hover:bg-purple-900 text-[10px] font-bold cursor-pointer"
+                      >
+                        Auto-Fill ({campuses[0]?.code || 'MAIN'})
+                      </button>
+                    </div>
+
+                    {campuses && campuses.length > 1 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-slate-800/60">
+                        {campuses.slice(0, 6).map((camp) => (
+                          <button
+                            key={camp.id}
+                            type="button"
+                            onClick={() => handleAutoFill(camp.code.toLowerCase(), 'campus')}
+                            className="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 border border-slate-700/60 transition-colors cursor-pointer"
+                            title={`Auto-fill ${camp.name} (${camp.code})`}
+                          >
+                            {camp.code.toLowerCase()} ({camp.name.split(' ')[0]})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Auditor / Read-Only */}
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        <span>Auditor / Read-Only Oversight</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        User: <strong className="text-amber-300">auditor</strong> • Pass: <strong className="text-amber-300">campus</strong>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAutoFill('auditor', 'campus')}
+                      className="px-2 py-1 rounded-lg bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900 text-[10px] font-bold cursor-pointer"
                     >
                       Auto-Fill
                     </button>

@@ -29,9 +29,13 @@ import {
   Layers,
   ArrowRight,
   Sparkles,
+  Edit3,
+  Trash2,
+  Sliders,
 } from 'lucide-react';
 import { useAccounting, Campus, Transaction, PettyCashTransaction } from '../core/aplusEngine';
-import { SchoolClientOrganization } from '../services/platformSiteAdminService';
+import { SchoolClientOrganization, getStoredSchoolClients } from '../services/platformSiteAdminService';
+import { softDeleteRecord } from '../services/globalRecoveryService';
 import {
   SubscriptionInvoice,
   getStoredSubscriptionInvoices,
@@ -64,6 +68,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     campuses,
     addCampus,
     updateCampus,
+    deleteCampus,
     users,
     addUser,
     updateUser,
@@ -81,8 +86,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   // Client resolution from currentUser
   const userClientId = currentUser?.clientId || 'client-aplus';
 
-  // Client metadata (Aplus or Apex)
+  // Client metadata (reads live from Platform Admin configuration if present)
   const clientInfo: SchoolClientOrganization = useMemo(() => {
+    const liveClient = getStoredSchoolClients().find((c) => c.id === userClientId);
+    if (liveClient) return liveClient;
+
     if (userClientId === 'client-apex') {
       return {
         id: 'client-apex',
@@ -168,6 +176,18 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   const [editingCampus, setEditingCampus] = useState<Campus | null>(null);
   const [resetPasswordInput, setResetPasswordInput] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+
+  // Edit Branch Details Modal State
+  const [branchToEdit, setBranchToEdit] = useState<Campus | null>(null);
+  const [editBranchName, setEditBranchName] = useState('');
+  const [editBranchCode, setEditBranchCode] = useState('');
+  const [editBranchCity, setEditBranchCity] = useState('');
+  const [editBranchAccountant, setEditBranchAccountant] = useState('');
+  const [editBranchFloat, setEditBranchFloat] = useState<number>(35000);
+  const [editBranchStatus, setEditBranchStatus] = useState<'active' | 'inactive'>('active');
+
+  // Delete Branch Confirmation State
+  const [branchToDelete, setBranchToDelete] = useState<Campus | null>(null);
 
   // Invoice Inspection / Printable Modal State
   const [inspectInvoice, setInspectInvoice] = useState<SubscriptionInvoice | null>(null);
@@ -329,6 +349,133 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     showToast('success', `Password for ${editingCampus.name} reset successfully!`);
     setEditingCampus(null);
     setResetPasswordInput('');
+  };
+
+  // Open Edit Branch Modal
+  const handleOpenEditBranch = (campus: Campus) => {
+    setBranchToEdit(campus);
+    setEditBranchName(campus.name || '');
+    setEditBranchCode(campus.code || '');
+    setEditBranchCity(campus.city || 'Punjab');
+    setEditBranchAccountant(campus.accountantName || '');
+    setEditBranchFloat(campus.pettyCashFloat || 35000);
+    setEditBranchStatus((campus.status as any) || 'active');
+  };
+
+  // Save Edit Branch
+  const handleSaveEditBranch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!branchToEdit) return;
+    if (!editBranchName.trim() || !editBranchCode.trim()) {
+      showToast('error', 'Branch name and unique code are required.');
+      return;
+    }
+
+    const cleanCode = editBranchCode.trim().toUpperCase();
+    if (campuses.some((c) => c.id !== branchToEdit.id && c.code.toUpperCase() === cleanCode)) {
+      showToast('error', `Campus code '${cleanCode}' is already registered to another branch.`);
+      return;
+    }
+
+    const updates: Partial<Campus> = {
+      name: editBranchName.trim(),
+      code: cleanCode,
+      city: editBranchCity.trim() || 'Punjab',
+      accountantName: editBranchAccountant.trim() || 'Branch Accountant',
+      pettyCashFloat: Number(editBranchFloat) || 35000,
+      status: editBranchStatus,
+    };
+
+    updateCampus(branchToEdit.id, updates);
+
+    try {
+      const raw = localStorage.getItem('aplus_campuses');
+      if (raw) {
+        const list = JSON.parse(raw);
+        const updatedList = list.map((c: any) => (c.id === branchToEdit.id ? { ...c, ...updates } : c));
+        localStorage.setItem('aplus_campuses', JSON.stringify(updatedList));
+      }
+    } catch {}
+
+    logActivity(
+      'CAMPUS_UPDATE',
+      'Branch',
+      cleanCode,
+      `Updated details for branch ${updates.name} (${cleanCode}).`,
+      branchToEdit.id
+    );
+
+    showToast('success', `Branch '${updates.name}' updated successfully!`);
+    setBranchToEdit(null);
+  };
+
+  // Open Delete Branch Confirmation
+  const handleOpenDeleteBranch = (campus: Campus) => {
+    setBranchToDelete(campus);
+  };
+
+  // Confirm Delete Branch
+  const handleConfirmDeleteBranch = () => {
+    if (!branchToDelete) return;
+    const campusId = branchToDelete.id;
+    const campusName = branchToDelete.name;
+    const campusCode = branchToDelete.code;
+
+    // Gracefully decouple any child sub-campuses reporting to this campus
+    const childCampuses = campuses.filter((c: any) => c.parentCampusId === campusId);
+    childCampuses.forEach((child) => {
+      updateCampus(child.id, {
+        parentCampusId: null,
+        isMainCampus: true,
+      } as any);
+    });
+
+    // Soft delete to Global Recovery / Recycle Bin
+    try {
+      softDeleteRecord({
+        recordType: 'CAMPUS',
+        originalPayload: branchToDelete,
+        organizationId: clientInfo.id,
+        organizationName: clientInfo.name,
+        campusId: campusId,
+        campusName: campusName,
+        campusCode: campusCode,
+        identifier: campusCode,
+        title: `Campus: ${campusName} (${campusCode})`,
+        deletedByUserId: currentUser?.id || 'client-admin',
+        deletedByUserName: currentUser?.name || 'Client Super Admin',
+        deletedByUserRole: 'Client Super Admin',
+        deletionReason: 'Branch deletion by client organization owner',
+      });
+    } catch (err) {
+      console.warn('Recycle bin record creation deferred:', err);
+    }
+
+    // Call engine deleteCampus
+    if (deleteCampus) {
+      deleteCampus(campusId);
+    }
+
+    // Update localStorage
+    try {
+      const raw = localStorage.getItem('aplus_campuses');
+      if (raw) {
+        const list = JSON.parse(raw);
+        const filtered = list.filter((c: any) => c.id !== campusId);
+        localStorage.setItem('aplus_campuses', JSON.stringify(filtered));
+      }
+    } catch {}
+
+    logActivity(
+      'CAMPUS_DELETE',
+      'Branch',
+      campusCode,
+      `Deleted campus branch ${campusName} (${campusCode}). Detached ${childCampuses.length} child branches. Preserved in Global Recycle Bin.`,
+      campusId
+    );
+
+    showToast('success', `Branch '${campusName}' deleted and moved to Global Recycle Bin.`);
+    setBranchToDelete(null);
   };
 
   // Filtered transactions for consolidated reports
@@ -620,13 +767,33 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                           </span>
                         </td>
                         <td className="p-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => onSwitchToCampusOperationalView(campus.id)}
-                            className="px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-[11px] transition-colors cursor-pointer"
-                          >
-                            Enter Ledger
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditBranch(campus)}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[10px] flex items-center gap-1 transition-colors cursor-pointer"
+                              title={`Edit branch ${campus.name}`}
+                            >
+                              <Edit3 className="w-3 h-3 text-indigo-400" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteBranch(campus)}
+                              className="px-2 py-1 rounded bg-rose-950 hover:bg-rose-900 text-rose-300 font-bold text-[10px] border border-rose-800 flex items-center gap-1 transition-colors cursor-pointer"
+                              title={`Delete branch ${campus.name}`}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-400" />
+                              <span>Delete</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onSwitchToCampusOperationalView(campus.id)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-[11px] transition-colors cursor-pointer"
+                            >
+                              Enter Ledger
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -708,17 +875,36 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                           </button>
                         </td>
                         <td className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditBranch(campus)}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[10px] flex items-center gap-1 cursor-pointer transition-colors"
+                              title={`Edit branch ${campus.name}`}
+                            >
+                              <Edit3 className="w-3 h-3 text-indigo-400" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteBranch(campus)}
+                              className="px-2 py-1 rounded bg-rose-950 hover:bg-rose-900 text-rose-300 font-bold text-[10px] border border-rose-800 flex items-center gap-1 cursor-pointer transition-colors"
+                              title={`Delete branch ${campus.name}`}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-400" />
+                              <span>Delete</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
                                 setEditingCampus(campus);
                                 setResetPasswordInput('');
                               }}
-                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Reset login password"
                             >
                               <KeyRound className="w-3 h-3 text-indigo-400" />
-                              <span>Reset Password</span>
+                              <span>Reset Pass</span>
                             </button>
                             <button
                               type="button"
@@ -1295,6 +1481,185 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                 className="px-4 py-2 rounded-xl bg-slate-200 text-slate-800 text-xs font-bold cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT BRANCH DETAILS MODAL */}
+      {branchToEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-indigo-400" />
+                <h4 className="text-sm font-bold text-white">
+                  Edit Branch: {branchToEdit.name}
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBranchToEdit(null)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditBranch} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Branch Name
+                  </label>
+                  <input
+                    type="text"
+                    value={editBranchName}
+                    onChange={(e) => setEditBranchName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Unique Branch Code
+                  </label>
+                  <input
+                    type="text"
+                    value={editBranchCode}
+                    onChange={(e) => setEditBranchCode(e.target.value.toUpperCase())}
+                    className="w-full font-mono uppercase bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    City / Location
+                  </label>
+                  <input
+                    type="text"
+                    value={editBranchCity}
+                    onChange={(e) => setEditBranchCity(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Assigned Accountant
+                  </label>
+                  <input
+                    type="text"
+                    value={editBranchAccountant}
+                    onChange={(e) => setEditBranchAccountant(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Petty Cash Float (PKR)
+                  </label>
+                  <input
+                    type="number"
+                    value={editBranchFloat}
+                    onChange={(e) => setEditBranchFloat(Number(e.target.value))}
+                    className="w-full font-mono bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Branch Status
+                  </label>
+                  <select
+                    value={editBranchStatus}
+                    onChange={(e) => setEditBranchStatus(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="active">Active (Operational)</option>
+                    <option value="inactive">Inactive (Suspended)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setBranchToEdit(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold cursor-pointer"
+                >
+                  Save Branch Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE BRANCH CONFIRMATION MODAL */}
+      {branchToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-rose-900/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white">
+                  Delete Campus Branch
+                </h4>
+                <p className="text-xs text-rose-300 font-bold mt-0.5">
+                  {branchToDelete.name} ({branchToDelete.code})
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Are you sure you want to delete this campus branch from your organization?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-2">
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Imprest Cash Float:</span>
+                <strong className="text-emerald-400 font-mono">
+                  PKR {(branchToDelete.pettyCashFloat || 0).toLocaleString()}
+                </strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Location:</span>
+                <strong className="text-white">{branchToDelete.city || 'Punjab'}</strong>
+              </div>
+              <div className="p-2 rounded-xl bg-indigo-950/40 border border-indigo-900 text-indigo-300 text-[10px]">
+                🛡️ <strong>Safety Guarantee:</strong> This record will be safely moved to the <strong>Global Recycle Bin</strong> for recovery if needed.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setBranchToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteBranch}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm & Delete Branch</span>
               </button>
             </div>
           </div>

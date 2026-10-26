@@ -32,6 +32,8 @@ import {
   Check,
   AlertCircle,
   HardDrive,
+  Edit3,
+  Trash2,
 } from 'lucide-react';
 import { Campus, Transaction, PettyCashTransaction, AccountHead, useAccounting } from '../core/aplusEngine';
 import {
@@ -54,9 +56,11 @@ import {
 export const SubCampusHierarchyView: React.FC<{
   campuses: Campus[];
   onUpdateCampus: (id: string, updates: Partial<Campus>) => void;
+  onEditCampus?: (campus: any) => void;
+  onDeleteCampus?: (campus: any) => void;
   triggerToast: (type: 'success' | 'error' | 'warning' | 'info', message: string) => void;
   onOpenRegisterModal: () => void;
-}> = ({ campuses, onUpdateCampus, triggerToast, onOpenRegisterModal }) => {
+}> = ({ campuses, onUpdateCampus, onEditCampus, onDeleteCampus, triggerToast, onOpenRegisterModal }) => {
   const [search, setSearch] = useState('');
   const [selectedParentId, setSelectedParentId] = useState<string>('all');
   const [reassigningCampusId, setReassigningCampusId] = useState<string | null>(null);
@@ -219,16 +223,40 @@ export const SubCampusHierarchyView: React.FC<{
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReassigningCampusId(isReassigning ? null : sub.id);
-                    setNewParentChoice(sub.parentCampusId || 'none');
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold transition-colors cursor-pointer"
-                >
-                  {isReassigning ? 'Cancel' : 'Change Parent'}
-                </button>
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                  {onEditCampus && (
+                    <button
+                      type="button"
+                      onClick={() => onEditCampus(sub)}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Edit sub-campus branch details"
+                    >
+                      <Edit3 className="w-3 h-3 text-indigo-400" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+                  {onDeleteCampus && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteCampus(sub)}
+                      className="px-2.5 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Delete sub-campus branch"
+                    >
+                      <Trash2 className="w-3 h-3 text-rose-400" />
+                      <span>Delete</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReassigningCampusId(isReassigning ? null : sub.id);
+                      setNewParentChoice(sub.parentCampusId || 'none');
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold transition-colors cursor-pointer"
+                  >
+                    {isReassigning ? 'Cancel' : 'Change Parent'}
+                  </button>
+                </div>
               </div>
 
               {/* Reassignment Dropdown Panel */}

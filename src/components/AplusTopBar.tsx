@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   BookOpen,
   Cloud,
@@ -61,6 +61,10 @@ import {
   evaluateSevenDayCashReconciliationStatus,
   CASH_RECONCILIATION_STORAGE_KEY,
 } from './PhysicalCashReconciliation';
+import {
+  getStoredSchoolClients,
+  DEFAULT_CLIENT_MODULES,
+} from '../services/platformSiteAdminService';
 
 interface AplusTopBarProps {
   activeTab: string;
@@ -333,6 +337,20 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     currentUser?.role === 'superadmin' ||
     currentUser?.role === 'level_2_client_super_admin' ||
     currentUser?.role === 'level_3_main_campus_admin';
+
+  const userClientId = currentUser?.clientId;
+  const clientAllowedModules: string[] | null = useMemo(() => {
+    if (!userClientId) return null;
+    const allClients = getStoredSchoolClients();
+    const cl = allClients.find((item) => item.id === userClientId);
+    return cl?.enabledModules || DEFAULT_CLIENT_MODULES;
+  }, [userClientId]);
+
+  const isModuleAllowed = (moduleId: string) => {
+    if (!clientAllowedModules) return true;
+    return clientAllowedModules.includes(moduleId);
+  };
+
   const pendingCount = (transactions || []).filter(
     (t) => !t.status || t.status === 'Pending' || t.status === 'Draft'
   ).length;
@@ -531,14 +549,16 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span>Permission Engine</span>
           </button>
 
-          <button
-            onClick={() => setIsSuggesterModalOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-            title="Automatically suggest expense categories by analyzing transaction description & historical patterns"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
-            <span>AI Expense Suggester</span>
-          </button>
+          {isModuleAllowed('ai_suggester') && (
+            <button
+              onClick={() => setIsSuggesterModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+              title="Automatically suggest expense categories by analyzing transaction description & historical patterns"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
+              <span>AI Expense Suggester</span>
+            </button>
+          )}
 
           {isPlatformSiteAdmin && (
             <button
@@ -554,14 +574,16 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => setIsApprovalMatrixModalOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-emerald-500/40"
-            title="Configurable Voucher Authorization & Approval Matrix by User Role and Campus Hierarchy"
-          >
-            <Scale className="w-3.5 h-3.5 text-emerald-200" />
-            <span>Approval Matrix</span>
-          </button>
+          {isModuleAllowed('approval_matrix') && (
+            <button
+              onClick={() => setIsApprovalMatrixModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-emerald-500/40"
+              title="Configurable Voucher Authorization & Approval Matrix by User Role and Campus Hierarchy"
+            >
+              <Scale className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Approval Matrix</span>
+            </button>
+          )}
 
           {isAuthorizedForCampusDb && (
             <button
@@ -584,18 +606,20 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span>Load Cloud</span>
           </button>
 
-          <button
-            onClick={() => onNavigate('alltransactions')}
-            className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'alltransactions'
-                ? 'bg-emerald-600 text-white shadow-xs'
-                : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
-            }`}
-            title="Open Bulk Pending Voucher Approval & Super Admin Role Visibility Matrix"
-          >
-            <CheckSquare className="w-3.5 h-3.5" />
-            <span>Bulk Approval & Role Access ({pendingCount} Pending)</span>
-          </button>
+          {isModuleAllowed('alltransactions') && (
+            <button
+              onClick={() => onNavigate('alltransactions')}
+              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'alltransactions'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
+              }`}
+              title="Open Bulk Pending Voucher Approval & Super Admin Role Visibility Matrix"
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>Bulk Approval & Role Access ({pendingCount} Pending)</span>
+            </button>
+          )}
 
           <button
             onClick={() => onNavigate('dashboard')}
@@ -626,7 +650,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {(!activeProfile || activeProfile.widgets.showPettyCashChart) && (
+          {(!activeProfile || activeProfile.widgets.showPettyCashChart) && isModuleAllowed('pettycash') && (
             <button
               onClick={() => onNavigate('pettycash')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -642,7 +666,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {(!activeProfile || activeProfile.widgets.showTopBarCashReconButton) && (
+          {(!activeProfile || activeProfile.widgets.showTopBarCashReconButton) && isModuleAllowed('cashreconciliation') && (
             <button
               onClick={() => {
                 setIsCashToastDismissed(false);
@@ -669,7 +693,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {(!activeProfile || activeProfile.widgets.showTopBarA4PrintButton) && (
+          {(!activeProfile || activeProfile.widgets.showTopBarA4PrintButton) && isModuleAllowed('reports') && (
             <button
               onClick={() => setIsA4StudioOpen(true)}
               className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer"
@@ -696,7 +720,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span>Restore Deleted COA</span>
           </button>
 
-          {(!activeProfile || activeProfile.widgets.showTopBarAuditTrailButton) && (
+          {(!activeProfile || activeProfile.widgets.showTopBarAuditTrailButton) && isModuleAllowed('activity') && (
             <button
               onClick={() => onNavigate('activity')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -712,18 +736,20 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => onNavigate('docs')}
-            className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'docs'
-                ? 'bg-emerald-600 text-white shadow-xs'
-                : 'bg-blue-600 hover:bg-blue-500 text-white'
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Aplus 49-Section Manual & Procedures</span>
-            {activeTab === 'docs' && <CheckCircle2 className="w-3 h-3" />}
-          </button>
+          {isModuleAllowed('docs') && (
+            <button
+              onClick={() => onNavigate('docs')}
+              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'docs'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Aplus 49-Section Manual & Procedures</span>
+              {activeTab === 'docs' && <CheckCircle2 className="w-3 h-3" />}
+            </button>
+          )}
         </div>
       </div>
 
