@@ -34,7 +34,13 @@ import {
   Sliders,
 } from 'lucide-react';
 import { useAccounting, Campus, Transaction, PettyCashTransaction } from '../core/aplusEngine';
-import { SchoolClientOrganization, getStoredSchoolClients } from '../services/platformSiteAdminService';
+import {
+  SchoolClientOrganization,
+  getStoredSchoolClients,
+  saveStoredSchoolClients,
+  syncSchoolClientsToCloud,
+  DEFAULT_CLIENT_MODULES,
+} from '../services/platformSiteAdminService';
 import { softDeleteRecord } from '../services/globalRecoveryService';
 import {
   SubscriptionInvoice,
@@ -83,6 +89,9 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     'overview' | 'sub_campuses' | 'report_permissions' | 'billing' | 'consolidated_reports'
   >('overview');
 
+  // Trigger re-render when client organization profile is customized
+  const [clientRefreshKey, setClientRefreshKey] = useState(0);
+
   // Client resolution from currentUser
   const userClientId = currentUser?.clientId || 'client-aplus';
 
@@ -127,7 +136,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: new Date().toISOString(),
     };
-  }, [userClientId]);
+  }, [userClientId, clientRefreshKey]);
 
   // Strictly filter client's own campuses (Never leak other client's campuses!)
   const myCampuses = useMemo(() => {
@@ -171,6 +180,157 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     'pettycash',
     'reports',
   ]);
+
+  // Edit Organization Client Profile / Brand Modal State
+  const [isEditOrgModalOpen, setIsEditOrgModalOpen] = useState(false);
+  const [orgNameInput, setOrgNameInput] = useState('');
+  const [orgCodeInput, setOrgCodeInput] = useState('');
+  const [orgContactInput, setOrgContactInput] = useState('');
+  const [orgEmailInput, setOrgEmailInput] = useState('');
+  const [orgPhoneInput, setOrgPhoneInput] = useState('');
+
+  const handleOpenEditOrgModal = () => {
+    setOrgNameInput(clientInfo.name);
+    setOrgCodeInput(clientInfo.code);
+    setOrgContactInput(clientInfo.contactPerson || '');
+    setOrgEmailInput(clientInfo.contactEmail || '');
+    setOrgPhoneInput(clientInfo.contactPhone || '');
+    setIsEditOrgModalOpen(true);
+  };
+
+  const handleSaveOrganizationProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = orgNameInput.trim();
+    const cleanCode = orgCodeInput.trim().toUpperCase();
+
+    if (!cleanName || !cleanCode) {
+      showToast('error', 'Organization Name and Code are required.');
+      return;
+    }
+
+    const allClients = getStoredSchoolClients();
+    const existingIndex = allClients.findIndex((c) => c.id === clientInfo.id);
+
+    const updatedOrg: SchoolClientOrganization = {
+      ...clientInfo,
+      name: cleanName,
+      code: cleanCode,
+      contactPerson: orgContactInput.trim() || clientInfo.contactPerson,
+      contactEmail: orgEmailInput.trim() || clientInfo.contactEmail,
+      contactPhone: orgPhoneInput.trim() || clientInfo.contactPhone,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIndex >= 0) {
+      allClients[existingIndex] = updatedOrg;
+    } else {
+      allClients.push(updatedOrg);
+    }
+
+    saveStoredSchoolClients(allClients);
+    syncSchoolClientsToCloud(allClients).catch(() => {});
+
+    try {
+      const rawSettings = localStorage.getItem('ams_org_settings_v5');
+      if (rawSettings) {
+        const parsed = JSON.parse(rawSettings);
+        localStorage.setItem('ams_org_settings_v5', JSON.stringify({ ...parsed, schoolName: cleanName }));
+      }
+    } catch {}
+
+    setClientRefreshKey((prev) => prev + 1);
+    setIsEditOrgModalOpen(false);
+    showToast('success', `Organization client profile updated to "${cleanName}" (${cleanCode}).`);
+
+    logActivity(
+      'SYSTEM_SETTINGS',
+      'Organization',
+      cleanCode,
+      `Updated Level 2 Organization Client Name to '${cleanName}' (${cleanCode})`,
+      clientInfo.id
+    );
+  };
+
+  // Register Primary Main Campus Modal State
+  const [isRegisterMainModalOpen, setIsRegisterMainModalOpen] = useState(false);
+  const [mainCampusNameInput, setMainCampusNameInput] = useState('');
+  const [mainCampusCodeInput, setMainCampusCodeInput] = useState('');
+  const [mainCampusCityInput, setMainCampusCityInput] = useState('');
+  const [mainCampusAccountantInput, setMainCampusAccountantInput] = useState('');
+  const [mainCampusFloatInput, setMainCampusFloatInput] = useState('50000');
+
+  const handleOpenRegisterMainCampusModal = () => {
+    setMainCampusNameInput(`${clientInfo.name} Main Campus`);
+    setMainCampusCodeInput(`${clientInfo.code}-MAIN`);
+    setMainCampusCityInput('Head Office');
+    setMainCampusAccountantInput(currentUser?.name || 'Head Campus Administrator');
+    setMainCampusFloatInput('50000');
+    setIsRegisterMainModalOpen(true);
+  };
+
+  const handleRegisterMainCampusSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCode = mainCampusCodeInput.trim().toUpperCase();
+    const cleanName = mainCampusNameInput.trim();
+
+    if (!cleanCode || !cleanName) {
+      showToast('error', 'Main campus code and name are required.');
+      return;
+    }
+
+    if (myCampuses.some((c) => c.code.toUpperCase() === cleanCode)) {
+      showToast('error', `Campus code '${cleanCode}' is already registered in your organization.`);
+      return;
+    }
+
+    const newMainId = `campus-${clientInfo.code.toLowerCase()}-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+    const newMainCampusObj: Campus = {
+      id: newMainId,
+      code: cleanCode,
+      name: cleanName,
+      city: mainCampusCityInput.trim() || 'Head Office',
+      accountantName: mainCampusAccountantInput.trim() || 'Head Campus Administrator',
+      pettyCashFloat: Number(mainCampusFloatInput) || 50000,
+      currentPettyCash: Number(mainCampusFloatInput) || 50000,
+      status: 'active',
+      isMainCampus: true,
+      parentCampusId: null,
+      clientId: clientInfo.id,
+      loginEnabled: true,
+      allowedModules: DEFAULT_CLIENT_MODULES,
+    };
+
+    addCampus(newMainCampusObj);
+
+    // Link this newly registered main campus to client organization
+    const allClients = getStoredSchoolClients();
+    const existingIndex = allClients.findIndex((c) => c.id === clientInfo.id);
+    const updatedClient: SchoolClientOrganization = {
+      ...clientInfo,
+      mainCampusId: newMainId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIndex >= 0) {
+      allClients[existingIndex] = updatedClient;
+    } else {
+      allClients.push(updatedClient);
+    }
+    saveStoredSchoolClients(allClients);
+    syncSchoolClientsToCloud(allClients).catch(() => {});
+
+    setClientRefreshKey((prev) => prev + 1);
+    setIsRegisterMainModalOpen(false);
+    showToast('success', `Primary Main Campus '${cleanName}' (${cleanCode}) registered successfully!`);
+
+    logActivity(
+      'CAMPUS_UPDATE',
+      'Campus',
+      cleanCode,
+      `Registered primary Main Campus '${cleanName}' (${cleanCode}) for organization ${clientInfo.name}.`,
+      newMainId
+    );
+  };
 
   // Password Reset / Account Management Modal State
   const [editingCampus, setEditingCampus] = useState<Campus | null>(null);
@@ -228,9 +388,16 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     showToast('success', res.message);
   };
 
-  // Handle Sub-Campus Creation (Enforcing Subscription Limits)
+  // Handle Sub-Campus Creation (Enforcing Subscription Limits & Main Campus Hierarchy)
   const handleCreateSubCampus = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!mainCampus) {
+      showToast('error', "Please register your organization's Primary Main Campus before creating subordinate sub-campuses.");
+      setIsCreateModalOpen(false);
+      handleOpenRegisterMainCampusModal();
+      return;
+    }
 
     // Validate Subscription Campus Limit
     const limitCheck = validateCampusCreationLimit({
@@ -266,7 +433,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       currentPettyCash: Number(newBranchFloat) || 35000,
       status: 'active',
       isMainCampus: false,
-      parentCampusId: mainCampus?.id || null,
+      parentCampusId: mainCampus.id,
       clientId: clientInfo.id,
       loginEnabled: true,
       allowedModules: newBranchModules,
@@ -489,40 +656,104 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Main Campus Admin Header */}
-      <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-md">
+      {/* Top Main Campus Admin Header with Prominent Organization Client Name */}
+      <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-md px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-md">
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-lg shadow-indigo-600/20">
-            <Building2 className="w-6 h-6" />
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-lg shadow-indigo-600/25 shrink-0">
+            <Building2 className="w-7 h-7" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black text-white tracking-tight">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-lg sm:text-xl font-black text-white tracking-tight uppercase">
                 {clientInfo.name}
               </h1>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-900/80 text-indigo-300 border border-indigo-700/60 uppercase">
-                Level 2 Client Owner
+              <button
+                type="button"
+                onClick={handleOpenEditOrgModal}
+                className="px-2 py-0.5 rounded-lg bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 hover:text-white font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+                title="Build or Edit Organization Client Name & Profile"
+              >
+                <Edit3 className="w-3 h-3" />
+                <span>Build / Edit Name</span>
+              </button>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-900/90 text-purple-200 border border-purple-500/60 uppercase">
+                Level 2 Client Super Admin
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-mono text-[10px] font-bold">
+                Code: {clientInfo.code}
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Main Campus Administrative Hub • Managing <strong>{myCampuses.length}</strong> Registered Campuses (Max: {clientInfo.maxCampuses})
+            <p className="text-xs text-slate-400 mt-0.5">
+              Organization Owner Hub • Displaying exclusively your own <strong>{myCampuses.length}</strong> subordinate campuses (1 Main + {subCampuses.length} Sub-Campuses)
             </p>
           </div>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => onSwitchToCampusOperationalView(mainCampus?.id || myCampuses[0]?.id)}
-            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md"
-            title="Open Operational Ledger and Voucher Entry for your Main Campus"
-          >
-            <span>Open Main Campus Ledger</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          {!mainCampus ? (
+            <button
+              type="button"
+              onClick={handleOpenRegisterMainCampusModal}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md animate-pulse"
+              title="Register Primary Main Campus for this organization"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Register Main Campus</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/80 border border-purple-800 text-purple-300 text-[11px] font-bold">
+                <Building2 className="w-3.5 h-3.5 text-purple-400" />
+                <span>HQ: {mainCampus.name} ({mainCampus.code})</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => onSwitchToCampusOperationalView(mainCampus.id)}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md"
+                title="Open Operational Ledger and Voucher Entry for your Main Campus"
+              >
+                <span>Open Main Campus Ledger</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </header>
+
+      {/* Subordinate Campuses Quick Jump Bar (Strictly Only Own Subordinates) */}
+      <div className="bg-slate-900/80 border-b border-slate-800 px-6 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="font-bold text-slate-300 text-[11px] uppercase tracking-wider">
+            Your Subordinate Branches ({myCampuses.length} Active):
+          </span>
+          <span className="text-[10px] text-slate-400 hidden md:inline">
+            Exclusively subordinate to <strong className="text-white">{clientInfo.name}</strong>
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {myCampuses.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onSwitchToCampusOperationalView(c.id)}
+              className={`px-2.5 py-1 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs ${
+                c.isMainCampus
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600'
+              }`}
+              title={`Switch to ${c.name} (${c.code}) branch operational ledger`}
+            >
+              <span>{c.code}</span>
+              <span className="text-[10px] font-normal text-slate-300">
+                ({c.isMainCampus ? 'Main' : c.city || 'Branch'})
+              </span>
+              <ExternalLink className="w-3 h-3 opacity-70" />
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Navigation Sub-Tabs */}
       <nav className="bg-slate-900/60 border-b border-slate-800 px-6 py-2.5 flex flex-wrap items-center gap-2 overflow-x-auto">
@@ -631,6 +862,30 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
         {/* TAB 1: Organization Overview */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            {!mainCampus && (
+              <div className="bg-gradient-to-r from-purple-950/80 via-indigo-950/80 to-slate-900 border border-purple-600/70 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase tracking-wider">
+                      Setup Required
+                    </span>
+                    <h3 className="text-base font-black text-white">Register Organization Main Campus</h3>
+                  </div>
+                  <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                    Your organization <strong className="text-white">{clientInfo.name}</strong> ({clientInfo.code}) does not have a designated Main Campus headquarters yet. Registering your Main Campus sets up your primary root accounting ledger and enables branch sub-campuses to be created subordinate to it.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenRegisterMainCampusModal}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shrink-0 flex items-center gap-2 transition-all shadow-md cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Register Main Campus Now</span>
+                </button>
+              </div>
+            )}
+
             {/* Metric KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xs">
@@ -695,15 +950,199 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
               }}
             />
 
+            {/* Organization & Campus Multi-Tier Hierarchy Tree */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-950/80 border border-purple-800 flex items-center justify-center text-purple-300">
+                    <FolderTree className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                      <span>Organization & Campus Hierarchy Structure</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Multi-tier governance: Organization Client &rarr; Main Campus Headquarters &rarr; Subordinate Branch Campuses
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {!mainCampus && (
+                    <button
+                      type="button"
+                      onClick={handleOpenRegisterMainCampusModal}
+                      className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Register Main Campus</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!mainCampus) {
+                        showToast('error', 'Please register your Primary Main Campus before creating sub-campuses.');
+                        handleOpenRegisterMainCampusModal();
+                      } else {
+                        setIsCreateModalOpen(true);
+                      }
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Register Sub-Campus</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Hierarchy Tree Visualizer */}
+              <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-3 font-sans">
+                {/* Level 1: Organization Client Root */}
+                <div className="p-3.5 rounded-xl bg-slate-900 border border-indigo-900/60 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shrink-0">
+                      <Building2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-white">{clientInfo.name}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">
+                          {clientInfo.code}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-900/80 text-purple-200 border border-purple-700/60 uppercase">
+                          Organization Client Root
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Tier: <span className="text-slate-200 font-semibold uppercase">{clientInfo.tier}</span> • Contact: <span className="text-slate-200">{clientInfo.contactPerson || 'Super Admin'}</span> • Capacity: <span className="text-emerald-400 font-bold">{myCampuses.length}</span> / {clientInfo.maxCampuses} Campuses
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenEditOrgModal}
+                    className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Edit Organization
+                  </button>
+                </div>
+
+                {/* Level 2: Main Campus (HQ) */}
+                <div className="pl-6 md:pl-10 relative">
+                  <div className="absolute left-2.5 md:left-4 top-0 bottom-4 w-0.5 bg-indigo-900/60" />
+                  <div className="absolute left-2.5 md:left-4 top-6 w-4 border-t-2 border-indigo-900/60" />
+
+                  {mainCampus ? (
+                    <div className="p-3.5 rounded-xl bg-purple-950/40 border border-purple-700/60 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center justify-center shrink-0">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-black text-purple-100">{mainCampus.name}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-900 text-purple-200 border border-purple-700">
+                              {mainCampus.code}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800 uppercase">
+                              ★ Primary Main Campus (HQ)
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Location: <span className="text-slate-200">{mainCampus.city || 'Head Office'}</span> • Safe Float: <span className="text-emerald-400 font-mono font-bold">PKR {(mainCampus.pettyCashFloat || 0).toLocaleString()}</span> • Head Admin: <span className="text-slate-200">{mainCampus.accountantName || 'Admin'}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onSwitchToCampusOperationalView(mainCampus.id)}
+                          className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                        >
+                          <span>Open Main Ledger</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-800/60 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 text-amber-200 text-xs">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>No Primary Main Campus designated yet for this organization.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleOpenRegisterMainCampusModal}
+                        className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Register Main Campus</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Level 3: Subordinate Sub-Campuses */}
+                  <div className="pl-6 md:pl-10 mt-3 space-y-2 relative">
+                    <div className="absolute left-2.5 md:left-4 top-0 bottom-4 w-0.5 bg-slate-800" />
+                    
+                    {subCampuses.length === 0 ? (
+                      <div className="text-xs text-slate-500 py-1 pl-2 italic">
+                        No subordinate sub-campuses registered under this Main Campus yet.
+                      </div>
+                    ) : (
+                      subCampuses.map((sub) => (
+                        <div key={sub.id} className="relative">
+                          <div className="absolute -left-3.5 md:-left-6 top-5 w-3.5 md:w-6 border-t-2 border-slate-800" />
+                          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 flex flex-wrap items-center justify-between gap-2.5 transition-all">
+                            <div className="flex items-center gap-2.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-white text-xs">{sub.name}</span>
+                                  <span className="font-mono text-[10px] text-slate-400 font-bold bg-slate-800 px-1.5 py-0.2 rounded">
+                                    {sub.code}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400">
+                                    &bull; {sub.city || 'Branch'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-400 mt-0.5">
+                                  Accountant: <span className="text-slate-300">{sub.accountantName || 'Branch Accountant'}</span> • Float: <span className="text-emerald-400 font-mono">PKR {(sub.pettyCashFloat || 0).toLocaleString()}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onSwitchToCampusOperationalView(sub.id)}
+                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+                              >
+                                <span>View Ledger</span>
+                                <ExternalLink className="w-3 h-3 opacity-70" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Quick Branches Table */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                    {clientInfo.name} Network Branches
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span>{clientInfo.name} Subordinate Campuses</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                      Showing Strictly Own Subordinates ({myCampuses.length})
+                    </span>
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Branches and accounting nodes operating under your organization.
+                    Exclusively subordinate branches and accounting nodes operating under {clientInfo.name}.
                   </p>
                 </div>
                 <button
@@ -811,10 +1250,13 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
               <div>
                 <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
                   <FolderTree className="w-4 h-4 text-indigo-400" />
-                  <span>Sub-Campus & Login Account Governance</span>
+                  <span>{clientInfo.name} Subordinate Campuses & Staff Logins</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">
+                    Strict Subordinate Isolation
+                  </span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Create new sub-campuses, configure staff login credentials, and manage access parameters.
+                  Manage subordinate branches reporting exclusively to {clientInfo.name}, configure branch login credentials, and assign permission scopes.
                 </p>
               </div>
 
@@ -1225,6 +1667,19 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
               </button>
             </div>
 
+            {/* Parent Organization & Main Campus indicator */}
+            <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-800/60 text-xs text-purple-200 flex items-center justify-between">
+              <div>
+                <span className="font-bold block text-white">Hierarchical Subordination</span>
+                <span className="text-[11px] text-slate-300">
+                  Client: <strong className="text-purple-300">{clientInfo.name}</strong> &rarr; Main HQ: <strong className="text-purple-300">{mainCampus?.name} ({mainCampus?.code})</strong>
+                </span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-900 text-purple-200 border border-purple-700 uppercase">
+                Sub-Campus Node
+              </span>
+            </div>
+
             <form onSubmit={handleCreateSubCampus} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1324,6 +1779,126 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                   className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md cursor-pointer"
                 >
                   Create Sub-Campus & Credentials
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* REGISTER PRIMARY MAIN CAMPUS MODAL */}
+      {isRegisterMainModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-purple-700/80 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-600/20 text-purple-300 border border-purple-500/30 flex items-center justify-center">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Register Organization Main Campus</h4>
+                  <p className="text-[11px] text-purple-300">Client: {clientInfo.name} ({clientInfo.code})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRegisterMainModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-800/60 text-xs text-purple-200">
+              🏛️ <strong>Headquarters Ledger Root:</strong> This Main Campus serves as your institution's primary headquarters. All subsequent sub-campuses will report directly under this Main Campus.
+            </div>
+
+            <form onSubmit={handleRegisterMainCampusSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                    Main Campus Code <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={mainCampusCodeInput}
+                    onChange={(e) => setMainCampusCodeInput(e.target.value.toUpperCase())}
+                    placeholder="e.g. MAIN or HO"
+                    className="w-full text-xs font-mono font-bold uppercase bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                    Main Campus Name <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={mainCampusNameInput}
+                    onChange={(e) => setMainCampusNameInput(e.target.value)}
+                    placeholder="e.g. Apex Main Campus"
+                    className="w-full text-xs bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                    City Location
+                  </label>
+                  <input
+                    type="text"
+                    value={mainCampusCityInput}
+                    onChange={(e) => setMainCampusCityInput(e.target.value)}
+                    placeholder="e.g. Lahore / Gujranwala"
+                    className="w-full text-xs bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                    Head Campus Admin / Accountant
+                  </label>
+                  <input
+                    type="text"
+                    value={mainCampusAccountantInput}
+                    onChange={(e) => setMainCampusAccountantInput(e.target.value)}
+                    placeholder="e.g. Principal / Lead Accountant"
+                    className="w-full text-xs bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                  Imprest Safe Cash Float (PKR)
+                </label>
+                <input
+                  type="number"
+                  value={mainCampusFloatInput}
+                  onChange={(e) => setMainCampusFloatInput(e.target.value)}
+                  placeholder="50000"
+                  className="w-full text-xs font-mono bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRegisterMainModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Confirm & Register Main Campus</span>
                 </button>
               </div>
             </form>
@@ -1662,6 +2237,130 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                 <span>Confirm & Delete Branch</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BUILD & CUSTOMIZE ORGANIZATION CLIENT NAME MODAL */}
+      {isEditOrgModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-indigo-700/80 text-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in zoom-in-95">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">
+                    Build & Customize Organization Name
+                  </h3>
+                  <p className="text-xs text-indigo-300">
+                    Level 2 Client Super Admin & Institution Branding
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditOrgModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveOrganizationProfile} className="space-y-4 text-xs">
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Organization Client Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={orgNameInput}
+                  onChange={(e) => setOrgNameInput(e.target.value)}
+                  placeholder="e.g. Aplus School System / Apex Grammar Academy"
+                  className="w-full bg-slate-950 border border-indigo-600/70 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-400"
+                  required
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This Organization Client Name appears prominently at the very top of your portal, top bars, and vouchers.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Organization Code <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={orgCodeInput}
+                    onChange={(e) => setOrgCodeInput(e.target.value.toUpperCase())}
+                    placeholder="e.g. APLUS"
+                    className="w-full font-mono uppercase bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Contact Person
+                  </label>
+                  <input
+                    type="text"
+                    value={orgContactInput}
+                    onChange={(e) => setOrgContactInput(e.target.value)}
+                    placeholder="e.g. Managing Director"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Contact Phone
+                  </label>
+                  <input
+                    type="text"
+                    value={orgPhoneInput}
+                    onChange={(e) => setOrgPhoneInput(e.target.value)}
+                    placeholder="+92 300 1234567"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Official Email
+                  </label>
+                  <input
+                    type="email"
+                    value={orgEmailInput}
+                    onChange={(e) => setOrgEmailInput(e.target.value)}
+                    placeholder="admin@school.edu.pk"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-indigo-950/50 border border-indigo-800 text-[11px] text-indigo-200">
+                🛡️ <strong>Subordinate Campus Isolation:</strong> Updating your organization client name strictly maintains data boundaries. Only your own subordinate branches report under this identity.
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsEditOrgModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+                >
+                  Save & Apply Organization Name
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -225,11 +225,18 @@ export const PlatformSiteAdminHub: React.FC<{
   const [clientFormPhone, setClientFormPhone] = useState('');
   const [clientFormMaxCampuses, setClientFormMaxCampuses] = useState('10');
   const [clientFormMaxUsers, setClientFormMaxUsers] = useState('40');
+  const [clientFormRegisterMainCampus, setClientFormRegisterMainCampus] = useState(true);
+  const [clientFormMainCampusName, setClientFormMainCampusName] = useState('');
+  const [clientFormMainCampusCode, setClientFormMainCampusCode] = useState('');
+  const [clientFormMainCampusCity, setClientFormMainCampusCity] = useState('');
+  const [clientFormMainCampusFloat, setClientFormMainCampusFloat] = useState('50000');
+  const [clientFormMainCampusPassword, setClientFormMainCampusPassword] = useState('campus');
 
   // --------------------------------------------------------------------------
   // SECTION 03: CAMPUS HIERARCHY STATE
   // --------------------------------------------------------------------------
   const [isCampusModalOpen, setIsCampusModalOpen] = useState(false);
+  const [newCampusClientId, setNewCampusClientId] = useState<string>('');
   const [targetCampusForParent, setTargetCampusForParent] = useState<string>('');
   const [selectedParentId, setSelectedParentId] = useState<string>('none');
   const [campusSearchQuery, setCampusSearchQuery] = useState('');
@@ -388,34 +395,77 @@ export const PlatformSiteAdminHub: React.FC<{
       });
       triggerToast('success', `Client organization '${clientFormName.trim()}' updated!`);
     } else {
-      // New Client
-      const newId = `client-${clientFormCode.trim().toLowerCase()}-${Date.now().toString(36).slice(2, 6)}`;
+      // New Client Registration
+      const cleanCode = clientFormCode.trim().toUpperCase();
+      const newId = `client-${cleanCode.toLowerCase()}-${Date.now().toString(36).slice(2, 6)}`;
+      let designatedMainCampusId = campuses[0]?.id || 'campus-main';
+
+      // Automatically register the Primary Main Campus against this client organization
+      if (clientFormRegisterMainCampus) {
+        designatedMainCampusId = `campus-${cleanCode.toLowerCase()}-main`;
+        const mainCampusName = clientFormMainCampusName.trim() || `${clientFormName.trim()} Main Campus`;
+        const mainCampusCode = clientFormMainCampusCode.trim().toUpperCase() || `${cleanCode}-MAIN`;
+        const mainCampusCity = clientFormMainCampusCity.trim() || 'Head Office';
+        const mainCampusFloat = Number(clientFormMainCampusFloat) || 50000;
+        const mainAdminName = clientFormContact.trim() || `${clientFormName.trim()} Administrator`;
+        const mainAdminPass = clientFormMainCampusPassword.trim() || 'campus';
+
+        const newMainCampus: ExtendedCampusNode = {
+          id: designatedMainCampusId,
+          code: mainCampusCode,
+          name: mainCampusName,
+          city: mainCampusCity,
+          accountantName: mainAdminName,
+          pettyCashFloat: mainCampusFloat,
+          currentPettyCash: mainCampusFloat,
+          status: 'active',
+          isMainCampus: true,
+          parentCampusId: null,
+          clientId: newId,
+          loginEnabled: true,
+          allowedModules: DEFAULT_CLIENT_MODULES,
+        };
+
+        addCampus(newMainCampus);
+
+        // Register Level 2 Client Super Admin account for this organization & its main campus
+        const adminUsername = `${cleanCode.toLowerCase()}.admin`;
+        if (addUser) {
+          addUser({
+            id: `user-${newId}-admin`,
+            username: adminUsername,
+            name: mainAdminName,
+            email: clientFormEmail.trim() || `${adminUsername}@${cleanCode.toLowerCase()}.edu.pk`,
+            role: 'level_2_client_super_admin',
+            status: 'active',
+            password: mainAdminPass,
+            clientId: newId,
+            campusId: designatedMainCampusId,
+            permittedCampusIds: ['all'],
+            allowedModules: DEFAULT_CLIENT_MODULES,
+            designation: 'Managing Director & Organization Owner',
+          });
+        }
+
+        // Generate dynamic credentials and sync to cloud
+        const cred = createDynamicCampusCredential(newMainCampus, undefined, mainAdminPass);
+        saveCampusCredentialToCloud(cred);
+      }
+
       const newClient: SchoolClientOrganization = {
         id: newId,
         name: clientFormName.trim(),
-        code: clientFormCode.trim().toUpperCase(),
+        code: cleanCode,
         tier: clientFormTier,
         status: 'active',
         contactPerson: clientFormContact.trim() || 'Central Director',
         contactEmail: clientFormEmail.trim() || 'director@institution.edu.pk',
         contactPhone: clientFormPhone.trim() || '',
-        mainCampusId: campuses[0]?.id || 'campus-main',
+        mainCampusId: designatedMainCampusId,
         maxCampuses: Math.max(1, Number(clientFormMaxCampuses) || 10),
         maxUsers: Math.max(1, Number(clientFormMaxUsers) || 30),
         billingRenewalDate: '2027-12-31',
-        enabledModules: [
-          'dashboard',
-          'campuses',
-          'transaction',
-          'alltransactions',
-          'pettycash',
-          'reports',
-          'accounts',
-          'reconciliation',
-          'cashreconciliation',
-          'activity',
-          'docs',
-        ],
+        enabledModules: DEFAULT_CLIENT_MODULES,
         createdAt: now,
         updatedAt: now,
       };
@@ -428,9 +478,9 @@ export const PlatformSiteAdminHub: React.FC<{
         action: 'REGISTER_CLIENT_ORGANIZATION',
         targetEntity: 'SchoolClientOrganization',
         targetId: newId,
-        details: `Created new client organization '${newClient.name}' with Tier ${newClient.tier}.`,
+        details: `Created new client organization '${newClient.name}' with registered Main Campus ID '${designatedMainCampusId}' and Level 2 Admin.`,
       });
-      triggerToast('success', `Registered client organization '${newClient.name}'!`);
+      triggerToast('success', `Registered client organization '${newClient.name}' and Primary Main Campus!`);
     }
 
     setClients(updatedList);
@@ -530,6 +580,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
     const parentId = newCampusParentId === 'none' || !newCampusParentId ? null : newCampusParentId;
     const parent = campuses.find((c) => c.id === parentId);
+    const resolvedClientId = newCampusClientId || (parent as any)?.clientId || (clients[0]?.id || null);
 
     const newId = `campus-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
     const newCampus: ExtendedCampusNode = {
@@ -537,12 +588,13 @@ export const PlatformSiteAdminHub: React.FC<{
       code: cleanCode,
       name: newCampusName.trim(),
       city: newCampusCity.trim() || 'Punjab',
-      accountantName: newCampusAccountant.trim() || 'Branch Accountant',
+      accountantName: newCampusAccountant.trim() || (parentId ? 'Branch Accountant' : 'Main Campus Administrator'),
       pettyCashFloat: Number(newCampusFloat) || 35000,
       currentPettyCash: Number(newCampusFloat) || 35000,
       status: 'active',
       isMainCampus: !parentId,
       parentCampusId: parentId,
+      clientId: resolvedClientId || undefined,
       loginEnabled: true,
       allowedModules: [
         'dashboard',
@@ -556,10 +608,42 @@ export const PlatformSiteAdminHub: React.FC<{
 
     addCampus(newCampus);
 
+    // If registered as Main Campus and assigned to a client without a designated main campus, link it
+    if (!parentId && resolvedClientId) {
+      const updatedClients = clients.map((cl) =>
+        cl.id === resolvedClientId && !cl.mainCampusId
+          ? { ...cl, mainCampusId: newId, updatedAt: new Date().toISOString() }
+          : cl
+      );
+      setClients(updatedClients);
+      syncSchoolClientsToCloud(updatedClients);
+    }
+
     // Generate dynamic credentials and save to database
     const pass = newCampusPassword.trim() || generateDynamicPassword(cleanCode);
     const cred = createDynamicCampusCredential(newCampus, undefined, pass);
     saveCampusCredentialToCloud(cred);
+
+    // Create user login account so this branch can be operated immediately
+    const assignedClient = clients.find((cl) => cl.id === resolvedClientId);
+    const clientPrefix = assignedClient?.code ? assignedClient.code.toLowerCase() : 'campus';
+    const autoUsername = `${clientPrefix}.${cleanCode.toLowerCase()}`;
+    if (addUser) {
+      addUser({
+        id: `user-${newId}`,
+        username: autoUsername,
+        name: newCampusAccountant.trim() || `${newCampusName.trim()} Accountant`,
+        email: `${autoUsername}@institution.edu.pk`,
+        role: parentId ? 'level_3_sub_campus_admin' : 'level_2_client_super_admin',
+        status: 'active',
+        password: pass,
+        clientId: resolvedClientId || null,
+        campusId: newId,
+        permittedCampusIds: [newId],
+        allowedModules: newCampus.allowedModules,
+        designation: parentId ? `Sub-Campus Accountant (${cleanCode})` : `Main Campus Administrator (${cleanCode})`,
+      });
+    }
 
     recordSiteAdminSecurityEvent({
       actorName: currentUser?.name || 'Platform Site Admin',
@@ -2098,6 +2182,27 @@ export const PlatformSiteAdminHub: React.FC<{
                 </p>
               </div>
 
+              {/* Master System Credentials PDF Download Card */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-indigo-950/50 border border-indigo-800/80 shadow-xs">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Official Production Credentials Directory (Print-Ready PDF)</span>
+                  </span>
+                  <p className="text-[11px] text-indigo-300">
+                    Comprehensive credentials directory covering all 5 clearance tiers for testing, institutional audits, and Vercel production deployment.
+                  </p>
+                </div>
+                <a
+                  href="/SYSTEM_CREDENTIALS_DIRECTORY.pdf"
+                  download="SYSTEM_CREDENTIALS_DIRECTORY.pdf"
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Credentials PDF</span>
+                </a>
+              </div>
+
               {/* Default Access Policy Reference Table (From User Prompt Section 3) */}
               <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/70">
                 <div className="p-3 bg-slate-950 border-b border-slate-800 text-xs font-bold text-white flex items-center justify-between">
@@ -2711,6 +2816,91 @@ export const PlatformSiteAdminHub: React.FC<{
                 </div>
               </div>
 
+              {/* Automatically register Primary Main Campus against this Organization */}
+              {!clientFormId && (
+                <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-800/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-indigo-400" />
+                      <span className="font-black text-white text-xs">
+                        🏛️ Register Main Campus Against Organization
+                      </span>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px] text-indigo-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={clientFormRegisterMainCampus}
+                        onChange={(e) => setClientFormRegisterMainCampus(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <span>Register Main Campus</span>
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-300">
+                    Establishes the Primary Main Campus for this client organization. All subsequent sub-campuses will report to this Main Campus.
+                  </p>
+
+                  {clientFormRegisterMainCampus && (
+                    <div className="space-y-3 pt-2 border-t border-indigo-900/60">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-slate-300 mb-1 font-bold">Main Campus Name</label>
+                          <input
+                            type="text"
+                            value={clientFormMainCampusName}
+                            onChange={(e) => setClientFormMainCampusName(e.target.value)}
+                            placeholder={clientFormName ? `${clientFormName} Main Campus` : "e.g. Central Main Campus"}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 mb-1 font-bold">Main Campus Code</label>
+                          <input
+                            type="text"
+                            value={clientFormMainCampusCode}
+                            onChange={(e) => setClientFormMainCampusCode(e.target.value.toUpperCase())}
+                            placeholder={clientFormCode ? `${clientFormCode}-MAIN` : "e.g. MAIN"}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold outline-none uppercase focus:border-indigo-400"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-slate-300 mb-1 font-bold">City / Location</label>
+                          <input
+                            type="text"
+                            value={clientFormMainCampusCity}
+                            onChange={(e) => setClientFormMainCampusCity(e.target.value)}
+                            placeholder="e.g. Lahore / Islamabad"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 mb-1 font-bold">Imprest Float (PKR)</label>
+                          <input
+                            type="number"
+                            value={clientFormMainCampusFloat}
+                            onChange={(e) => setClientFormMainCampusFloat(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 mb-1 font-bold">Admin Password</label>
+                          <input
+                            type="text"
+                            value={clientFormMainCampusPassword}
+                            onChange={(e) => setClientFormMainCampusPassword(e.target.value)}
+                            placeholder="campus"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
                 <button
                   type="button"
@@ -2764,6 +2954,37 @@ export const PlatformSiteAdminHub: React.FC<{
             </div>
 
             <form onSubmit={handleCreateCampusOrSubCampus} className="space-y-4 text-xs">
+              {/* Assign to School Client Organization */}
+              <div>
+                <label className="block text-slate-400 mb-1 font-bold">
+                  Assign to School Client Organization:
+                </label>
+                <select
+                  value={newCampusClientId}
+                  onChange={(e) => {
+                    const cid = e.target.value;
+                    setNewCampusClientId(cid);
+                    if (cid) {
+                      const clientMain = campuses.find((c: any) => c.clientId === cid && (c.isMainCampus || !c.parentCampusId));
+                      if (clientMain && newCampusParentId !== 'none') {
+                        setNewCampusParentId(clientMain.id);
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  <option value="">Platform Default (Aplus School System)</option>
+                  {clients.map((cl) => (
+                    <option key={cl.id} value={cl.id}>
+                      {cl.name} ({cl.code})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Assigning an organization isolates this campus, its vouchers, and subordinate branches to that specific client.
+                </p>
+              </div>
+
               {/* Hierarchy Level Type */}
               <div>
                 <label className="block text-slate-400 mb-1 font-bold">Campus Hierarchy Type</label>
@@ -2783,7 +3004,10 @@ export const PlatformSiteAdminHub: React.FC<{
                     type="button"
                     onClick={() => {
                       if (campuses.length > 0 && newCampusParentId === 'none') {
-                        setNewCampusParentId(campuses[0].id);
+                        const matching = newCampusClientId
+                          ? campuses.find((c: any) => c.clientId === newCampusClientId && (c.isMainCampus || !c.parentCampusId))
+                          : null;
+                        setNewCampusParentId(matching?.id || campuses[0].id);
                       }
                     }}
                     className={`py-2 px-3 rounded-xl border text-xs font-bold text-center transition-colors cursor-pointer ${
@@ -2809,11 +3033,17 @@ export const PlatformSiteAdminHub: React.FC<{
                     className="w-full bg-slate-950 border border-sky-700/80 rounded-xl px-3 py-2 text-white outline-none focus:border-sky-400 cursor-pointer"
                     required
                   >
-                    {campuses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.code}) {(c as any).isMainCampus || !(c as any).parentCampusId ? '— Main Campus' : '— Branch'}
-                      </option>
-                    ))}
+                    {campuses
+                      .filter((c: any) => !newCampusClientId || c.clientId === newCampusClientId || !c.clientId)
+                      .map((c) => {
+                        const campusClient = clients.find((cl) => cl.id === (c as any).clientId);
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.code}) {(c as any).isMainCampus || !(c as any).parentCampusId ? '— Main Campus' : '— Branch'}
+                            {campusClient ? ` [${campusClient.code}]` : ''}
+                          </option>
+                        );
+                      })}
                   </select>
                 </div>
               )}

@@ -20,7 +20,7 @@ import { SEED_MULTI_TENANT_USERS, SEED_MULTI_TENANT_CAMPUSES, SEED_CLIENTS } fro
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
 import { getLocalStoredCampusCredentials, ensureCredentialsForAllCampuses } from '../services/campusAuthSync';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Copy, Check, ChevronDown, ChevronUp, Download } from 'lucide-react';
 
 interface DynamicCampusLoginPortalProps {
   onSwitchToLegacy?: () => void;
@@ -393,10 +393,23 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
               {showQuickCredentials && (
                 <div className="mt-3 space-y-2.5 animate-in fade-in duration-200 text-xs">
-                  {/* Production Status Notice */}
-                  <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/80 text-[11px] text-indigo-200">
-                    <span className="font-bold text-white block mb-0.5">Role & Access Clearance Directory</span>
-                    Select any role below or use the auto-fill buttons to authenticate immediately into the ERP system.
+                  {/* Production Status Notice & PDF Download */}
+                  <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/80 text-[11px] text-indigo-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white block">Role & Access Clearance Directory</span>
+                      <a
+                        href="/SYSTEM_CREDENTIALS_DIRECTORY.pdf"
+                        download="SYSTEM_CREDENTIALS_DIRECTORY.pdf"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] shadow-sm transition-all cursor-pointer"
+                        title="Download print-ready PDF containing all production login credentials and Vercel deployment guide"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download PDF</span>
+                      </a>
+                    </div>
+                    <p className="text-[10px] text-indigo-300">
+                      Select any role below or use the auto-fill buttons to authenticate immediately into the ERP system on any production deployment.
+                    </p>
                   </div>
 
                   {/* Level 1: Platform Owner */}

@@ -29,6 +29,7 @@ import {
   LogOut,
   User,
   Scale,
+  Building2,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
 import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
@@ -339,6 +340,24 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     currentUser?.role === 'level_3_main_campus_admin';
 
   const userClientId = currentUser?.clientId;
+  const isClientOwnerMainAdmin = Boolean(
+    currentUser &&
+    (currentUser.role === 'level_2_client_super_admin' ||
+     Boolean(currentUser.clientId && currentUser.role?.includes('client_super_admin')))
+  );
+  const effectiveClientId = userClientId || (isClientOwnerMainAdmin ? 'client-aplus' : null);
+
+  const clientOrg = useMemo(() => {
+    if (!effectiveClientId) return null;
+    const allClients = getStoredSchoolClients();
+    const found = allClients.find((c) => c.id === effectiveClientId);
+    if (found) return found;
+    if (effectiveClientId === 'client-apex') {
+      return { id: 'client-apex', name: 'Apex School System', code: 'APEX' };
+    }
+    return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS' };
+  }, [effectiveClientId]);
+
   const clientAllowedModules: string[] | null = useMemo(() => {
     if (!userClientId) return null;
     const allClients = getStoredSchoolClients();
@@ -423,6 +442,22 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
               <span>Super Admin Privileges</span>
             </span>
           )}
+          {clientOrg && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 border border-purple-500/60 text-purple-100 text-[11px] font-bold shadow-xs">
+              <Building2 className="w-3.5 h-3.5 text-purple-300" />
+              <span className="tracking-wide text-white font-black uppercase">{clientOrg.name}</span>
+              {isClientOwnerMainAdmin ? (
+                <span className="px-1.5 py-0.2 rounded bg-purple-900 border border-purple-400/50 text-[9px] font-black text-purple-200">
+                  Level 2 Owner
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.2 rounded bg-indigo-900 border border-indigo-400/50 text-[9px] font-black text-indigo-200">
+                  Subordinate Branch
+                </span>
+              )}
+            </div>
+          )}
+
           {currentUser && (
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-700/60 text-indigo-200 text-[11px] font-semibold">
               <User className="w-3.5 h-3.5 text-indigo-400" />
@@ -506,19 +541,21 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={handleCloudPush}
-            disabled={busy}
-            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Save complete ledger, vouchers, petty cash & campuses to Firebase Firestore across all browsers"
-          >
-            {busy ? (
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            ) : (
-              <CloudUpload className="w-3.5 h-3.5 text-emerald-400" />
-            )}
-            <span>Sync to Cloud</span>
-          </button>
+          {isPlatformSiteAdmin && (
+            <button
+              onClick={handleCloudPush}
+              disabled={busy}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Save complete ledger, vouchers, petty cash & campuses to Firebase Firestore across all browsers"
+            >
+              {busy ? (
+                <RefreshCw className="w-3 h-3 animate-spin" />
+              ) : (
+                <CloudUpload className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span>Sync to Cloud</span>
+            </button>
+          )}
 
           <button
             onClick={() => setIsFullLedgerPdfOpen(true)}
@@ -529,7 +566,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <span>Export Full Ledger PDF</span>
           </button>
 
-          {isSuperAdmin && (
+          {isPlatformSiteAdmin && (
             <button
               onClick={() => setIsCampusAccountHeadAccessOpen(true)}
               className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -540,16 +577,18 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => setIsPermissionEngineOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-            title="Centralized Permission Engine (Levels 1-5 RBAC, Campus Administrator Role Assignments & Action Matrix Enforcement)"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-indigo-200" />
-            <span>Permission Engine</span>
-          </button>
+          {isPlatformSiteAdmin && (
+            <button
+              onClick={() => setIsPermissionEngineOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+              title="Centralized Permission Engine (Levels 1-5 RBAC, Campus Administrator Role Assignments & Action Matrix Enforcement)"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-indigo-200" />
+              <span>Permission Engine</span>
+            </button>
+          )}
 
-          {isModuleAllowed('ai_suggester') && (
+          {isPlatformSiteAdmin && isModuleAllowed('ai_suggester') && (
             <button
               onClick={() => setIsSuggesterModalOpen(true)}
               className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -574,7 +613,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {isModuleAllowed('approval_matrix') && (
+          {isPlatformSiteAdmin && isModuleAllowed('approval_matrix') && (
             <button
               onClick={() => setIsApprovalMatrixModalOpen(true)}
               className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-emerald-500/40"
@@ -585,7 +624,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {isAuthorizedForCampusDb && (
+          {isPlatformSiteAdmin && isAuthorizedForCampusDb && (
             <button
               onClick={() => setIsCampusAuthModalOpen(true)}
               className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -596,17 +635,19 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={handleCloudPull}
-            disabled={busy}
-            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Pull & refresh latest vouchers, COA, campuses, and petty cash from Firebase Cloud"
-          >
-            <CloudDownload className="w-3.5 h-3.5 text-blue-400" />
-            <span>Load Cloud</span>
-          </button>
+          {isPlatformSiteAdmin && (
+            <button
+              onClick={handleCloudPull}
+              disabled={busy}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Pull & refresh latest vouchers, COA, campuses, and petty cash from Firebase Cloud"
+            >
+              <CloudDownload className="w-3.5 h-3.5 text-blue-400" />
+              <span>Load Cloud</span>
+            </button>
+          )}
 
-          {isModuleAllowed('alltransactions') && (
+          {isPlatformSiteAdmin && isModuleAllowed('alltransactions') && (
             <button
               onClick={() => onNavigate('alltransactions')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -704,23 +745,25 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => {
-              const res = restoreLastDeletedAccount({
-                accountHeads,
-                addAccountHead,
-                importOfficialAccountsHeads,
-              });
-              triggerShortcutToast(res.message);
-            }}
-            className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer"
-            title="Restore recently deleted Chart of Account head or recover missing master accounts"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-            <span>Restore Deleted COA</span>
-          </button>
+          {isPlatformSiteAdmin && (
+            <button
+              onClick={() => {
+                const res = restoreLastDeletedAccount({
+                  accountHeads,
+                  addAccountHead,
+                  importOfficialAccountsHeads,
+                });
+                triggerShortcutToast(res.message);
+              }}
+              className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer"
+              title="Restore recently deleted Chart of Account head or recover missing master accounts"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+              <span>Restore Deleted COA</span>
+            </button>
+          )}
 
-          {(!activeProfile || activeProfile.widgets.showTopBarAuditTrailButton) && isModuleAllowed('activity') && (
+          {isPlatformSiteAdmin && isModuleAllowed('activity') && (
             <button
               onClick={() => onNavigate('activity')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${

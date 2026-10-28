@@ -35,8 +35,15 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+import { patchViteDevClient } from './scripts/patch-vite-client.js';
+
 async function startServer() {
   if (!isProd) {
+    try {
+      patchViteDevClient();
+    } catch (e) {
+      console.warn('Could not run patchViteDevClient:', e);
+    }
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   AccountingProvider,
   MainApp,
@@ -31,8 +31,10 @@ import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
 import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub';
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
-import { purgeAllProductionData } from './services/platformSiteAdminService';
+import { purgeAllProductionData, getStoredSchoolClients } from './services/platformSiteAdminService';
 import { ErrorBoundary } from './components/ErrorBoundary';
+
+import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
 
 // ----------------------------------------------------------------------------
 // DEFENSIVE DATA SANITIZATION: Clean duplicate user records from localStorage
@@ -67,9 +69,45 @@ function purgeDuplicateUsersFromStorage() {
   } catch {}
 }
 
+// ----------------------------------------------------------------------------
+// PRODUCTION RECOVERY BOOTSTRAP: Ensure Master Accounts Exist on Fresh Vercel Deployments
+// ----------------------------------------------------------------------------
+function bootstrapProductionDefaultAccounts() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const raw = localStorage.getItem('ams_users_v5_clean');
+    const existing: any[] = raw ? JSON.parse(raw) : [];
+    const userMap = new Map<string, any>();
+
+    if (Array.isArray(existing)) {
+      existing.forEach((u) => {
+        if (u && (u.username || u.id)) {
+          userMap.set(String(u.username || u.id).toLowerCase(), u);
+        }
+      });
+    }
+
+    let modified = false;
+    for (const seed of SEED_MULTI_TENANT_USERS) {
+      const key = seed.username.toLowerCase();
+      if (!userMap.has(key)) {
+        userMap.set(key, seed);
+        modified = true;
+      }
+    }
+
+    if (modified || !raw) {
+      localStorage.setItem('ams_users_v5_clean', JSON.stringify(Array.from(userMap.values())));
+    }
+  } catch (err) {
+    console.warn('Could not bootstrap production default accounts:', err);
+  }
+}
+
 // One-time cleanup utility available on window.__PURGE_PRODUCTION_DATA__ for emergency resets
 (window as any).__PURGE_PRODUCTION_DATA__ = purgeAllProductionData;
 purgeDuplicateUsersFromStorage();
+bootstrapProductionDefaultAccounts();
 initFirebaseCloudSync();
 installGlobalVisibilityHook();
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
@@ -79,8 +117,9 @@ window.__APLUS_CASH_RECONCILIATION__ = PhysicalCashReconciliation;
 window.__APLUS_BUDGET_VARIANCE_WIDGET__ = BudgetVarianceWidget;
 window.__APLUS_PETTY_CASH_CHART__ = PettyCashCategoryAnalytics;
 window.__APLUS_MODERN_ERP__ = ModernErpSuite;
-window.__APLUS_BULK_VOUCHER_HUB__ = BulkVoucherAndAccessManager;
-window.__APLUS_SUGGESTIONS_HUB__ = FinancialHealthAndSuggestions;
+// Executive Dashboard is reserved exclusively for charts & institutional performance
+window.__APLUS_BULK_VOUCHER_HUB__ = undefined;
+window.__APLUS_SUGGESTIONS_HUB__ = undefined;
 window.__APLUS_DAILY_CASH_SUMMARY__ = DailyCashSummary;
 window.__APLUS_SITE_ADMIN_HUB__ = PlatformSiteAdminHub;
 window.__APLUS_MULTI_FORMAT_REPORTS__ = MultiFormatReportsHub;
@@ -90,14 +129,9 @@ window.__APLUS_TOP_BAR__ = AplusTopBar;
 (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
 
 function InnerApp() {
-  const { currentUser, isSuperAdmin, setCurrentCampusId, campuses } = useAccounting();
+  const { currentUser, isSuperAdmin, setCurrentCampusId, currentCampusId, campuses } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
-
-  // Login is required for everyone
-  if (!currentUser) {
-    return <DynamicCampusLoginPortal />;
-  }
 
   // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly Super Administration account ONLY
   const isPlatformSiteAdmin = Boolean(
@@ -109,9 +143,35 @@ function InnerApp() {
   );
 
   // Hierarchy Level 2: Main Campus Administrator (Client Owner)
-  const isClientOwnerMainAdmin =
-    currentUser.role === 'level_2_client_super_admin' ||
-    (currentUser.clientId && currentUser.role?.includes('client_super_admin'));
+  const isClientOwnerMainAdmin = Boolean(
+    currentUser &&
+    (currentUser.role === 'level_2_client_super_admin' ||
+     Boolean(currentUser.clientId && currentUser.role?.includes('client_super_admin')))
+  );
+
+  const userClientId = currentUser?.clientId || (isClientOwnerMainAdmin ? 'client-aplus' : null);
+
+  // Subordinate Campuses strictly belonging to this Level 2 Client (Hook called unconditionally)
+  const mySubordinateCampuses = useMemo(() => {
+    if (!currentUser) return [];
+    return filterCampusesForUser(campuses, currentUser);
+  }, [campuses, currentUser]);
+
+  // Client Organization details (reads from stored clients or fallbacks, hook called unconditionally)
+  const clientOrg = useMemo(() => {
+    if (!userClientId) return null;
+    const stored = getStoredSchoolClients().find((c) => c.id === userClientId);
+    if (stored) return stored;
+    if (userClientId === 'client-apex') {
+      return { id: 'client-apex', name: 'Apex School System', code: 'APEX' };
+    }
+    return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS' };
+  }, [userClientId]);
+
+  // Login is required for everyone (Early return placed AFTER all hooks to follow Rules of Hooks)
+  if (!currentUser) {
+    return <DynamicCampusLoginPortal />;
+  }
 
   // Dedicated Platform-Level Control Panel (Level 1)
   if (isPlatformSiteAdmin && adminViewMode === 'platform_control_panel') {
@@ -179,18 +239,60 @@ function InnerApp() {
       )}
 
       {isClientOwnerMainAdmin && clientViewMode === 'campus_operations' && (
-        <div className="bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-950 border-b border-indigo-800/80 px-4 py-1.5 text-xs flex items-center justify-between text-indigo-200">
-          <div className="flex items-center gap-2 font-mono">
-            <span className="font-bold text-white">Client Owner:</span>
-            <span>Viewing Branch Operations</span>
+        <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-purple-950 border-b border-indigo-700/80 px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-3 text-indigo-100 shadow-md">
+          {/* Organization Client Name Top Display */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-md text-base">
+              🏢
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-black text-white text-sm sm:text-base tracking-tight uppercase">
+                  {clientOrg?.name || 'School Organization'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-900/90 text-purple-200 border border-purple-500/50 uppercase">
+                  Level 2 Organization Owner
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300">
+                Main Campus Admin • Managing strictly your own subordinate campuses ({mySubordinateCampuses.length} registered)
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setClientViewMode('client_hub')}
-            className="px-2.5 py-0.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-sm"
-          >
-            &larr; Return to Organization Management Hub
-          </button>
+
+          {/* Subordinate Campus Switcher & Hub Navigation */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-900/90 border border-indigo-700/60 rounded-xl px-3 py-1.5 shadow-inner">
+              <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wide">
+                Subordinate Branch:
+              </span>
+              <select
+                value={currentCampusId || mySubordinateCampuses[0]?.id || ''}
+                onChange={(e) => {
+                  if (setCurrentCampusId && e.target.value) {
+                    setCurrentCampusId(e.target.value);
+                  }
+                }}
+                className="bg-slate-800 border border-indigo-600/70 text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-purple-400 focus:outline-hidden cursor-pointer"
+                title="Select from your own subordinate campuses only"
+              >
+                {mySubordinateCampuses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} - {c.name} {c.isMainCampus ? '(Main Campus)' : '(Subordinate Branch)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setClientViewMode('client_hub')}
+              className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              title="Return to Level 2 Organization Management Hub"
+            >
+              <span>&larr; Return to Organization Management Hub</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -209,9 +311,9 @@ export default function App() {
     window.__APLUS_CASH_RECONCILIATION__ = PhysicalCashReconciliation;
     window.__APLUS_BUDGET_VARIANCE_WIDGET__ = BudgetVarianceWidget;
     window.__APLUS_PETTY_CASH_CHART__ = PettyCashCategoryAnalytics;
-    window.__APLUS_MODERN_ERP__ = ModernErpSuite;
-    window.__APLUS_BULK_VOUCHER_HUB__ = BulkVoucherAndAccessManager;
-    window.__APLUS_SUGGESTIONS_HUB__ = FinancialHealthAndSuggestions;
+    // Executive Dashboard is reserved exclusively for charts & institutional performance
+    window.__APLUS_BULK_VOUCHER_HUB__ = undefined;
+    window.__APLUS_SUGGESTIONS_HUB__ = undefined;
     window.__APLUS_DAILY_CASH_SUMMARY__ = DailyCashSummary;
     window.__APLUS_SITE_ADMIN_HUB__ = PlatformSiteAdminHub;
     window.__APLUS_MULTI_FORMAT_REPORTS__ = MultiFormatReportsHub;

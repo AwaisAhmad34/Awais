@@ -22,6 +22,108 @@ export const SEED_MULTI_TENANT_USERS: AppUser[] = [
     allowedModules: ['all'],
     designation: 'Platform Site Owner',
   },
+  // LEVEL 2: Client Super Admin — Aplus School System
+  {
+    id: 'user-client-aplus-admin',
+    username: 'client.admin',
+    name: 'Managing Director (Aplus School System)',
+    email: 'director@aplus.edu.pk',
+    role: 'level_2_client_super_admin',
+    status: 'active',
+    password: 'campus',
+    clientId: 'client-aplus',
+    campusId: 'campus-khiali',
+    permittedCampusIds: ['all'],
+    allowedModules: ['all'],
+    designation: 'Managing Director & Organization Owner',
+  },
+  // LEVEL 2: Client Super Admin — Apex Grammar Academy
+  {
+    id: 'user-client-apex-admin',
+    username: 'apex.admin',
+    name: 'Academy Director (Apex Grammar Academy)',
+    email: 'head@apexacademy.edu.pk',
+    role: 'level_2_client_super_admin',
+    status: 'active',
+    password: 'campus',
+    clientId: 'client-apex',
+    campusId: 'campus-apex-main',
+    permittedCampusIds: ['all'],
+    allowedModules: ['all'],
+    designation: 'Academy Director & Client Owner',
+  },
+  // LEVEL 3 & 4: Branch Accountants
+  {
+    id: 'user-campus-khiali-accountant',
+    username: 'main',
+    name: 'Khiali Main Campus Accountant',
+    email: 'main@aschoolsystem.edu.pk',
+    role: 'campus_accountant',
+    status: 'active',
+    password: 'campus',
+    clientId: 'client-aplus',
+    campusId: 'campus-khiali',
+    permittedCampusIds: ['campus-khiali'],
+    allowedModules: ['dashboard', 'transaction', 'alltransactions', 'pettycash', 'accounts', 'reconciliation', 'cashreconciliation', 'reports'],
+    designation: 'Head Branch Accountant',
+  },
+  {
+    id: 'user-campus-peoples-accountant',
+    username: 'peoples',
+    name: 'People\'s Colony Campus Accountant',
+    email: 'peoples@aschoolsystem.edu.pk',
+    role: 'campus_accountant',
+    status: 'active',
+    password: 'campus',
+    clientId: 'client-aplus',
+    campusId: 'campus-peoples',
+    permittedCampusIds: ['campus-peoples'],
+    allowedModules: ['dashboard', 'transaction', 'alltransactions', 'pettycash', 'accounts', 'reconciliation', 'cashreconciliation', 'reports'],
+    designation: 'Branch Accountant',
+  },
+  {
+    id: 'user-campus-dc-accountant',
+    username: 'dc',
+    name: 'DC Colony Campus Accountant',
+    email: 'dc@aschoolsystem.edu.pk',
+    role: 'campus_accountant',
+    status: 'active',
+    password: 'campus',
+    clientId: 'client-aplus',
+    campusId: 'campus-dc',
+    permittedCampusIds: ['campus-dc'],
+    allowedModules: ['dashboard', 'transaction', 'alltransactions', 'pettycash', 'accounts', 'reconciliation', 'cashreconciliation', 'reports'],
+    designation: 'Branch Accountant',
+  },
+  {
+    id: 'user-campus-cantt-accountant',
+    username: 'cantt',
+    name: 'Cantt Branch Accountant',
+    email: 'cantt@aschoolsystem.edu.pk',
+    role: 'campus_accountant',
+    status: 'active',
+    password: 'campus',
+    clientId: 'client-aplus',
+    campusId: 'campus-cantt',
+    permittedCampusIds: ['campus-cantt'],
+    allowedModules: ['dashboard', 'transaction', 'alltransactions', 'pettycash', 'accounts', 'reconciliation', 'cashreconciliation', 'reports'],
+    designation: 'Branch Accountant',
+  },
+  // LEVEL 5: Internal Auditor & Compliance Officer
+  {
+    id: 'user-auditor',
+    username: 'auditor',
+    name: 'Internal Auditor & Compliance Officer',
+    email: 'auditor@aschoolsystem.edu.pk',
+    role: 'read_only',
+    status: 'active',
+    password: 'campus',
+    clientId: null,
+    campusId: 'all',
+    permittedCampusIds: ['all'],
+    allowedModules: ['alltransactions', 'reconciliation', 'cashreconciliation', 'reports', 'activity'],
+    designation: 'Senior Internal Auditor',
+  },
 ];
 
 /**
@@ -39,16 +141,23 @@ export function filterCampusesForUser(allCampuses: Campus[], user: AppUser | nul
     return allCampuses;
   }
 
-  // Level 2: Client Owner (Main Campus Admin)
-  if (user.role === 'level_2_client_super_admin' && user.clientId) {
-    return allCampuses.filter((c) => {
-      // Must belong to user's client
-      if (c.clientId && c.clientId !== user.clientId) return false;
-      if (!c.clientId && user.clientId !== 'client-aplus') return false;
+  // Level 2: Client Owner (Main Campus Admin & Organization Owner)
+  const isLevel2 = user.role === 'level_2_client_super_admin' || Boolean(user.role?.includes('client_super_admin'));
+  const userClientId = user.clientId || (isLevel2 ? 'client-aplus' : null);
 
-      // Sub-campus of own main campus, or explicitly delegated
-      const isOwnMain = c.id === user.campusId;
-      const isSubOfMain = c.parentCampusId === user.campusId;
+  if (isLevel2 && userClientId) {
+    const isAllPermitted = !user.permittedCampusIds || user.permittedCampusIds.length === 0 || user.permittedCampusIds.includes('all');
+    return allCampuses.filter((c) => {
+      // 1. STRICT MULTI-TENANT BOUNDARY: Must belong to user's client organization
+      if (c.clientId && c.clientId !== userClientId) return false;
+      if (!c.clientId && userClientId !== 'client-aplus') return false;
+
+      // 2. Client Owner with 'all' clearance sees all subordinate branches of their client
+      if (isAllPermitted) return true;
+
+      // 3. Sub-campus reporting to own main campus, or explicitly delegated in permittedCampusIds
+      const isOwnMain = c.id === user.campusId || c.isMainCampus;
+      const isSubOfMain = Boolean(user.campusId && c.parentCampusId === user.campusId);
       const isPermitted = (user.permittedCampusIds || []).includes(c.id);
 
       return isOwnMain || isSubOfMain || isPermitted;
