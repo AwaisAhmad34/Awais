@@ -11,33 +11,23 @@ import {
   CheckCircle2,
   Sparkles,
   School,
-  Database,
-  Layers,
   KeyRound,
 } from 'lucide-react';
 import { useAccounting } from '../core/aplusEngine';
 import { getStoredSchoolClients } from '../services/platformSiteAdminService';
-import { SEED_MULTI_TENANT_USERS, SEED_MULTI_TENANT_CAMPUSES, SEED_CLIENTS } from '../services/multiTenantDataService';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
-import { getLocalStoredCampusCredentials, ensureCredentialsForAllCampuses } from '../services/campusAuthSync';
-import firebaseConfig from '../../firebase-applet-config.json';
-import { Copy, Check, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import {
+  authenticateAccount,
+  provisionInitialPlatformOwner,
+  getVerifiedProfile,
+} from '../services/secureAuthentication';
 
 interface DynamicCampusLoginPortalProps {
   onSwitchToLegacy?: () => void;
 }
 
 export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> = () => {
-  const {
-    users,
-    addUser,
-    updateUser,
-    login,
-    loginAsUser,
-    loginAsCampus,
-    campuses,
-    orgSettings,
-  } = useAccounting();
+  const { loginAsUser, campuses, orgSettings } = useAccounting();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -46,9 +36,16 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
-  const [showQuickCredentials, setShowQuickCredentials] = useState(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [clientsVersion, setClientsVersion] = useState(0);
+
+  // Controlled Platform Owner Setup Modal
+  const [isOwnerSetupOpen, setIsOwnerSetupOpen] = useState(false);
+  const [ownerEmail, setOwnerEmail] = useState('siteowner@platform.org');
+  const [ownerName, setOwnerName] = useState('Platform Super Admin (Site Owner)');
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [confirmOwnerPassword, setConfirmOwnerPassword] = useState('');
+  const [ownerSetupStatus, setOwnerSetupStatus] = useState<string | null>(null);
+  const [isSettingUpOwner, setIsSettingUpOwner] = useState(false);
 
   React.useEffect(() => {
     const fn = () => setClientsVersion((v) => v + 1);
@@ -70,26 +67,8 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     );
   }, [username, storedClients]);
 
-  React.useEffect(() => {
-    if (campuses && campuses.length > 0) {
-      ensureCredentialsForAllCampuses(campuses, getLocalStoredCampusCredentials());
-    }
-  }, [campuses]);
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     setIsCapsLockOn(e.getModifierState('CapsLock'));
-  };
-
-  const handleAutoFill = (u: string, p: string) => {
-    setUsername(u);
-    setPassword(p);
-    setErrorMessage(null);
-  };
-
-  const handleCopy = (text: string, key: string) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -97,11 +76,11 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     setErrorMessage(null);
     setSuccessNotice(null);
 
-    const cleanUser = username.trim().toLowerCase();
+    const cleanInput = username.trim();
     const cleanPass = password;
 
-    if (!cleanUser) {
-      setErrorMessage('Please enter your username or email address.');
+    if (!cleanInput) {
+      setErrorMessage('Please enter your institutional email or username.');
       return;
     }
     if (!cleanPass) {
@@ -112,395 +91,161 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     setIsAuthenticating(true);
 
     try {
-      const result = await login(cleanUser, cleanPass);
-      if (result.success) {
-        const loggedUser = users.find((u) => u.username?.toLowerCase() === cleanUser || u.email?.toLowerCase() === cleanUser);
-        const userCamp = campuses.find((c) => c.id === loggedUser?.campusId) || campuses[0];
-        recordCampusLoginActivity({
-          campusId: userCamp?.id || 'campus-khiali',
-          campusName: userCamp?.name || 'Main Campus',
-          campusCode: userCamp?.code || 'KHL',
-          clientId: loggedUser?.clientId || userCamp?.clientId || 'client-aplus',
-          clientName: userCamp?.name?.includes('Apex') ? 'Apex Academy Network' : 'Aplus School System',
-          userName: loggedUser?.name || cleanUser,
-          userRole: loggedUser?.role || 'Level 4 Sub-Campus Admin',
-          userEmail: loggedUser?.email || cleanUser,
-          ipAddress: '192.168.1.100',
-          device: navigator.userAgent.slice(0, 45),
-          status: 'success',
-          method: 'portal_login',
-          remarks: 'Authenticated through standard credentials verification',
-        });
-        return;
+      // 1. Strictly authenticate via Firebase Authentication and load verified server-side membership
+      const profile = await authenticateAccount(cleanInput, cleanPass);
+
+      setSuccessNotice(`Authentication verified. Welcome back, ${profile.name || profile.username}!`);
+
+      // 2. Map verified cloud membership to local session
+      const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
+      if (loginAsUser) {
+        loginAsUser(profile.id, isSuper);
       }
 
-      // 1. Level 1 Platform Super Admin Fallback
-      if (cleanUser === 'admin' && cleanPass === 'admin') {
-        let adminUser = users.find((u) => u.username?.toLowerCase() === 'admin');
-        if (!adminUser && addUser) {
-          adminUser = addUser({
-            id: 'user-platform-owner',
-            username: 'admin',
-            name: 'Platform Super Admin (Site Owner)',
-            email: 'siteowner@platform.org',
-            role: 'level_1_platform_super_admin',
-            status: 'active',
-            password: 'admin',
-            clientId: null,
-            campusId: null,
-            permittedCampusIds: ['all'],
-            allowedModules: ['all'],
-            designation: 'Platform Site Owner',
-          });
-        }
-        if (adminUser && loginAsUser) {
-          recordCampusLoginActivity({
-            campusId: 'platform-central',
-            campusName: 'Central Platform Authority',
-            campusCode: 'HQ',
-            clientId: undefined,
-            clientName: 'Multi-Tenant Platform Cloud',
-            userName: adminUser.name,
-            userRole: 'Level 1 Platform Super Admin',
-            userEmail: adminUser.email,
-            ipAddress: '127.0.0.1 (Internal Gateway)',
-            device: 'Creator Workstation',
-            status: 'success',
-            method: 'portal_login',
-            remarks: 'Site Owner Level 1 authentication established',
-          });
-          loginAsUser(adminUser.id, true);
-          return;
-        }
-      }
-
-      // 2. Level 2 Client Super Admin (Aplus Central Management)
-      if ((cleanUser === 'client.admin' || cleanUser === 'director@aplus.edu.pk') && (cleanPass === 'campus' || cleanPass === 'admin')) {
-        let clientAdmin = users.find((u) => u.username?.toLowerCase() === 'client.admin');
-        if (!clientAdmin && addUser) {
-          clientAdmin = addUser({
-            id: 'user-client-aplus-admin',
-            username: 'client.admin',
-            name: 'Aplus Central Management (Client Super Admin)',
-            email: 'director@aplus.edu.pk',
-            role: 'level_2_client_super_admin',
-            clientId: 'client-aplus',
-            campusId: campuses[0]?.id || 'campus-khiali',
-            permittedCampusIds: ['all'],
-            password: 'campus',
-            status: 'active',
-            allowedModules: ['all'],
-            designation: 'Managing Director & Organization Owner',
-          });
-        }
-        if (clientAdmin && loginAsUser) {
-          const camp = campuses.find((c) => c.clientId === 'client-aplus') || campuses[0];
-          recordCampusLoginActivity({
-            campusId: camp?.id || 'campus-khiali',
-            campusName: camp?.name || 'Aplus Khiali Main Campus',
-            campusCode: camp?.code || 'KHL-MAIN',
-            clientId: 'client-aplus',
-            clientName: 'Aplus School System Network',
-            userName: clientAdmin.name,
-            userRole: 'Level 2 Client Super Admin',
-            userEmail: clientAdmin.email,
-            ipAddress: '192.168.10.1',
-            device: 'Executive Workstation',
-            status: 'success',
-            method: 'portal_login',
-            remarks: 'Level 2 Client Super Admin signed in',
-          });
-          loginAsUser(clientAdmin.id, false);
-          return;
-        }
-      }
-
-      // 3. Level 2 Client Super Admin (Apex Academy)
-      if ((cleanUser === 'apex.admin' || cleanUser === 'head@apexacademy.edu.pk') && (cleanPass === 'campus' || cleanPass === 'admin')) {
-        let apexAdmin = users.find((u) => u.username?.toLowerCase() === 'apex.admin');
-        if (!apexAdmin && addUser) {
-          const apexCampus = campuses.find((c) => c.clientId === 'client-apex') || campuses[0];
-          apexAdmin = addUser({
-            id: 'user-client-apex-admin',
-            username: 'apex.admin',
-            name: 'Apex Academy Management (Client Super Admin)',
-            email: 'head@apexacademy.edu.pk',
-            role: 'level_2_client_super_admin',
-            clientId: 'client-apex',
-            campusId: apexCampus?.id || 'campus-apex-main',
-            permittedCampusIds: ['all'],
-            password: 'campus',
-            status: 'active',
-            allowedModules: ['all'],
-            designation: 'Academy Director & Client Owner',
-          });
-        }
-        if (apexAdmin && loginAsUser) {
-          const apexCampus = campuses.find((c) => c.clientId === 'client-apex') || campuses[0];
-          recordCampusLoginActivity({
-            campusId: apexCampus?.id || 'campus-apex-main',
-            campusName: apexCampus?.name || 'Apex Academy Main Campus',
-            campusCode: apexCampus?.code || 'APX-MAIN',
-            clientId: 'client-apex',
-            clientName: 'Apex Group of Colleges & Schools',
-            userName: apexAdmin.name,
-            userRole: 'Level 2 Client Super Admin',
-            userEmail: apexAdmin.email,
-            ipAddress: '10.0.4.12',
-            device: 'Executive Workstation',
-            status: 'success',
-            method: 'portal_login',
-            remarks: 'Apex Client Super Admin authenticated',
-          });
-          loginAsUser(apexAdmin.id, false);
-          return;
-        }
-      }
-
-      // 4. Auditor / Read-Only Oversight
-      if (cleanUser === 'auditor' && (cleanPass === 'campus' || cleanPass === 'admin')) {
-        let auditorUser = users.find((u) => u.username?.toLowerCase() === 'auditor');
-        if (!auditorUser && addUser) {
-          auditorUser = addUser({
-            id: 'user-auditor',
-            username: 'auditor',
-            name: 'Internal Auditor & Compliance Officer',
-            email: 'auditor@aplus.edu.pk',
-            role: 'read_only',
-            clientId: null,
-            campusId: 'all',
-            permittedCampusIds: ['all'],
-            password: 'campus',
-            status: 'active',
-            allowedModules: ['alltransactions', 'reconciliation', 'cashreconciliation', 'reports', 'activity'],
-            designation: 'Senior Internal Auditor',
-          });
-        }
-        if (auditorUser && loginAsUser) {
-          recordCampusLoginActivity({
-            campusId: 'campus-khiali',
-            campusName: 'Aplus Khiali Main Campus',
-            campusCode: 'KHL',
-            clientId: 'client-aplus',
-            clientName: 'Aplus School System Network',
-            userName: auditorUser.name,
-            userRole: 'Internal Auditor & Compliance',
-            userEmail: auditorUser.email,
-            ipAddress: '192.168.10.15',
-            device: 'Audit Laptop',
-            status: 'success',
-            method: 'portal_login',
-            remarks: 'Auditor oversight session initiated',
-          });
-          loginAsUser(auditorUser.id, false);
-          return;
-        }
-      }
-
-      // 5. Direct Campus Code matching (e.g. 'main', 'gulberg', 'cantt', 'peoples', etc.)
-      const directCampusMatch = campuses.find((c) =>
-        c.code?.toLowerCase() === cleanUser ||
-        c.id?.toLowerCase() === cleanUser ||
-        `campus.${c.code?.toLowerCase()}` === cleanUser ||
-        c.name?.toLowerCase() === cleanUser
-      );
-
-      if (directCampusMatch && (cleanPass === 'campus' || cleanPass === 'admin')) {
-        if (directCampusMatch.loginEnabled === false) {
-          recordCampusLoginActivity({
-            campusId: directCampusMatch.id,
-            campusName: directCampusMatch.name,
-            campusCode: directCampusMatch.code,
-            clientId: directCampusMatch.clientId || 'client-aplus',
-            userName: directCampusMatch.accountantName || `${directCampusMatch.name} Accountant`,
-            userRole: directCampusMatch.isMainCampus ? 'Level 3 Main Campus Admin' : 'Level 4 Sub-Campus Admin',
-            ipAddress: '192.168.1.55',
-            device: 'Browser Terminal',
-            status: 'locked',
-            method: 'portal_login',
-            remarks: 'Login blocked: campus branch suspended by central administration',
-          });
-          setErrorMessage(`Login access for ${directCampusMatch.name} is currently suspended by central administration.`);
-          return;
-        }
-        if (loginAsCampus) {
-          recordCampusLoginActivity({
-            campusId: directCampusMatch.id,
-            campusName: directCampusMatch.name,
-            campusCode: directCampusMatch.code,
-            clientId: directCampusMatch.clientId || 'client-aplus',
-            userName: directCampusMatch.accountantName || `${directCampusMatch.name} Accountant`,
-            userRole: directCampusMatch.isMainCampus ? 'Level 3 Main Campus Admin' : 'Level 4 Sub-Campus Admin',
-            ipAddress: '192.168.1.55',
-            device: 'Campus Desktop',
-            status: 'success',
-            method: 'dynamic_auth',
-            remarks: `Direct campus credentials verified for ${directCampusMatch.name}`,
-          });
-          loginAsCampus(directCampusMatch.id);
-          return;
-        }
-      }
-
-      // 6. Fallback check against dynamic campus credentials vault
-      const creds = getLocalStoredCampusCredentials();
-      const matched = creds.find(
-        (c) =>
-          c.username.toLowerCase() === cleanUser ||
-          c.campusCode.toLowerCase() === cleanUser ||
-          `campus.${c.campusCode.toLowerCase()}` === cleanUser ||
-          `${c.campusCode.toLowerCase()}@aschoolsystem.edu.pk` === cleanUser
-      );
-
-      if (matched && (matched.password === cleanPass || cleanPass === 'campus' || cleanPass === 'admin')) {
-        const targetCamp = campuses.find((c) => c.id === matched.campusId);
-        if (targetCamp && targetCamp.loginEnabled === false) {
-          recordCampusLoginActivity({
-            campusId: matched.campusId,
-            campusName: matched.campusName,
-            campusCode: matched.campusCode,
-            clientId: targetCamp?.clientId || 'client-aplus',
-            userName: matched.username,
-            userRole: 'Level 4 Sub-Campus Admin',
-            ipAddress: '192.168.1.66',
-            device: 'Vault Session',
-            status: 'locked',
-            method: 'vault_one_click',
-            remarks: 'Login blocked: target campus is disabled',
-          });
-          setErrorMessage(`Login access for ${targetCamp.name} is currently suspended by central administration.`);
-          return;
-        }
-        if (loginAsCampus) {
-          recordCampusLoginActivity({
-            campusId: matched.campusId,
-            campusName: matched.campusName,
-            campusCode: matched.campusCode,
-            clientId: targetCamp?.clientId || 'client-aplus',
-            userName: matched.username,
-            userRole: targetCamp?.isMainCampus ? 'Level 3 Main Campus Admin' : 'Level 4 Sub-Campus Admin',
-            ipAddress: '192.168.1.66',
-            device: 'Vault Session',
-            status: 'success',
-            method: 'vault_one_click',
-            remarks: `Vault authentication verified for ${matched.campusName}`,
-          });
-          loginAsCampus(matched.campusId);
-          return;
-        }
-      }
-
-      // Record Failed Attempt
+      // 3. Record audit activity
+      const userCamp = campuses.find((c) => c.id === profile.campusId) || campuses[0];
       recordCampusLoginActivity({
-        campusId: 'unknown',
-        campusName: 'Unassigned Branch',
-        campusCode: 'AUTH-FAIL',
-        userName: cleanUser,
-        userRole: 'Level 5 Departmental Staff',
-        userEmail: cleanUser.includes('@') ? cleanUser : undefined,
-        ipAddress: '192.168.1.200',
+        campusId: profile.campusId || userCamp?.id || 'campus-khiali',
+        campusName: userCamp?.name || (isSuper ? 'Platform Central Command' : 'Main Campus'),
+        campusCode: userCamp?.code || 'HQ',
+        clientId: profile.clientId || (isSuper ? undefined : 'client-aplus'),
+        clientName: matchingClient?.name || (isSuper ? 'Platform Site Owner' : 'Aplus School System'),
+        userName: profile.name || profile.username,
+        userRole: profile.role || profile.permissionLevel,
+        userEmail: profile.email || cleanInput,
+        ipAddress: '127.0.0.1 (Firebase Auth Verified)',
         device: navigator.userAgent.slice(0, 45),
-        status: 'failed',
+        status: 'success',
         method: 'portal_login',
-        remarks: 'Failed authentication: invalid username or password',
+        remarks: `Authenticated via Firebase Auth (${profile.permissionLevel})`,
       });
-
-      setErrorMessage(result.message || 'Invalid username or password. Please try again.');
-    } catch {
-      setErrorMessage('Unable to sign in. Check your connection and try again.');
+    } catch (err: any) {
+      console.error('Sign-in failure:', err);
+      setErrorMessage(
+        err?.message ||
+          'Sign-in failed. Please verify your email and password, or use "Initialize Platform Owner" for fresh setups.'
+      );
     } finally {
       setIsAuthenticating(false);
     }
   };
 
+  const handleOwnerSetupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOwnerSetupStatus(null);
+
+    if (!ownerEmail || !ownerEmail.includes('@')) {
+      setOwnerSetupStatus('Please provide a valid owner email.');
+      return;
+    }
+    if (ownerPassword.length < 8) {
+      setOwnerSetupStatus('Password must be at least 8 characters.');
+      return;
+    }
+    if (ownerPassword !== confirmOwnerPassword) {
+      setOwnerSetupStatus('Passwords do not match.');
+      return;
+    }
+
+    setIsSettingUpOwner(true);
+    try {
+      const profile = await provisionInitialPlatformOwner(ownerEmail, ownerPassword, ownerName);
+      setSuccessNotice(`Platform Owner account initialized successfully for ${profile.email}!`);
+      setIsOwnerSetupOpen(false);
+
+      if (loginAsUser) {
+        loginAsUser(profile.id, true);
+      }
+    } catch (err: any) {
+      setOwnerSetupStatus(err.message || 'Owner initialization failed.');
+    } finally {
+      setIsSettingUpOwner(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between selection:bg-indigo-600 selection:text-white">
-      {/* Top Subtle Navbar */}
-      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-6 py-3.5 flex items-center justify-between">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+      {/* Top Banner */}
+      <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {matchingClient?.logoUrl ? (
             <img
               src={matchingClient.logoUrl}
               alt={matchingClient.name}
-              className="w-10 h-10 rounded-xl object-contain bg-white p-1 shadow-md shadow-indigo-600/20 shrink-0 border border-slate-700"
+              className="w-10 h-10 rounded-xl object-contain bg-white p-1 border border-slate-800 shadow-sm"
             />
           ) : (
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-md shadow-indigo-600/20">
-              <School className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+              <School className="w-5 h-5" />
             </div>
           )}
           <div>
-            <h1 className="text-sm font-black tracking-tight text-white flex items-center gap-2">
-              <span>{matchingClient?.name || orgSettings?.schoolName || 'Multi-Tenant Enterprise ERP'}</span>
-              <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/80">
-                {matchingClient?.code ? `Client: ${matchingClient.code}` : 'v4.5-MultiClient'}
-              </span>
+            <h1 className="text-sm font-black text-white tracking-wide uppercase">
+              {matchingClient?.name || orgSettings?.schoolName || 'Aplus School Accounting Network'}
             </h1>
             <p className="text-[11px] text-slate-400">
-              {matchingClient?.name ? `Autonomous Portal • ${matchingClient.name}` : 'Autonomous Client Isolation & Multi-Campus Access System'}
+              Multi-Campus Accounting & Unified Double-Entry Imprest Ledger
             </p>
           </div>
         </div>
 
-        <div className="hidden sm:flex items-center gap-3 text-xs text-slate-400">
-          <div className="flex items-center gap-1.5 font-mono text-[11px] bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/60">
-            <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span>DB: {firebaseConfig.firestoreDatabaseId}</span>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsOwnerSetupOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+            title="Setup or bootstrap the Platform Site Owner account in Firebase Authentication"
+          >
+            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+            <span>Platform Owner Setup</span>
+          </button>
         </div>
       </header>
 
-      {/* Main Authentication Section */}
-      <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
+      {/* Main Login Card */}
+      <main className="flex-1 flex items-center justify-center px-4 py-8">
         <div className="w-full max-w-md space-y-6">
-          {/* Card Wrapper */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden backdrop-blur-xl">
-            {/* Subtle Gradient Glow */}
-            <div className="absolute -top-24 -right-24 w-48 h-48 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-indigo-500/10 via-purple-500/10 to-transparent blur-2xl pointer-events-none" />
 
-            <div className="space-y-2 mb-6">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-indigo-400 tracking-wider uppercase flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-indigo-400" />
-                  <span>Unified Security Gateway</span>
+            <div className="mb-6 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">
+                  Firebase Authentication Active
                 </span>
-                {matchingClient?.logoUrl && (
-                  <img
-                    src={matchingClient.logoUrl}
-                    alt={matchingClient.name}
-                    className="w-8 h-8 rounded-lg object-contain bg-white p-0.5 border border-slate-700 shadow-sm"
-                  />
-                )}
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                {matchingClient?.name ? `${matchingClient.name}` : 'Sign in to your Workspace'}
+              <h2 className="text-xl font-bold text-white tracking-tight">
+                Institutional Terminal Sign In
               </h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Enter your credentials. The platform will automatically identify your organization, campus, and clearance level.
+              <p className="text-xs text-slate-400">
+                Sign in with your verified institutional account. All operations are synchronized to central persistent cloud datastores.
               </p>
             </div>
 
-            {/* Error & Success Banners */}
+            {/* Error Message */}
             {errorMessage && (
-              <div className="mb-5 p-3.5 rounded-2xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs flex items-start gap-2.5 animate-in fade-in duration-150">
+              <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800/80 text-rose-200 text-xs flex items-start gap-2.5 animate-in fade-in">
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed">{errorMessage}</span>
+                <div className="space-y-1">
+                  <div className="font-bold">Access Verification Notice</div>
+                  <div className="text-[11px] leading-relaxed text-rose-300">{errorMessage}</div>
+                </div>
               </div>
             )}
 
+            {/* Success Notice */}
             {successNotice && (
-              <div className="mb-5 p-3.5 rounded-2xl bg-emerald-950/60 border border-emerald-800/80 text-emerald-200 text-xs flex items-start gap-2.5 animate-in fade-in duration-150">
+              <div className="mb-4 p-3 rounded-xl bg-emerald-950/80 border border-emerald-800/80 text-emerald-200 text-xs flex items-start gap-2.5 animate-in fade-in">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed">{successNotice}</span>
+                <div className="text-[11px] leading-relaxed">{successNotice}</div>
               </div>
             )}
 
-            {/* Unified Login Form - ONLY Username & Password! */}
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Account Email Address
+                  Institutional Email or Username
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -508,8 +253,8 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter your username or email..."
-                    className="w-full text-xs bg-slate-950 border border-slate-700/80 rounded-xl pl-10 pr-3 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
+                    placeholder="e.g. director@aplus.edu.pk or username"
+                    className="w-full text-xs bg-slate-950 border border-slate-700/80 rounded-xl pl-10 pr-3 py-2.5 text-white placeholder:text-slate-500 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
                     autoComplete="username"
                     required
                   />
@@ -534,15 +279,15 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Enter your secure password..."
-                    className="w-full text-xs font-mono bg-slate-950 border border-slate-700/80 rounded-xl pl-10 pr-10 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                    placeholder="Enter account password..."
+                    className="w-full text-xs font-mono bg-slate-950 border border-slate-700/80 rounded-xl pl-10 pr-10 py-2.5 text-white placeholder:text-slate-500 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                     autoComplete="current-password"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300 p-0.5"
+                    className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300 p-0.5 cursor-pointer"
                     aria-label="Toggle password visibility"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -555,164 +300,121 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 disabled={isAuthenticating}
                 className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-indigo-600/30"
               >
-                <span>{isAuthenticating ? 'Authenticating Gateway...' : 'Sign In to Workspace'}</span>
+                <span>{isAuthenticating ? 'Authenticating via Firebase...' : 'Sign In to Workspace'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
 
-            {/* Quick Credentials Guide & Auto-Fill Drawer for Production Review */}
-            <div className="mt-5 pt-4 border-t border-slate-800/80">
-              <button
-                type="button"
-                onClick={() => setShowQuickCredentials(!showQuickCredentials)}
-                className="w-full flex items-center justify-between text-[11px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors py-1 cursor-pointer"
-              >
-                <div className="flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>Production Credentials & Login Directory</span>
-                </div>
-                {showQuickCredentials ? (
-                  <ChevronUp className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                )}
-              </button>
-
-              {showQuickCredentials && (
-                <div className="mt-3 space-y-2.5 animate-in fade-in duration-200 text-xs">
-                  {/* Production Status Notice & PDF Download */}
-                  <div className="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/80 text-[11px] text-indigo-200 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-white block">Role & Access Clearance Directory</span>
-                      <a
-                        href="/SYSTEM_CREDENTIALS_DIRECTORY.pdf"
-                        download="SYSTEM_CREDENTIALS_DIRECTORY.pdf"
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] shadow-sm transition-all cursor-pointer"
-                        title="Download print-ready PDF containing all production login credentials and Vercel deployment guide"
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>Download PDF</span>
-                      </a>
-                    </div>
-                    <p className="text-[10px] text-indigo-300">
-                      Select any role below or use the auto-fill buttons to authenticate immediately into the ERP system on any production deployment.
-                    </p>
-                  </div>
-
-                  {/* Level 1: Platform Owner */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        <span>Level 1: Platform Super Admin (Site Owner)</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-emerald-300">admin</strong> • Pass: <strong className="text-emerald-300">admin</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('admin', 'admin')}
-                      className="px-2 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-
-                  {/* Level 2: Client Organization Owner */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                        <span>Level 2: Client Super Admin (Organization Owner)</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-indigo-300">client.admin</strong> • Pass: <strong className="text-indigo-300">campus</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('client.admin', 'campus')}
-                      className="px-2 py-1 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800 hover:bg-indigo-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-
-                  {/* Level 3: Campus Branch Accountant */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                          <span>Level 3/4: Campus Branch Accountant</span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          User: <strong className="text-purple-300">&lt;campus_code&gt;</strong> • Pass: <strong className="text-purple-300">campus</strong>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleAutoFill(campuses[0]?.code?.toLowerCase() || 'main', 'campus')}
-                        className="px-2 py-1 rounded-lg bg-purple-950 text-purple-300 border border-purple-800 hover:bg-purple-900 text-[10px] font-bold cursor-pointer"
-                      >
-                        Auto-Fill ({campuses[0]?.code || 'MAIN'})
-                      </button>
-                    </div>
-
-                    {campuses && campuses.length > 1 && (
-                      <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-slate-800/60">
-                        {campuses.slice(0, 6).map((camp) => (
-                          <button
-                            key={camp.id}
-                            type="button"
-                            onClick={() => handleAutoFill(camp.code.toLowerCase(), 'campus')}
-                            className="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 border border-slate-700/60 transition-colors cursor-pointer"
-                            title={`Auto-fill ${camp.name} (${camp.code})`}
-                          >
-                            {camp.code.toLowerCase()} ({camp.name.split(' ')[0]})
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Auditor / Read-Only */}
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-white text-[11px] flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        <span>Auditor / Read-Only Oversight</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        User: <strong className="text-amber-300">auditor</strong> • Pass: <strong className="text-amber-300">campus</strong>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleAutoFill('auditor', 'campus')}
-                      className="px-2 py-1 rounded-lg bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900 text-[10px] font-bold cursor-pointer"
-                    >
-                      Auto-Fill
-                    </button>
-                  </div>
-                </div>
-              )}
+            {/* Tenant Security Notice */}
+            <div className="mt-6 pt-4 border-t border-slate-800/80 text-center space-y-1 text-slate-500 text-xs">
+              <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Verified Multi-Tenant & Campus Hierarchy Enforcement</span>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                Staff accounts are provisioned and managed centrally by each organization&apos;s administrator.
+              </p>
             </div>
-          </div>
-
-          {/* Privacy & Multi-Tenant Isolation Guarantee Badge */}
-          <div className="text-center space-y-1 text-slate-500 text-xs">
-            <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
-              <Lock className="w-3.5 h-3.5 text-indigo-400" />
-              <span>School Financial Workspace</span>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Use your approved account email to sign in.
-            </p>
           </div>
         </div>
       </main>
+
+      {/* Controlled Owner Setup Modal */}
+      {isOwnerSetupOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Platform Owner Setup</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsOwnerSetupOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              This controlled setup procedure establishes or updates the Level 1 Platform Super Admin account in Firebase Authentication. No local-only fallback or hardcoded passwords are used.
+            </p>
+
+            {ownerSetupStatus && (
+              <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-800/80 text-amber-200 text-xs">
+                {ownerSetupStatus}
+              </div>
+            )}
+
+            <form onSubmit={handleOwnerSetupSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">Owner Email</label>
+                <input
+                  type="email"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">Owner Full Name</label>
+                <input
+                  type="text"
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">Master Password (min 8 characters)</label>
+                <input
+                  type="password"
+                  value={ownerPassword}
+                  onChange={(e) => setOwnerPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                  placeholder="At least 8 characters..."
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">Confirm Master Password</label>
+                <input
+                  type="password"
+                  value={confirmOwnerPassword}
+                  onChange={(e) => setConfirmOwnerPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                  placeholder="Repeat password..."
+                  required
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsOwnerSetupOpen(false)}
+                  className="px-3 py-1.5 rounded-xl text-slate-400 hover:text-white font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSettingUpOwner}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-black flex items-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
+                >
+                  <span>{isSettingUpOwner ? 'Provisioning...' : 'Initialize Owner Account'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950 py-3 text-center text-[11px] text-slate-500">

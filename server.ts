@@ -25,13 +25,16 @@ app.use('/api', (_req, res, next) => {
 app.use('/api/tenants', tenantRouter);
 app.use('/api/tenant', tenantRouter);
 
-// API health check
+import { getAdminConfigStatus } from './src/server/adminFirebase';
+
+// API health check and configuration status
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV || 'development',
     service: 'Multi-Campus Tenant Isolation & Financial Management Hub',
+    firebaseAdmin: getAdminConfigStatus(),
   });
 });
 

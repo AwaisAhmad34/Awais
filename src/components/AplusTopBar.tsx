@@ -67,6 +67,7 @@ import {
   DEFAULT_CLIENT_MODULES,
   SchoolClientOrganization,
 } from '../services/platformSiteAdminService';
+import { DataMigrationControlCenter } from './DataMigrationControlCenter';
 
 interface AplusTopBarProps {
   activeTab: string;
@@ -138,6 +139,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isPermissionEngineOpen, setIsPermissionEngineOpen] = useState(false);
   const [isSiteAdminHubOpen, setIsSiteAdminHubOpen] = useState(false);
   const [isApprovalMatrixModalOpen, setIsApprovalMatrixModalOpen] = useState(false);
+  const [isMigrationCenterOpen, setIsMigrationCenterOpen] = useState(false);
 
   const triggerShortcutToast = (msg: string) => {
     setShortcutFeedback(msg);
@@ -420,36 +422,50 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     <>
       <div className="bg-slate-900 text-white border-b border-slate-800 px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
         <div className="flex items-center gap-2.5 min-w-0">
+          {/* Honest Sync Status Indicators */}
           {!isOnline || syncStats.status === 'offline' ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/25 border border-amber-400/50 text-amber-300 font-bold text-[11px]">
               <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span>Offline Mode · IndexedDB & Service Worker Cache Active</span>
+              <span>Offline — Changes queued in outbox</span>
+            </span>
+          ) : syncStats.status === 'connecting' ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[11px]">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+              <span>Connecting...</span>
+            </span>
+          ) : syncStats.status === 'synchronizing' || busy ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 font-bold text-[11px]">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+              <span>Synchronizing...</span>
+            </span>
+          ) : syncStats.status === 'saved_locally_pending' ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[11px]">
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Saved locally—pending synchronization</span>
+            </span>
+          ) : syncStats.status === 'conflict' ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-rose-500/25 border border-rose-500/50 text-rose-300 font-bold text-[11px]">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 animate-bounce" />
+              <span>Conflict—review required</span>
+            </span>
+          ) : syncStats.status === 'sync_failed' ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold text-[11px]">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+              <span>Synchronization failed</span>
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold text-[11px]">
-              <Cloud className="w-3.5 h-3.5" />
-              <span>
-                {syncStats.status === 'syncing' || busy
-                  ? 'Syncing Firestore & IndexedDB...'
-                  : 'Cloud + IndexedDB Offline Cache Active'}
-              </span>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Saved to cloud</span>
+              {syncStats.lastSyncedAt && (
+                <span className="text-[10px] text-emerald-400/80 font-normal">
+                  ({new Date(syncStats.lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                </span>
+              )}
             </span>
           )}
 
-          <span
-            className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-300 font-semibold text-[11px]"
-            title="Firebase enableIndexedDbPersistence & PWA Service Worker cache all vouchers, petty cash slips, COA, and assets locally for intermittent campus networks"
-          >
-            <HardDrive className="w-3 h-3 text-cyan-400" />
-            <span>IndexedDB + SW Ready</span>
-          </span>
-
-          {isSuperAdmin && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/30 text-amber-300 font-bold text-[11px]">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Super Admin Privileges</span>
-            </span>
-          )}
+          {/* Active Tenant Badge */}
           {clientOrg && (
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 border border-purple-500/60 text-purple-100 text-[11px] font-bold shadow-xs">
               {clientOrg.logoUrl ? (
@@ -474,19 +490,24 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </div>
           )}
 
+          {/* Active Campus & User Badge */}
           {currentUser && (
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-700/60 text-indigo-200 text-[11px] font-semibold">
               <User className="w-3.5 h-3.5 text-indigo-400" />
               <span className="font-bold text-white">{currentUser.name}</span>
               <span className="text-slate-400 text-[10px]">({currentUser.role || 'Staff'})</span>
+              {currentCampusId && currentCampusId !== 'all' && (
+                <span className="text-purple-300 text-[10px] border-l border-indigo-700/60 pl-1.5 font-mono">
+                  {campuses.find((c) => c.id === currentCampusId)?.code || currentCampusId}
+                </span>
+              )}
             </div>
           )}
+
           <span className="text-slate-300 truncate text-[11px] hidden lg:inline">
-            {orgSettings?.headerTopBarText ||
-              orgSettings?.headerRightText ||
-              syncStats.message ||
+            {syncStats.message ||
               orgSettings?.schoolName ||
-              'Aplus School System Multi-Campus Voucher & Petty Cash Management System'}
+              'Multi-Campus Voucher & Petty Cash Management System'}
           </span>
         </div>
 
@@ -554,6 +575,17 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             >
               <Upload className="w-3.5 h-3.5" />
               <span>Import COA & All Data (Super Admin)</span>
+            </button>
+          )}
+
+          {(isSuperAdmin || isPlatformSiteAdmin) && (
+            <button
+              onClick={() => setIsMigrationCenterOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Multi-Client Persistent Cloud Migration Center: non-destructive backup, dry-run validate, and commit to tenant-isolated cloud paths"
+            >
+              <Database className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Cloud Migration Center</span>
             </button>
           )}
 
@@ -1291,6 +1323,12 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           </div>
         </div>
       )}
+
+      {/* Multi-Client Persistent Cloud Migration Center */}
+      <DataMigrationControlCenter
+        isOpen={isMigrationCenterOpen}
+        onClose={() => setIsMigrationCenterOpen(false)}
+      />
     </>
   );
 };

@@ -32,6 +32,7 @@ import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub'
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
+import { initAuthListener } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
@@ -130,10 +131,19 @@ window.__APLUS_TOP_BAR__ = AplusTopBar;
 (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
 
 function InnerApp() {
-  const { currentUser, isSuperAdmin, setCurrentCampusId, currentCampusId, campuses } = useAccounting();
+  const { currentUser, isSuperAdmin, setCurrentCampusId, currentCampusId, campuses, loginAsUser } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
   const [clientsVersion, setClientsVersion] = useState(0);
+
+  useEffect(() => {
+    initAuthListener((profile) => {
+      if (profile && loginAsUser) {
+        const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
+        loginAsUser(profile.id, isSuper);
+      }
+    });
+  }, [loginAsUser]);
 
   useEffect(() => {
     const handleUpdated = () => setClientsVersion((v) => v + 1);
