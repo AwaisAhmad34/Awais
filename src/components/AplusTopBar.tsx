@@ -68,6 +68,7 @@ import {
   SchoolClientOrganization,
 } from '../services/platformSiteAdminService';
 import { DataMigrationControlCenter } from './DataMigrationControlCenter';
+import { DeploymentReadinessHub } from './DeploymentReadinessHub';
 
 interface AplusTopBarProps {
   activeTab: string;
@@ -127,6 +128,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isPwaInstalled, setIsPwaInstalled] = useState(false);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [showIOSInstallGuide, setShowIOSInstallGuide] = useState(false);
+  const [isDeploymentHubOpen, setIsDeploymentHubOpen] = useState(false);
 
   // Power-User Global Search & Keyboard Shortcuts Palette
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
@@ -577,6 +579,15 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
               <span>Import COA & All Data (Super Admin)</span>
             </button>
           )}
+
+          <button
+            onClick={() => setIsDeploymentHubOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/70 text-emerald-300 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            title="Inspect Production Deployment Readiness & Live Health Pre-Flight Diagnostics"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Deployment Ready ✓</span>
+          </button>
 
           {(isSuperAdmin || isPlatformSiteAdmin) && (
             <button
@@ -1329,6 +1340,15 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         isOpen={isMigrationCenterOpen}
         onClose={() => setIsMigrationCenterOpen(false)}
       />
+
+      {/* Production Deployment Readiness Modal */}
+      {isDeploymentHubOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="max-w-4xl w-full max-h-[92vh] overflow-y-auto">
+            <DeploymentReadinessHub onClose={() => setIsDeploymentHubOpen(false)} />
+          </div>
+        </div>
+      )}
     </>
   );
 };

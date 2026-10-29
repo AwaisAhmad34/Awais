@@ -27,7 +27,7 @@ interface DynamicCampusLoginPortalProps {
 }
 
 export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> = () => {
-  const { loginAsUser, campuses, orgSettings } = useAccounting();
+  const { loginAsUser, campuses, orgSettings, users, addUser } = useAccounting();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -94,12 +94,36 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       // 1. Strictly authenticate via Firebase Authentication and load verified server-side membership
       const profile = await authenticateAccount(cleanInput, cleanPass);
 
-      setSuccessNotice(`Authentication verified. Welcome back, ${profile.name || profile.username}!`);
+      setSuccessNotice(`Authentication verified. Opening dashboard workspace...`);
 
       // 2. Map verified cloud membership to local session
       const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
+      
+      let targetUser = users?.find(
+        (u: any) =>
+          u.id === profile.id ||
+          (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
+          (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
+      );
+
+      if (!targetUser && addUser) {
+        targetUser = addUser({
+          id: profile.id,
+          username: profile.username || profile.email?.split('@')[0] || 'user',
+          name: profile.name || 'Campus Administrator',
+          email: profile.email || `${profile.username}@institution.edu.pk`,
+          role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+          status: 'active',
+          clientId: profile.clientId || null,
+          campusId: profile.campusId || null,
+          permittedCampusIds: profile.permittedCampusIds || ['all'],
+          allowedModules: profile.allowedModules || ['all'],
+        });
+      }
+
+      const effectiveId = targetUser?.id || profile.id;
       if (loginAsUser) {
-        loginAsUser(profile.id, isSuper);
+        loginAsUser(effectiveId, isSuper);
       }
 
       // 3. Record audit activity

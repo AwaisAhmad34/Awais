@@ -12,7 +12,7 @@ import {
   where,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import { saveStoredSchoolClients } from './platformSiteAdminService';
 
 export type SyncStatus =
@@ -655,6 +655,16 @@ async function startCrossBrowserRealtimeSync() {
         status: 'offline',
         indexedDbCached: true,
         message: 'Offline Mode — Operating on IndexedDB local cache',
+      });
+      return;
+    }
+
+    if (!auth.currentUser) {
+      window.__APLUS_MARK_CLOUD_READY__?.();
+      notify({
+        status: 'idle',
+        indexedDbCached: true,
+        message: 'Terminal ready. Sign in with your institutional credentials to connect.',
       });
       return;
     }

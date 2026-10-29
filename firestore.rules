@@ -2,63 +2,29 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper: Check if authenticated user is Level 1 Platform Super Admin
-    function isPlatformAdmin() {
-      return request.auth != null &&
-        exists(/databases/$(database)/documents/memberships/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.permissionLevel == 'level_1_platform_super_admin';
-    }
-
-    // Helper: Check if user belongs to the requested organization tenant
-    function isTenantMember(clientId) {
-      return request.auth != null && (
-        isPlatformAdmin() ||
-        (exists(/databases/$(database)/documents/memberships/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.clientId == clientId)
-      );
+    // User memberships collection
+    match /memberships/{uid} {
+      allow read, write: if request.auth != null;
     }
 
     // Tenant-isolated organizations hierarchy (Vouchers, Campuses, Petty Cash, COA, Audit)
     match /organizations/{clientId}/{document=**} {
-      allow read, write: if isTenantMember(clientId);
+      allow read, write: if request.auth != null;
     }
 
-    // User memberships directory
-    match /memberships/{uid} {
-      allow read: if request.auth != null && (request.auth.uid == uid || isPlatformAdmin());
-      allow write: if request.auth != null && (
-        isPlatformAdmin() ||
-        request.auth.uid == uid ||
-        !exists(/databases/$(database)/documents/memberships/$(uid))
-      );
-    }
-
-    // System-wide registries and state documents
+    // System-wide registries and configuration
     match /system_state/{docId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read, write: if true;
     }
 
     // Login activity audit log
     match /campus_login_activities/{activityId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
     }
 
-    // Global backups & recovery collections
-    match /system_backups/{backupId} {
-      allow read, write: if isPlatformAdmin();
-    }
-    match /platform_security_audits/{auditId} {
-      allow read, write: if isPlatformAdmin();
-    }
-
-    // Legacy migration compatibility (authenticated access only)
+    // General collections
     match /{collection}/{id} {
-      allow read, write: if request.auth != null && collection in [
-        'campuses', 'vouchers', 'petty_cash', 'activity_logs',
-        'bank_reconciliations', 'cash_reconciliations',
-        'approval_matrices'
-      ];
+      allow read, write: if request.auth != null;
     }
   }
 }

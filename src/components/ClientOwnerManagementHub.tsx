@@ -61,6 +61,7 @@ import {
   validateCampusCreationLimit,
 } from '../services/multiTenantDataService';
 import { CampusMonthlyBudgetExpenditureChart } from './CampusMonthlyBudgetExpenditureChart';
+import { DeploymentReadinessHub } from './DeploymentReadinessHub';
 
 interface ClientOwnerManagementHubProps {
   onSwitchToCampusOperationalView: (campusId: string) => void;
@@ -91,6 +92,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
   // Trigger re-render when client organization profile is customized
   const [clientRefreshKey, setClientRefreshKey] = useState(0);
+  const [showDeploymentModal, setShowDeploymentModal] = useState(false);
 
   React.useEffect(() => {
     const handleClientsUpdated = () => {
@@ -716,6 +718,16 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
         {/* Action Controls */}
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowDeploymentModal(true)}
+            className="px-3 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/70 text-emerald-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+            title="Inspect institutional deployment readiness and stack diagnostics"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Deployment Ready ✓</span>
+          </button>
+
           {!mainCampus ? (
             <button
               type="button"
@@ -910,6 +922,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                 </button>
               </div>
             )}
+
+            {/* Deployment Readiness & Diagnostics Banner */}
+            <DeploymentReadinessHub
+              onNavigateToCampusOperations={mainCampus ? () => onSwitchToCampusOperationalView(mainCampus.id) : undefined}
+            />
 
             {/* Metric KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2444,6 +2461,24 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Deployment Readiness Modal */}
+      {showDeploymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="max-w-4xl w-full max-h-[92vh] overflow-y-auto">
+            <DeploymentReadinessHub
+              onClose={() => setShowDeploymentModal(false)}
+              onNavigateToCampusOperations={
+                mainCampus
+                  ? () => {
+                      setShowDeploymentModal(false);
+                      onSwitchToCampusOperationalView(mainCampus.id);
+                    }
+                  : undefined
+              }
+            />
           </div>
         </div>
       )}

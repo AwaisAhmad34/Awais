@@ -131,7 +131,16 @@ window.__APLUS_TOP_BAR__ = AplusTopBar;
 (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
 
 function InnerApp() {
-  const { currentUser, isSuperAdmin, setCurrentCampusId, currentCampusId, campuses, loginAsUser } = useAccounting();
+  const {
+    currentUser,
+    isSuperAdmin,
+    setCurrentCampusId,
+    currentCampusId,
+    campuses,
+    loginAsUser,
+    users,
+    addUser,
+  } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
   const [clientsVersion, setClientsVersion] = useState(0);
@@ -140,10 +149,33 @@ function InnerApp() {
     initAuthListener((profile) => {
       if (profile && loginAsUser) {
         const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
-        loginAsUser(profile.id, isSuper);
+        let target = users?.find(
+          (u: any) =>
+            u.id === profile.id ||
+            (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
+            (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
+        );
+
+        if (!target && addUser) {
+          target = addUser({
+            id: profile.id,
+            username: profile.username || profile.email?.split('@')[0] || 'user',
+            name: profile.name || 'Campus Administrator',
+            email: profile.email || `${profile.username}@institution.edu.pk`,
+            role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+            status: 'active',
+            clientId: profile.clientId || null,
+            campusId: profile.campusId || null,
+            permittedCampusIds: profile.permittedCampusIds || ['all'],
+            allowedModules: profile.allowedModules || ['all'],
+          });
+        }
+
+        const effectiveId = target?.id || profile.id;
+        loginAsUser(effectiveId, isSuper);
       }
     });
-  }, [loginAsUser]);
+  }, [loginAsUser, users, addUser]);
 
   useEffect(() => {
     const handleUpdated = () => setClientsVersion((v) => v + 1);
