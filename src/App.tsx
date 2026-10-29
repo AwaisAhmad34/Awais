@@ -31,7 +31,7 @@ import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
 import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub';
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
-import { purgeAllProductionData, getStoredSchoolClients } from './services/platformSiteAdminService';
+import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
@@ -109,6 +109,7 @@ function bootstrapProductionDefaultAccounts() {
 purgeDuplicateUsersFromStorage();
 bootstrapProductionDefaultAccounts();
 initFirebaseCloudSync();
+fetchSchoolClientsFromCloud().catch(() => {});
 installGlobalVisibilityHook();
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
 window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
@@ -132,6 +133,13 @@ function InnerApp() {
   const { currentUser, isSuperAdmin, setCurrentCampusId, currentCampusId, campuses } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
+  const [clientsVersion, setClientsVersion] = useState(0);
+
+  useEffect(() => {
+    const handleUpdated = () => setClientsVersion((v) => v + 1);
+    window.addEventListener('aplus-clients-updated', handleUpdated);
+    return () => window.removeEventListener('aplus-clients-updated', handleUpdated);
+  }, []);
 
   // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly Super Administration account ONLY
   const isPlatformSiteAdmin = Boolean(
@@ -158,15 +166,15 @@ function InnerApp() {
   }, [campuses, currentUser]);
 
   // Client Organization details (reads from stored clients or fallbacks, hook called unconditionally)
-  const clientOrg = useMemo(() => {
+  const clientOrg = useMemo((): (SchoolClientOrganization | { id: string; name: string; code: string; logoUrl?: string }) | null => {
     if (!userClientId) return null;
     const stored = getStoredSchoolClients().find((c) => c.id === userClientId);
     if (stored) return stored;
     if (userClientId === 'client-apex') {
-      return { id: 'client-apex', name: 'Apex School System', code: 'APEX' };
+      return { id: 'client-apex', name: 'Apex School System', code: 'APEX', logoUrl: undefined };
     }
-    return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS' };
-  }, [userClientId]);
+    return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS', logoUrl: undefined };
+  }, [userClientId, clientsVersion]);
 
   // Login is required for everyone (Early return placed AFTER all hooks to follow Rules of Hooks)
   if (!currentUser) {
@@ -242,9 +250,17 @@ function InnerApp() {
         <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-purple-950 border-b border-indigo-700/80 px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-3 text-indigo-100 shadow-md">
           {/* Organization Client Name Top Display */}
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-md text-base">
-              🏢
-            </div>
+            {clientOrg?.logoUrl ? (
+              <img
+                src={clientOrg.logoUrl}
+                alt={clientOrg.name}
+                className="w-9 h-9 rounded-xl object-contain bg-white p-1 border border-indigo-400/50 shadow-md shrink-0"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-md text-base">
+                🏢
+              </div>
+            )}
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-black text-white text-sm sm:text-base tracking-tight uppercase">

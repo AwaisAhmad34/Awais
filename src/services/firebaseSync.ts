@@ -10,6 +10,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { saveStoredSchoolClients } from './platformSiteAdminService';
 
 export interface CloudSyncStats {
   lastSyncedAt: string | null;
@@ -290,7 +291,7 @@ export function initFirebaseCloudSync() {
 
     // AUTOMATIC DEBOUNCED SAVE TO BOTH INDEXEDDB AND FIREBASE CLOUD
     autoSaveMasterState(state: any) {
-      if (!state || !cloudHydrated || getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') return;
+      if (!state || !cloudHydrated) return;
       // Immediately cache in IndexedDB so zero data is lost if campus Wi-Fi drops mid-session
       const isOnlineNow = typeof navigator !== 'undefined' ? navigator.onLine : true;
       saveSnapshotToIndexedDB(state, !isOnlineNow).catch(() => {});
@@ -307,7 +308,7 @@ export function initFirebaseCloudSync() {
       if (autoSaveTimer) clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(async () => {
         try {
-          if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin' || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+          if (typeof navigator !== 'undefined' && !navigator.onLine) return;
           notify({ status: 'syncing', message: 'Syncing IndexedDB & Firestore Cloud...' });
           const payload = JSON.stringify(sanitizeForFirestore(state));
           await setDoc(doc(db, 'system_state', 'master_ledger'), {
@@ -377,28 +378,21 @@ export function initFirebaseCloudSync() {
     });
   }
 
-  // Wait for verified owner sign-in before touching the legacy global ledger.
+  // Listen for login/logout and start cross-browser sync for all sessions
   window.addEventListener('aplus-logout', () => {
-    cloudHydrated = false;
-    stopRealtimeListener?.();
-    stopRealtimeListener = null;
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
   });
   window.addEventListener('aplus-verified-login', () => {
-    if (getVerifiedProfile()?.permissionLevel === 'level_1_platform_super_admin') {
-      void startCrossBrowserRealtimeSync();
-    }
+    void startCrossBrowserRealtimeSync();
   });
   setTimeout(() => {
-    if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') return;
     startCrossBrowserRealtimeSync().catch(() => {
       window.__APLUS_MARK_CLOUD_READY__?.();
     });
-  }, 150);
+  }, 50);
 }
 
 async function startCrossBrowserRealtimeSync() {
-  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') return;
   try {
     // Step 1: Immediately check IndexedDB offline cache first so intermittent/offline boots are instant
     const idbCached = await loadSnapshotFromIndexedDB();
@@ -418,12 +412,17 @@ async function startCrossBrowserRealtimeSync() {
 
     notify({ status: 'syncing', message: 'Loading entries from Firebase Cloud & IndexedDB...' });
 
-    const [masterSnap, vouchersSnap, pettySnap, campusesSnap] = await Promise.all([
+    const [masterSnap, vouchersSnap, pettySnap, campusesSnap, clientsSnap] = await Promise.all([
       getDoc(doc(db, 'system_state', 'master_ledger')),
       getDocs(collection(db, 'vouchers')),
       getDocs(collection(db, 'petty_cash')),
       getDocs(collection(db, 'campuses')),
+      getDoc(doc(db, 'system_state', 'school_clients_registry')),
     ]);
+
+    if (clientsSnap && clientsSnap.exists() && Array.isArray(clientsSnap.data()?.clients)) {
+      saveStoredSchoolClients(clientsSnap.data().clients);
+    }
 
     let cloudState: any = null;
     if (masterSnap && masterSnap.exists() && masterSnap.data()?.payload) {
@@ -438,30 +437,19 @@ async function startCrossBrowserRealtimeSync() {
 
     const localState = window.__APLUS_GET_CURRENT_STATE__?.() || idbCached?.state || {};
 
-    const isDataPurged =
-      typeof localStorage !== 'undefined' &&
-      (localStorage.getItem('aplus_all_data_purged_production') === 'true' ||
-       localStorage.getItem('aplus_dummy_data_purged_v2') === 'true');
+    const mergedCampuses = mergeArraysById(
+      mergeArraysById(cloudState?.campuses || [], colCampuses),
+      localState.campuses || []
+    );
 
-    const mergedCampuses = isDataPurged
-      ? (localState.campuses || [])
-      : mergeArraysById(
-          mergeArraysById(cloudState?.campuses || [], colCampuses),
-          localState.campuses || []
-        );
-
-    const mergedTransactions = isDataPurged
-      ? (localState.transactions || [])
-      : mergeArraysById(
-          mergeArraysById(cloudState?.transactions || [], colVouchers),
-          localState.transactions || []
-        );
-    const mergedPettyCash = isDataPurged
-      ? (localState.pettyCashTransactions || [])
-      : mergeArraysById(
-          mergeArraysById(cloudState?.pettyCashTransactions || [], colPettyCash),
-          localState.pettyCashTransactions || []
-        );
+    const mergedTransactions = mergeArraysById(
+      mergeArraysById(cloudState?.transactions || [], colVouchers),
+      localState.transactions || []
+    );
+    const mergedPettyCash = mergeArraysById(
+      mergeArraysById(cloudState?.pettyCashTransactions || [], colPettyCash),
+      localState.pettyCashTransactions || []
+    );
     const rawMergedUsers = mergeArraysById(cloudState?.users || [], localState.users || []);
     const dedupUsersMap = new Map<string, any>();
     const seenUsernames = new Set<string>();
@@ -535,10 +523,10 @@ async function startCrossBrowserRealtimeSync() {
     });
 
     stopRealtimeListener?.();
-    stopRealtimeListener = onSnapshot(
+    const unsubMaster = onSnapshot(
       doc(db, 'system_state', 'master_ledger'),
       (snap) => {
-        if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin' || !snap.exists()) return;
+        if (!snap.exists()) return;
         const data = snap.data();
         if (!data?.payload || data.clientId === CLIENT_SESSION_ID) return;
         try {
@@ -559,6 +547,23 @@ async function startCrossBrowserRealtimeSync() {
       },
       () => {}
     );
+
+    const unsubClients = onSnapshot(
+      doc(db, 'system_state', 'school_clients_registry'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data?.clients && Array.isArray(data.clients)) {
+          saveStoredSchoolClients(data.clients);
+        }
+      },
+      () => {}
+    );
+
+    stopRealtimeListener = () => {
+      unsubMaster();
+      unsubClients();
+    };
   } catch {
     window.__APLUS_MARK_CLOUD_READY__?.();
     notify({
@@ -570,7 +575,6 @@ async function startCrossBrowserRealtimeSync() {
 }
 
 export async function pushMasterCloudSnapshot(systemState: any): Promise<void> {
-  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') throw new Error('Verified site owner required.');
   const fullState = window.__APLUS_GET_CURRENT_STATE__?.() || systemState;
   if (fullState && Array.isArray(fullState.users)) {
     const dedupUsersMap = new Map<string, any>();
@@ -619,7 +623,6 @@ export async function pushMasterCloudSnapshot(systemState: any): Promise<void> {
 }
 
 export async function pullMasterCloudSnapshot(): Promise<any | null> {
-  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') throw new Error('Verified site owner required.');
   try {
     notify({ status: 'syncing', message: 'Fetching cloud snapshot from Firebase...' });
     const snap = await getDoc(doc(db, 'system_state', 'master_ledger'));

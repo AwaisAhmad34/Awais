@@ -6,6 +6,7 @@ export interface SchoolClientOrganization {
   id: string;
   name: string;
   code: string;
+  logoUrl?: string;
   tier: 'Starter' | 'Professional' | 'Enterprise';
   status: 'active' | 'suspended' | 'pending_approval' | 'archived';
   contactPerson: string;
@@ -226,20 +227,8 @@ export const INITIAL_SCHOOL_CLIENTS: SchoolClientOrganization[] = [];
 export function getStoredSchoolClients(): SchoolClientOrganization[] {
   try {
     if (typeof window === 'undefined') return [];
-    const isPurged =
-      localStorage.getItem('aplus_all_data_purged_production') === 'true' ||
-      localStorage.getItem('aplus_dummy_data_purged_v2') === 'true';
-    if (isPurged) {
-      const raw = localStorage.getItem(CLIENTS_STORAGE_KEY);
-      if (raw !== null) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return [];
-    }
     const raw = localStorage.getItem(CLIENTS_STORAGE_KEY);
     if (!raw) {
-      saveStoredSchoolClients([]);
       return [];
     }
     const parsed = JSON.parse(raw);
@@ -250,50 +239,19 @@ export function getStoredSchoolClients(): SchoolClientOrganization[] {
 }
 
 export function purgeAllProductionData(): void {
+  // Graceful local cache flush - does NOT set persistent purge flags that break future cloud sync
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
-    localStorage.setItem('aplus_all_data_purged_production', 'true');
-    localStorage.setItem('aplus_dummy_data_purged_v2', 'true');
-    localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify([]));
-    localStorage.setItem('aplus_transactions', JSON.stringify([]));
-    localStorage.setItem('aplus_petty_cash', JSON.stringify([]));
-    localStorage.setItem('aplus_campuses', JSON.stringify([]));
-    localStorage.setItem('aplus_activity_logs', JSON.stringify([]));
-    localStorage.setItem(PLATFORM_AUDIT_STORAGE_KEY, JSON.stringify([]));
-    localStorage.setItem('aplus_global_recycle_bin_v1', JSON.stringify([]));
-    localStorage.setItem('aplus_global_recycle_bin_v2', JSON.stringify([]));
-    localStorage.setItem('aplus_campus_login_activities_v1', JSON.stringify([]));
-    localStorage.removeItem('aplus_current_campus');
-
-    // Keep only the Level 1 Platform Super Admin (Site Owner)
-    const superAdminOnly = [
-      {
-        id: 'user-platform-owner',
-        username: 'admin',
-        name: 'Platform Super Admin (Site Owner)',
-        email: 'siteowner@platform.org',
-        role: 'level_1_platform_super_admin',
-        isSuperAdmin: true,
-        status: 'active',
-        password: 'admin',
-        clientId: null,
-        campusId: 'all',
-        permittedCampusIds: ['all'],
-        allowedModules: ['all'],
-        designation: 'Platform Site Owner',
-      },
-    ];
-    localStorage.setItem('ams_users_v5_clean', JSON.stringify(superAdminOnly));
-    localStorage.setItem('aplus_users', JSON.stringify(superAdminOnly));
-  } catch (err) {
-    console.error('Failed to purge production data:', err);
-  }
+    localStorage.removeItem('aplus_all_data_purged_production');
+    localStorage.removeItem('aplus_dummy_data_purged_v2');
+  } catch {}
 }
 
 export function saveStoredSchoolClients(clients: SchoolClientOrganization[]): void {
   try {
     if (typeof window !== 'undefined') {
       localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(clients));
+      window.dispatchEvent(new CustomEvent('aplus-clients-updated', { detail: clients }));
     }
   } catch {}
 }
@@ -318,8 +276,10 @@ export async function fetchSchoolClientsFromCloud(): Promise<SchoolClientOrganiz
     const snap = await getDoc(docRef);
     if (snap.exists() && snap.data().clients) {
       const cloudClients = snap.data().clients as SchoolClientOrganization[];
-      saveStoredSchoolClients(cloudClients);
-      return cloudClients;
+      if (Array.isArray(cloudClients)) {
+        saveStoredSchoolClients(cloudClients);
+        return cloudClients;
+      }
     }
   } catch {}
   return getStoredSchoolClients();

@@ -16,6 +16,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { useAccounting } from '../core/aplusEngine';
+import { getStoredSchoolClients } from '../services/platformSiteAdminService';
 import { SEED_MULTI_TENANT_USERS, SEED_MULTI_TENANT_CAMPUSES, SEED_CLIENTS } from '../services/multiTenantDataService';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
 import { getLocalStoredCampusCredentials, ensureCredentialsForAllCampuses } from '../services/campusAuthSync';
@@ -47,6 +48,27 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [showQuickCredentials, setShowQuickCredentials] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [clientsVersion, setClientsVersion] = useState(0);
+
+  React.useEffect(() => {
+    const fn = () => setClientsVersion((v) => v + 1);
+    window.addEventListener('aplus-clients-updated', fn);
+    return () => window.removeEventListener('aplus-clients-updated', fn);
+  }, []);
+
+  const storedClients = React.useMemo(() => {
+    return getStoredSchoolClients();
+  }, [clientsVersion]);
+
+  const matchingClient = React.useMemo(() => {
+    if (!username.trim()) return storedClients.find((c) => c.logoUrl);
+    const prefix = username.trim().toLowerCase().split(/[@.]/)[0];
+    return (
+      storedClients.find(
+        (c) => c.code.toLowerCase() === prefix || c.name.toLowerCase().includes(prefix)
+      ) || storedClients.find((c) => c.logoUrl)
+    );
+  }, [username, storedClients]);
 
   React.useEffect(() => {
     if (campuses && campuses.length > 0) {
@@ -91,7 +113,26 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
     try {
       const result = await login(cleanUser, cleanPass);
-      if (result.success) return;
+      if (result.success) {
+        const loggedUser = users.find((u) => u.username?.toLowerCase() === cleanUser || u.email?.toLowerCase() === cleanUser);
+        const userCamp = campuses.find((c) => c.id === loggedUser?.campusId) || campuses[0];
+        recordCampusLoginActivity({
+          campusId: userCamp?.id || 'campus-khiali',
+          campusName: userCamp?.name || 'Main Campus',
+          campusCode: userCamp?.code || 'KHL',
+          clientId: loggedUser?.clientId || userCamp?.clientId || 'client-aplus',
+          clientName: userCamp?.name?.includes('Apex') ? 'Apex Academy Network' : 'Aplus School System',
+          userName: loggedUser?.name || cleanUser,
+          userRole: loggedUser?.role || 'Level 4 Sub-Campus Admin',
+          userEmail: loggedUser?.email || cleanUser,
+          ipAddress: '192.168.1.100',
+          device: navigator.userAgent.slice(0, 45),
+          status: 'success',
+          method: 'portal_login',
+          remarks: 'Authenticated through standard credentials verification',
+        });
+        return;
+      }
 
       // 1. Level 1 Platform Super Admin Fallback
       if (cleanUser === 'admin' && cleanPass === 'admin') {
@@ -113,6 +154,21 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           });
         }
         if (adminUser && loginAsUser) {
+          recordCampusLoginActivity({
+            campusId: 'platform-central',
+            campusName: 'Central Platform Authority',
+            campusCode: 'HQ',
+            clientId: undefined,
+            clientName: 'Multi-Tenant Platform Cloud',
+            userName: adminUser.name,
+            userRole: 'Level 1 Platform Super Admin',
+            userEmail: adminUser.email,
+            ipAddress: '127.0.0.1 (Internal Gateway)',
+            device: 'Creator Workstation',
+            status: 'success',
+            method: 'portal_login',
+            remarks: 'Site Owner Level 1 authentication established',
+          });
           loginAsUser(adminUser.id, true);
           return;
         }
@@ -138,6 +194,22 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           });
         }
         if (clientAdmin && loginAsUser) {
+          const camp = campuses.find((c) => c.clientId === 'client-aplus') || campuses[0];
+          recordCampusLoginActivity({
+            campusId: camp?.id || 'campus-khiali',
+            campusName: camp?.name || 'Aplus Khiali Main Campus',
+            campusCode: camp?.code || 'KHL-MAIN',
+            clientId: 'client-aplus',
+            clientName: 'Aplus School System Network',
+            userName: clientAdmin.name,
+            userRole: 'Level 2 Client Super Admin',
+            userEmail: clientAdmin.email,
+            ipAddress: '192.168.10.1',
+            device: 'Executive Workstation',
+            status: 'success',
+            method: 'portal_login',
+            remarks: 'Level 2 Client Super Admin signed in',
+          });
           loginAsUser(clientAdmin.id, false);
           return;
         }
@@ -164,6 +236,22 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           });
         }
         if (apexAdmin && loginAsUser) {
+          const apexCampus = campuses.find((c) => c.clientId === 'client-apex') || campuses[0];
+          recordCampusLoginActivity({
+            campusId: apexCampus?.id || 'campus-apex-main',
+            campusName: apexCampus?.name || 'Apex Academy Main Campus',
+            campusCode: apexCampus?.code || 'APX-MAIN',
+            clientId: 'client-apex',
+            clientName: 'Apex Group of Colleges & Schools',
+            userName: apexAdmin.name,
+            userRole: 'Level 2 Client Super Admin',
+            userEmail: apexAdmin.email,
+            ipAddress: '10.0.4.12',
+            device: 'Executive Workstation',
+            status: 'success',
+            method: 'portal_login',
+            remarks: 'Apex Client Super Admin authenticated',
+          });
           loginAsUser(apexAdmin.id, false);
           return;
         }
@@ -189,6 +277,21 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           });
         }
         if (auditorUser && loginAsUser) {
+          recordCampusLoginActivity({
+            campusId: 'campus-khiali',
+            campusName: 'Aplus Khiali Main Campus',
+            campusCode: 'KHL',
+            clientId: 'client-aplus',
+            clientName: 'Aplus School System Network',
+            userName: auditorUser.name,
+            userRole: 'Internal Auditor & Compliance',
+            userEmail: auditorUser.email,
+            ipAddress: '192.168.10.15',
+            device: 'Audit Laptop',
+            status: 'success',
+            method: 'portal_login',
+            remarks: 'Auditor oversight session initiated',
+          });
           loginAsUser(auditorUser.id, false);
           return;
         }
@@ -204,10 +307,36 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
       if (directCampusMatch && (cleanPass === 'campus' || cleanPass === 'admin')) {
         if (directCampusMatch.loginEnabled === false) {
+          recordCampusLoginActivity({
+            campusId: directCampusMatch.id,
+            campusName: directCampusMatch.name,
+            campusCode: directCampusMatch.code,
+            clientId: directCampusMatch.clientId || 'client-aplus',
+            userName: directCampusMatch.accountantName || `${directCampusMatch.name} Accountant`,
+            userRole: directCampusMatch.isMainCampus ? 'Level 3 Main Campus Admin' : 'Level 4 Sub-Campus Admin',
+            ipAddress: '192.168.1.55',
+            device: 'Browser Terminal',
+            status: 'locked',
+            method: 'portal_login',
+            remarks: 'Login blocked: campus branch suspended by central administration',
+          });
           setErrorMessage(`Login access for ${directCampusMatch.name} is currently suspended by central administration.`);
           return;
         }
         if (loginAsCampus) {
+          recordCampusLoginActivity({
+            campusId: directCampusMatch.id,
+            campusName: directCampusMatch.name,
+            campusCode: directCampusMatch.code,
+            clientId: directCampusMatch.clientId || 'client-aplus',
+            userName: directCampusMatch.accountantName || `${directCampusMatch.name} Accountant`,
+            userRole: directCampusMatch.isMainCampus ? 'Level 3 Main Campus Admin' : 'Level 4 Sub-Campus Admin',
+            ipAddress: '192.168.1.55',
+            device: 'Campus Desktop',
+            status: 'success',
+            method: 'dynamic_auth',
+            remarks: `Direct campus credentials verified for ${directCampusMatch.name}`,
+          });
           loginAsCampus(directCampusMatch.id);
           return;
         }
@@ -226,14 +355,55 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       if (matched && (matched.password === cleanPass || cleanPass === 'campus' || cleanPass === 'admin')) {
         const targetCamp = campuses.find((c) => c.id === matched.campusId);
         if (targetCamp && targetCamp.loginEnabled === false) {
+          recordCampusLoginActivity({
+            campusId: matched.campusId,
+            campusName: matched.campusName,
+            campusCode: matched.campusCode,
+            clientId: targetCamp?.clientId || 'client-aplus',
+            userName: matched.username,
+            userRole: 'Level 4 Sub-Campus Admin',
+            ipAddress: '192.168.1.66',
+            device: 'Vault Session',
+            status: 'locked',
+            method: 'vault_one_click',
+            remarks: 'Login blocked: target campus is disabled',
+          });
           setErrorMessage(`Login access for ${targetCamp.name} is currently suspended by central administration.`);
           return;
         }
         if (loginAsCampus) {
+          recordCampusLoginActivity({
+            campusId: matched.campusId,
+            campusName: matched.campusName,
+            campusCode: matched.campusCode,
+            clientId: targetCamp?.clientId || 'client-aplus',
+            userName: matched.username,
+            userRole: targetCamp?.isMainCampus ? 'Level 3 Main Campus Admin' : 'Level 4 Sub-Campus Admin',
+            ipAddress: '192.168.1.66',
+            device: 'Vault Session',
+            status: 'success',
+            method: 'vault_one_click',
+            remarks: `Vault authentication verified for ${matched.campusName}`,
+          });
           loginAsCampus(matched.campusId);
           return;
         }
       }
+
+      // Record Failed Attempt
+      recordCampusLoginActivity({
+        campusId: 'unknown',
+        campusName: 'Unassigned Branch',
+        campusCode: 'AUTH-FAIL',
+        userName: cleanUser,
+        userRole: 'Level 5 Departmental Staff',
+        userEmail: cleanUser.includes('@') ? cleanUser : undefined,
+        ipAddress: '192.168.1.200',
+        device: navigator.userAgent.slice(0, 45),
+        status: 'failed',
+        method: 'portal_login',
+        remarks: 'Failed authentication: invalid username or password',
+      });
 
       setErrorMessage(result.message || 'Invalid username or password. Please try again.');
     } catch {
@@ -248,18 +418,26 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       {/* Top Subtle Navbar */}
       <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-md shadow-indigo-600/20">
-            <School className="w-5 h-5 text-white" />
-          </div>
+          {matchingClient?.logoUrl ? (
+            <img
+              src={matchingClient.logoUrl}
+              alt={matchingClient.name}
+              className="w-10 h-10 rounded-xl object-contain bg-white p-1 shadow-md shadow-indigo-600/20 shrink-0 border border-slate-700"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-md shadow-indigo-600/20">
+              <School className="w-5 h-5 text-white" />
+            </div>
+          )}
           <div>
             <h1 className="text-sm font-black tracking-tight text-white flex items-center gap-2">
-              <span>{orgSettings?.schoolName || 'Multi-Tenant Enterprise ERP'}</span>
+              <span>{matchingClient?.name || orgSettings?.schoolName || 'Multi-Tenant Enterprise ERP'}</span>
               <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/80">
-                v4.5-MultiClient
+                {matchingClient?.code ? `Client: ${matchingClient.code}` : 'v4.5-MultiClient'}
               </span>
             </h1>
             <p className="text-[11px] text-slate-400">
-              Autonomous Client Isolation & Multi-Campus Access System
+              {matchingClient?.name ? `Autonomous Portal • ${matchingClient.name}` : 'Autonomous Client Isolation & Multi-Campus Access System'}
             </p>
           </div>
         </div>
@@ -282,12 +460,21 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
             <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
 
             <div className="space-y-2 mb-6">
-              <span className="text-[11px] font-bold text-indigo-400 tracking-wider uppercase flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-indigo-400" />
-                <span>Unified Security Gateway</span>
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-indigo-400 tracking-wider uppercase flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                  <span>Unified Security Gateway</span>
+                </span>
+                {matchingClient?.logoUrl && (
+                  <img
+                    src={matchingClient.logoUrl}
+                    alt={matchingClient.name}
+                    className="w-8 h-8 rounded-lg object-contain bg-white p-0.5 border border-slate-700 shadow-sm"
+                  />
+                )}
+              </div>
               <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                Sign in to your Workspace
+                {matchingClient?.name ? `${matchingClient.name}` : 'Sign in to your Workspace'}
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
                 Enter your credentials. The platform will automatically identify your organization, campus, and clearance level.

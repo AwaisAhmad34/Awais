@@ -111,9 +111,11 @@ import {
   MaintenanceReleaseView,
 } from './PlatformAdminExtendedModules';
 import { ClientFinancialReportsPermissionsManager } from './ClientFinancialReportsPermissionsManager';
+import { SystemUserActivityWidget } from './SystemUserActivityWidget';
 
 export type PlatformAdminNavSection =
   | '01_dashboard'
+  | 'user_activity_telemetry'
   | '02_clients'
   | '03_main_campuses'
   | '04_sub_campuses'
@@ -231,6 +233,7 @@ export const PlatformSiteAdminHub: React.FC<{
   const [clientFormMainCampusCity, setClientFormMainCampusCity] = useState('');
   const [clientFormMainCampusFloat, setClientFormMainCampusFloat] = useState('50000');
   const [clientFormMainCampusPassword, setClientFormMainCampusPassword] = useState('campus');
+  const [clientFormLogoUrl, setClientFormLogoUrl] = useState('');
 
   // --------------------------------------------------------------------------
   // SECTION 03: CAMPUS HIERARCHY STATE
@@ -374,6 +377,7 @@ export const PlatformSiteAdminHub: React.FC<{
               name: clientFormName.trim(),
               code: clientFormCode.trim().toUpperCase(),
               tier: clientFormTier,
+              logoUrl: clientFormLogoUrl.trim() || undefined,
               contactPerson: clientFormContact.trim(),
               contactEmail: clientFormEmail.trim(),
               contactPhone: clientFormPhone.trim(),
@@ -456,6 +460,7 @@ export const PlatformSiteAdminHub: React.FC<{
         id: newId,
         name: clientFormName.trim(),
         code: cleanCode,
+        logoUrl: clientFormLogoUrl.trim() || undefined,
         tier: clientFormTier,
         status: 'active',
         contactPerson: clientFormContact.trim() || 'Central Director',
@@ -1128,6 +1133,7 @@ export const PlatformSiteAdminHub: React.FC<{
     { id: 'global_search', number: '★', label: 'Global Multi-Campus Search', category: 'Core Platform', icon: Search },
 
     // Category 2: Identity & Access Governance
+    { id: 'user_activity_telemetry', number: '★', label: 'User Activity & Login Telemetry', category: 'Identity & Access', icon: Activity, badge: 'Live' },
     { id: '05_users', number: '05', label: 'Global User Management', category: 'Identity & Access', icon: Users, badge: deduplicatedUsers.length },
     { id: '06_login_roles', number: '06', label: 'Login & Role Hierarchy (5-Tier)', category: 'Identity & Access', icon: KeyRound },
     { id: '07_permissions', number: '07', label: 'Permission Engineering', category: 'Identity & Access', icon: ShieldCheck },
@@ -1580,8 +1586,27 @@ export const PlatformSiteAdminHub: React.FC<{
                 </div>
               </div>
 
+              {/* System-Wide User Activity & Login Telemetry Dashboard Widget */}
+              <SystemUserActivityWidget
+                campuses={campuses}
+                users={deduplicatedUsers}
+                onNavigateToCampus={(campusId) => {
+                  setActiveSection('04_sub_campuses');
+                }}
+              />
+
               {/* Fast Module Switchers */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('user_activity_telemetry')}
+                  className="p-3 rounded-xl bg-slate-950 border border-indigo-700/80 hover:border-indigo-500 text-left transition-colors cursor-pointer group shadow-xs"
+                >
+                  <Activity className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform mb-1.5" />
+                  <div className="font-bold text-white">Login Telemetry</div>
+                  <div className="text-[10px] text-slate-400">Campus & role frequency</div>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setActiveSection('02_clients')}
@@ -1646,6 +1671,21 @@ export const PlatformSiteAdminHub: React.FC<{
           )}
 
           {/* ================================================================ */}
+          {/* USER ACTIVITY & LOGIN TELEMETRY DEDICATED VIEW                  */}
+          {/* ================================================================ */}
+          {activeSection === 'user_activity_telemetry' && (
+            <div className="space-y-5">
+              <SystemUserActivityWidget
+                campuses={campuses}
+                users={deduplicatedUsers}
+                onNavigateToCampus={(campusId) => {
+                  setActiveSection('04_sub_campuses');
+                }}
+              />
+            </div>
+          )}
+
+          {/* ================================================================ */}
           {/* 02: CLIENTS & ORGANIZATIONS                                      */}
           {/* ================================================================ */}
           {activeSection === '02_clients' && (
@@ -1685,6 +1725,7 @@ export const PlatformSiteAdminHub: React.FC<{
                       setClientFormPhone('');
                       setClientFormMaxCampuses('10');
                       setClientFormMaxUsers('40');
+                      setClientFormLogoUrl('');
                       setIsClientModalOpen(true);
                     }}
                     className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
@@ -1748,9 +1789,17 @@ export const PlatformSiteAdminHub: React.FC<{
                           <tr key={c.id} className="hover:bg-slate-900/60 transition-colors">
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2.5">
-                              <span className="font-mono text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
-                                {c.code}
-                              </span>
+                              {c.logoUrl ? (
+                                <img
+                                  src={c.logoUrl}
+                                  alt={c.name}
+                                  className="w-7 h-7 rounded-lg object-contain bg-white p-0.5 border border-slate-700 shrink-0"
+                                />
+                              ) : (
+                                <span className="font-mono text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+                                  {c.code}
+                                </span>
+                              )}
                               <div>
                                 <div className="font-bold text-white text-xs">{c.name}</div>
                                 <div className="text-[10px] text-slate-400">{c.address || 'Pakistan'}</div>
@@ -1825,6 +1874,7 @@ export const PlatformSiteAdminHub: React.FC<{
                                   setClientFormPhone(c.contactPhone);
                                   setClientFormMaxCampuses(String(c.maxCampuses));
                                   setClientFormMaxUsers(String(c.maxUsers));
+                                  setClientFormLogoUrl(c.logoUrl || '');
                                   setIsClientModalOpen(true);
                                 }}
                                 className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[10px] transition-colors cursor-pointer"
@@ -2765,6 +2815,59 @@ export const PlatformSiteAdminHub: React.FC<{
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1 font-bold">Client Organization Custom Logo (URL or Upload)</label>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden shrink-0">
+                    {clientFormLogoUrl ? (
+                      <img src={clientFormLogoUrl} alt="Logo Preview" className="w-full h-full object-contain p-1 bg-white" />
+                    ) : (
+                      <Building2 className="w-5 h-5 text-slate-500" />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <input
+                      type="text"
+                      value={clientFormLogoUrl}
+                      onChange={(e) => setClientFormLogoUrl(e.target.value)}
+                      placeholder="https://example.com/logo.png or choose file"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-white text-xs outline-none focus:border-indigo-500"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-300 text-[10px] font-bold cursor-pointer">
+                        <span>Upload Logo</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result === 'string') {
+                                  setClientFormLogoUrl(reader.result);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                      {clientFormLogoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setClientFormLogoUrl('')}
+                          className="text-[10px] text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

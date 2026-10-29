@@ -92,6 +92,14 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   // Trigger re-render when client organization profile is customized
   const [clientRefreshKey, setClientRefreshKey] = useState(0);
 
+  React.useEffect(() => {
+    const handleClientsUpdated = () => {
+      setClientRefreshKey((prev) => prev + 1);
+    };
+    window.addEventListener('aplus-clients-updated', handleClientsUpdated);
+    return () => window.removeEventListener('aplus-clients-updated', handleClientsUpdated);
+  }, []);
+
   // Client resolution from currentUser
   const userClientId = currentUser?.clientId || 'client-aplus';
 
@@ -185,6 +193,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   const [isEditOrgModalOpen, setIsEditOrgModalOpen] = useState(false);
   const [orgNameInput, setOrgNameInput] = useState('');
   const [orgCodeInput, setOrgCodeInput] = useState('');
+  const [orgLogoInput, setOrgLogoInput] = useState('');
   const [orgContactInput, setOrgContactInput] = useState('');
   const [orgEmailInput, setOrgEmailInput] = useState('');
   const [orgPhoneInput, setOrgPhoneInput] = useState('');
@@ -192,6 +201,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   const handleOpenEditOrgModal = () => {
     setOrgNameInput(clientInfo.name);
     setOrgCodeInput(clientInfo.code);
+    setOrgLogoInput(clientInfo.logoUrl || '');
     setOrgContactInput(clientInfo.contactPerson || '');
     setOrgEmailInput(clientInfo.contactEmail || '');
     setOrgPhoneInput(clientInfo.contactPhone || '');
@@ -215,6 +225,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       ...clientInfo,
       name: cleanName,
       code: cleanCode,
+      logoUrl: orgLogoInput.trim() || undefined,
       contactPerson: orgContactInput.trim() || clientInfo.contactPerson,
       contactEmail: orgEmailInput.trim() || clientInfo.contactEmail,
       contactPhone: orgPhoneInput.trim() || clientInfo.contactPhone,
@@ -234,7 +245,14 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       const rawSettings = localStorage.getItem('ams_org_settings_v5');
       if (rawSettings) {
         const parsed = JSON.parse(rawSettings);
-        localStorage.setItem('ams_org_settings_v5', JSON.stringify({ ...parsed, schoolName: cleanName }));
+        localStorage.setItem(
+          'ams_org_settings_v5',
+          JSON.stringify({
+            ...parsed,
+            schoolName: cleanName,
+            ...(orgLogoInput.trim() ? { schoolLogo: orgLogoInput.trim() } : {}),
+          })
+        );
       }
     } catch {}
 
@@ -656,12 +674,19 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Main Campus Admin Header with Prominent Organization Client Name */}
       <header className="border-b border-slate-800 bg-slate-900/95 backdrop-blur-md px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-md">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-lg shadow-indigo-600/25 shrink-0">
-            <Building2 className="w-7 h-7" />
-          </div>
+          {clientInfo.logoUrl ? (
+            <img
+              src={clientInfo.logoUrl}
+              alt={clientInfo.name}
+              className="w-12 h-12 rounded-2xl object-contain bg-white p-1 border border-indigo-500/50 shadow-lg shadow-indigo-600/25 shrink-0"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-700 flex items-center justify-center text-white shadow-lg shadow-indigo-600/25 shrink-0">
+              <Building2 className="w-7 h-7" />
+            </div>
+          )}
           <div>
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-lg sm:text-xl font-black text-white tracking-tight uppercase">
@@ -2283,6 +2308,64 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
                   This Organization Client Name appears prominently at the very top of your portal, top bars, and vouchers.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Organization Custom Logo (URL or Image Upload)
+                </label>
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-2xl border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden shrink-0">
+                    {orgLogoInput ? (
+                      <img src={orgLogoInput} alt="Preview" className="w-full h-full object-contain p-1 bg-white" />
+                    ) : (
+                      <Building2 className="w-6 h-6 text-slate-500" />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <input
+                      type="text"
+                      value={orgLogoInput}
+                      onChange={(e) => setOrgLogoInput(e.target.value)}
+                      placeholder="https://example.com/logo.png or upload image below"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-white text-xs focus:outline-none focus:border-indigo-500"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-300 text-[11px] font-bold cursor-pointer">
+                        <span>Upload Logo File</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result === 'string') {
+                                  setOrgLogoInput(reader.result);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                      {orgLogoInput && (
+                        <button
+                          type="button"
+                          onClick={() => setOrgLogoInput('')}
+                          className="text-[11px] text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                        >
+                          Remove Logo
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This custom logo will replace the generic site icons across your portal header, top bars, and subordinate dashboards.
                 </p>
               </div>
 

@@ -41,8 +41,9 @@ import {
   PlatformSystemSettings,
   validateCampusHierarchy,
   purgeAllProductionData,
+  fetchSchoolClientsFromCloud,
 } from '../services/platformSiteAdminService';
-import { pushMasterCloudSnapshot } from '../services/firebaseSync';
+import { pushMasterCloudSnapshot, pullMasterCloudSnapshot } from '../services/firebaseSync';
 import { getStoredRecycleBinRecords } from '../services/globalRecoveryService';
 import {
   getStoredCampusLoginActivities,
@@ -599,20 +600,24 @@ export const DatabaseHubView: React.FC<{
     triggerToast('success', 'Complete database JSON dump downloaded successfully!');
   };
 
-  const handleWipeAllData = async () => {
-    purgeAllProductionData();
+  const [isReloading, setIsReloading] = useState(false);
+
+  const handleReloadCloudData = async () => {
+    setIsReloading(true);
     try {
-      await pushMasterCloudSnapshot({
-        campuses: [],
-        transactions: [],
-        pettyCashTransactions: [],
-        accountHeads: [],
-      });
-    } catch {}
-    triggerToast('success', 'All client organizations and financial entries have been deleted! Database is in clean production state.');
-    setTimeout(() => {
-      window.location.reload();
-    }, 600);
+      await Promise.all([
+        pullMasterCloudSnapshot(),
+        fetchSchoolClientsFromCloud(),
+      ]);
+      triggerToast('success', 'Reloaded & Synchronized with Google Cloud Firestore!');
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } catch {
+      triggerToast('info', 'Cloud reload completed.');
+    } finally {
+      setIsReloading(false);
+    }
   };
 
   return (
@@ -625,19 +630,20 @@ export const DatabaseHubView: React.FC<{
             <span>Database Management Hub & Firestore Engine</span>
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Cloud Firestore document statistics, indexed collections, and database persistence utilities.
+            Cloud Firestore document statistics, indexed collections, and dynamic cross-browser synchronization utilities.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={handleWipeAllData}
-            className="px-3.5 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Wipe all client organizations, campuses, and entries"
+            onClick={handleReloadCloudData}
+            disabled={isReloading}
+            className="px-3.5 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+            title="Reload latest state and organizations from Firestore Cloud"
           >
-            <AlertTriangle className="w-4 h-4 text-rose-400" />
-            <span>Delete All Data (Clients + Entries)</span>
+            <RefreshCw className={`w-4 h-4 text-emerald-400 ${isReloading ? 'animate-spin' : ''}`} />
+            <span>{isReloading ? 'Reloading Cloud...' : 'Reload & Sync Cloud Database'}</span>
           </button>
           <button
             type="button"

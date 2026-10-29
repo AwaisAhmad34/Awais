@@ -65,6 +65,7 @@ import {
 import {
   getStoredSchoolClients,
   DEFAULT_CLIENT_MODULES,
+  SchoolClientOrganization,
 } from '../services/platformSiteAdminService';
 
 interface AplusTopBarProps {
@@ -97,6 +98,13 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     message: 'Firebase Cloud Ready',
   });
   const [busy, setBusy] = useState(false);
+  const [clientsVersion, setClientsVersion] = useState(0);
+
+  useEffect(() => {
+    const handleUpdated = () => setClientsVersion((v) => v + 1);
+    window.addEventListener('aplus-clients-updated', handleUpdated);
+    return () => window.removeEventListener('aplus-clients-updated', handleUpdated);
+  }, []);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importInitialTab, setImportInitialTab] = useState<ImportCategoryTab>('coa');
   const [isA4StudioOpen, setIsA4StudioOpen] = useState(false);
@@ -347,16 +355,16 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   );
   const effectiveClientId = userClientId || (isClientOwnerMainAdmin ? 'client-aplus' : null);
 
-  const clientOrg = useMemo(() => {
+  const clientOrg = useMemo((): (SchoolClientOrganization | { id: string; name: string; code: string; logoUrl?: string }) | null => {
     if (!effectiveClientId) return null;
     const allClients = getStoredSchoolClients();
     const found = allClients.find((c) => c.id === effectiveClientId);
     if (found) return found;
     if (effectiveClientId === 'client-apex') {
-      return { id: 'client-apex', name: 'Apex School System', code: 'APEX' };
+      return { id: 'client-apex', name: 'Apex School System', code: 'APEX', logoUrl: undefined };
     }
-    return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS' };
-  }, [effectiveClientId]);
+    return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS', logoUrl: undefined };
+  }, [effectiveClientId, clientsVersion]);
 
   const clientAllowedModules: string[] | null = useMemo(() => {
     if (!userClientId) return null;
@@ -444,7 +452,15 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           )}
           {clientOrg && (
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 border border-purple-500/60 text-purple-100 text-[11px] font-bold shadow-xs">
-              <Building2 className="w-3.5 h-3.5 text-purple-300" />
+              {clientOrg.logoUrl ? (
+                <img
+                  src={clientOrg.logoUrl}
+                  alt={clientOrg.name}
+                  className="w-4 h-4 rounded object-contain bg-white/90 p-0.5"
+                />
+              ) : (
+                <Building2 className="w-3.5 h-3.5 text-purple-300" />
+              )}
               <span className="tracking-wide text-white font-black uppercase">{clientOrg.name}</span>
               {isClientOwnerMainAdmin ? (
                 <span className="px-1.5 py-0.2 rounded bg-purple-900 border border-purple-400/50 text-[9px] font-black text-purple-200">
