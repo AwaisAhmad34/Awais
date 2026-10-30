@@ -57,7 +57,7 @@ export const REPORT_CATEGORIES_REGISTRY: ReportCategoryDefinition[] = [
   {
     id: 'rep_voucher_register',
     code: 'VRG',
-    name: 'Official Voucher Register (4-Voucher System)',
+    name: 'Official Voucher Register (5 Voucher Types)',
     category: 'Vouchers & Ledger',
     description: 'Complete chronological audit log of BPV, BRV, CPV, CRV, and JV vouchers.',
     defaultAllowed: true,

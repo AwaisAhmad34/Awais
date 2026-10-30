@@ -4,7 +4,7 @@
  * dependency validation, duplicate posting protection, and audit logging.
  */
 
-import { Transaction, PettyCashTransaction, AccountHead, Campus } from '../core/aplusEngine';
+import type { Transaction, PettyCashTransaction, AccountHead, Campus } from '../core/aplusEngine';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 

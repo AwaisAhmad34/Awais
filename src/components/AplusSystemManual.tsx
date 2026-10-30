@@ -956,7 +956,7 @@ export const AplusSystemManual: React.FC<AplusSystemManualProps> = ({
                   Multi-Campus Voucher & Petty Cash Management System
                 </h2>
                 <p className="text-xs text-slate-500 max-w-xl mx-auto pt-2">
-                  Complete System Documentation, Operational Procedures, Four-Voucher Standard (BPV, BRV, CPV, CRV, JV), Petty Cash Imprest Control & Multi-Campus Financial Reporting Manual
+                  Complete System Documentation, Operational Procedures, Five Voucher Types (BPV, BRV, CPV, CRV, JV), Petty Cash Imprest Control & Multi-Campus Financial Reporting Manual
                 </p>
               </div>
 
