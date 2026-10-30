@@ -81,8 +81,8 @@ function openOfflineIndexedDB(): Promise<IDBDatabase | null> {
 
 function getTenantStorageKey(): string {
   const profile = getVerifiedProfile();
-  const userId = profile?.id || 'anon';
-  const clientId = profile?.clientId || 'client-aplus';
+  const userId = profile?.uid || 'anon';
+  const clientId = profile?.clientId || 'unassigned';
   return `tenant_cache_${userId}_${clientId}`;
 }
 
@@ -252,10 +252,14 @@ function sanitizeForFirestore<T>(obj: T): T {
 }
 
 function getEffectiveClientId(entity?: any): string {
-  if (entity?.clientId) return entity.clientId;
   const profile = getVerifiedProfile();
-  if (profile?.clientId) return profile.clientId;
-  return 'client-aplus';
+  if (!profile) throw new Error('A verified workspace session is required.');
+  if (profile.clientId) {
+    if (entity?.clientId && entity.clientId !== profile.clientId) throw new Error('Organization access denied.');
+    return profile.clientId;
+  }
+  if (profile.permissionLevel === 'level_1_platform_super_admin' && entity?.clientId) return entity.clientId;
+  throw new Error('Select an authorized organization before saving.');
 }
 
 // ============================================================================
@@ -640,6 +644,12 @@ function cleanupSubscriptions() {
  */
 async function startCrossBrowserRealtimeSync() {
   cleanupSubscriptions();
+  if (!getVerifiedProfile()) {
+    cloudHydrated = false;
+    window.__APLUS_MARK_CLOUD_READY__?.();
+    notify({ status: 'idle', message: 'Sign in to load an authorized workspace.' });
+    return;
+  }
   notify({ status: 'connecting', message: 'Connecting to Cloud Datastore...' });
 
   try {
@@ -659,7 +669,7 @@ async function startCrossBrowserRealtimeSync() {
       return;
     }
 
-    if (!auth.currentUser) {
+    if (!auth.currentUser || !getVerifiedProfile()) {
       window.__APLUS_MARK_CLOUD_READY__?.();
       notify({
         status: 'idle',
@@ -670,7 +680,12 @@ async function startCrossBrowserRealtimeSync() {
     }
 
     const profile = getVerifiedProfile();
-    const clientId = profile?.clientId || 'client-aplus';
+    const clientId = profile?.clientId;
+    if (!clientId) {
+      window.__APLUS_MARK_CLOUD_READY__?.();
+      notify({ status: 'idle', message: 'Select an organization to load its workspace.' });
+      return;
+    }
 
     notify({ status: 'synchronizing', message: `Loading records for ${clientId}...` });
 

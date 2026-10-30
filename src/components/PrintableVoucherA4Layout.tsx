@@ -18,6 +18,7 @@ import {
   printOrDownloadElement,
 } from '../core/aplusEngine';
 import { DynamicReportSignatureBlock } from './ReportSignatureManager';
+import { AccessibleDialog } from './AccessibleDialog';
 import { VoucherQRCodeBadge } from './VoucherQRCodeAndScanner';
 
 export type StandardVoucherType = 'BPV' | 'BRV' | 'CPV' | 'CRV' | 'JV';
@@ -224,6 +225,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
       ? voucher.voucherType
       : 'BPV';
   const meta = VOUCHER_TYPE_META[vType];
+  const isSample = voucher.id?.startsWith('sample-');
 
   const formattedDate = formatVoucherDate(voucher.date);
   const dateRangeDisplay = customDateRange || `${formattedDate} to ${formattedDate}`;
@@ -317,6 +319,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
       <div
         className={`official-voucher-document a4-voucher-sheet bg-white text-black mx-auto ${PADDING_CLASS_MAP[paddingPreset]} ${TYPOGRAPHY_CLASS_MAP[typographyScale]} ${className}`}
       >
+        {isSample && <div className="border-4 border-black p-3 mb-4 text-center text-xl font-black">SAMPLE — NOT A POSTED VOUCHER</div>}
         {/* Top Institutional Header Row */}
         <div className="flex items-start justify-between gap-4 pb-2.5">
           <div className="flex items-center gap-4">
@@ -356,7 +359,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             </div>
 
             {/* Embedded Scannable QR Code for Quick App-Based Retrieval */}
-            <VoucherQRCodeBadge voucher={voucher} campus={campus} size={74} />
+            {!isSample && <VoucherQRCodeBadge voucher={voucher} campus={campus} size={74} />}
           </div>
         </div>
 
@@ -493,22 +496,22 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
         </div>
 
         {/* Dynamic Institutional Signatory Matrix (Controlled by Super Admin & Campus Signature Rules) */}
-        <DynamicReportSignatureBlock
+        {!isSample && <DynamicReportSignatureBlock
           reportKey="vouchers_pettycash"
           campusIdOverride={voucher.campusId}
           dateText={formattedDate}
           docRef={voucher.voucherNo}
           periodText={voucher.accountingPeriod || 'FY 2026-2027'}
           campusRef={campus?.code || 'MAIN'}
-        />
+        />}
 
         {/* Verification & Audit Metadata Footer */}
         <div className="mt-3 flex items-center justify-between text-[10px] text-black border-t border-black pt-1.5 font-mono">
           <div>
             <span>
-              Verification Status: <strong>{voucher.status}</strong>
+              Verification Status: <strong>{isSample ? 'Sample only — unverified' : voucher.status}</strong>
             </span>
-            {voucher.approvedAt && (
+            {!isSample && voucher.approvedAt && (
               <span>
                 {' '}
                 • Approved At:{' '}
@@ -518,7 +521,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <span> • Type: {meta.shortCode} ({meta.fullTitle})</span>
           </div>
           <div>
-            <span>Audit Log ID: {voucher.id}</span>
+            {!isSample && <span>Audit Log ID: {voucher.id}</span>}
           </div>
         </div>
       </div>
@@ -707,7 +710,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
   const { transactions, campuses, orgSettings } = useAccounting();
-  const [selectedType, setSelectedType] = useState<'BPV' | 'BRV' | 'CPV' | 'CRV'>('BPV');
+  const [selectedType, setSelectedType] = useState<StandardVoucherType>('BPV');
   const [selectedVoucherId, setSelectedVoucherId] = useState<string>('sample');
   const [paddingPreset, setPaddingPreset] = useState<A4PaddingPreset>('standard');
   const [typographyScale, setTypographyScale] = useState<A4TypographyScale>('11pt');
@@ -720,12 +723,9 @@ export const VoucherA4PrintStudioModal: React.FC<{
     (t) => t.voucherType === selectedType
   );
 
-  const activeVoucher =
-    selectedVoucherId !== 'sample'
-      ? matchingVouchers.find((v) => v.id === selectedVoucherId) ||
-        matchingVouchers[0] ||
-        SAMPLE_FOUR_VOUCHERS[selectedType]
-      : matchingVouchers[0] || SAMPLE_FOUR_VOUCHERS[selectedType];
+  const activeVoucher = selectedVoucherId === 'sample'
+    ? SAMPLE_FOUR_VOUCHERS[selectedType]
+    : matchingVouchers.find(v => v.id === selectedVoucherId) || SAMPLE_FOUR_VOUCHERS[selectedType];
 
   const activeCampus =
     campuses.find((c) => c.id === activeVoucher.campusId) || campuses[0];
@@ -754,16 +754,16 @@ export const VoucherA4PrintStudioModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto print:p-0 print:bg-white">
+    <AccessibleDialog title="Voucher print studio" onClose={onClose} wide>
       <div className="bg-slate-100 rounded-2xl max-w-5xl w-full border border-slate-300 shadow-2xl overflow-hidden my-6 flex flex-col max-h-[94vh] print:max-h-none print:border-none print:shadow-none">
         {/* Top Studio Header */}
         <div className="bg-slate-900 text-white px-6 py-4 flex flex-wrap items-center justify-between gap-3 shrink-0 print:hidden">
           <div>
             <div className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider">
-              ISO A4 Document Generator (210mm × 297mm) • Four Voucher Standard
+              ISO A4 Document Generator (210mm × 297mm) • Five Voucher Types
             </div>
             <h3 className="text-base font-black">
-              A4 Print-Friendly Four-Voucher Layout Studio (BPV · BRV · CPV · CRV)
+              A4 Voucher Layout Studio (BPV · BRV · CPV · CRV · JV)
             </h3>
           </div>
 
@@ -785,6 +785,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
             </button>
             <button
               onClick={onClose}
+              aria-label="Close print studio"
               className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
             >
               <X className="w-5 h-5" />
@@ -795,7 +796,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
         {/* Voucher Type & Record Selector Bar */}
         <div className="bg-white border-b border-slate-200 px-6 py-3 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0 print:hidden">
           <div className="flex flex-wrap items-center gap-1.5">
-            {(['BPV', 'BRV', 'CPV', 'CRV'] as const).map((type) => (
+            {(['BPV', 'BRV', 'CPV', 'CRV', 'JV'] as const).map((type) => (
               <button
                 key={type}
                 onClick={() => {
@@ -820,17 +821,14 @@ export const VoucherA4PrintStudioModal: React.FC<{
               onChange={(e) => setSelectedVoucherId(e.target.value)}
               className="px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 font-mono font-bold text-slate-800"
             >
+              <option value="sample">Sample template — not a posted voucher</option>
               {matchingVouchers.length > 0 ? (
                 matchingVouchers.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.voucherNo} — PKR {Number(v.totalDebit || 0).toLocaleString()} ({v.date})
                   </option>
                 ))
-              ) : (
-                <option value="sample">
-                  Standard {selectedType} Template ({SAMPLE_FOUR_VOUCHERS[selectedType].voucherNo})
-                </option>
-              )}
+              ) : null}
             </select>
           </div>
         </div>
@@ -849,7 +847,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
           </div>
         </div>
       </div>
-    </div>
+    </AccessibleDialog>
   );
 };
 

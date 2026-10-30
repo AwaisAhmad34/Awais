@@ -32,10 +32,10 @@ import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub'
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
-import { initAuthListener } from './services/secureAuthentication';
+import { initAuthListener, getVerifiedProfile } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
+import { filterCampusesForUser } from './services/multiTenantDataService';
 
 // ----------------------------------------------------------------------------
 // DEFENSIVE DATA SANITIZATION: Clean duplicate user records from localStorage
@@ -73,44 +73,12 @@ function purgeDuplicateUsersFromStorage() {
 // ----------------------------------------------------------------------------
 // PRODUCTION RECOVERY BOOTSTRAP: Ensure Master Accounts Exist on Fresh Vercel Deployments
 // ----------------------------------------------------------------------------
-function bootstrapProductionDefaultAccounts() {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    const raw = localStorage.getItem('ams_users_v5_clean');
-    const existing: any[] = raw ? JSON.parse(raw) : [];
-    const userMap = new Map<string, any>();
-
-    if (Array.isArray(existing)) {
-      existing.forEach((u) => {
-        if (u && (u.username || u.id)) {
-          userMap.set(String(u.username || u.id).toLowerCase(), u);
-        }
-      });
-    }
-
-    let modified = false;
-    for (const seed of SEED_MULTI_TENANT_USERS) {
-      const key = seed.username.toLowerCase();
-      if (!userMap.has(key)) {
-        userMap.set(key, seed);
-        modified = true;
-      }
-    }
-
-    if (modified || !raw) {
-      localStorage.setItem('ams_users_v5_clean', JSON.stringify(Array.from(userMap.values())));
-    }
-  } catch (err) {
-    console.warn('Could not bootstrap production default accounts:', err);
-  }
-}
-
 // One-time cleanup utility available on window.__PURGE_PRODUCTION_DATA__ for emergency resets
 (window as any).__PURGE_PRODUCTION_DATA__ = purgeAllProductionData;
 purgeDuplicateUsersFromStorage();
-bootstrapProductionDefaultAccounts();
+
 initFirebaseCloudSync();
-fetchSchoolClientsFromCloud().catch(() => {});
+
 installGlobalVisibilityHook();
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
 window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
@@ -145,37 +113,11 @@ function InnerApp() {
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
   const [clientsVersion, setClientsVersion] = useState(0);
 
-  useEffect(() => {
-    initAuthListener((profile) => {
-      if (profile && loginAsUser) {
-        const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
-        let target = users?.find(
-          (u: any) =>
-            u.id === profile.id ||
-            (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
-            (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
-        );
-
-        if (!target && addUser) {
-          target = addUser({
-            id: profile.id,
-            username: profile.username || profile.email?.split('@')[0] || 'user',
-            name: profile.name || 'Campus Administrator',
-            email: profile.email || `${profile.username}@institution.edu.pk`,
-            role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
-            status: 'active',
-            clientId: profile.clientId || null,
-            campusId: profile.campusId || null,
-            permittedCampusIds: profile.permittedCampusIds || ['all'],
-            allowedModules: profile.allowedModules || ['all'],
-          });
-        }
-
-        const effectiveId = target?.id || profile.id;
-        loginAsUser(effectiveId, isSuper);
-      }
-    });
-  }, [loginAsUser, users, addUser]);
+  const [verifiedSession, setVerifiedSession] = useState<ReturnType<typeof getVerifiedProfile>>(null);
+  useEffect(() => initAuthListener(profile => {
+    setVerifiedSession(profile);
+    if (profile) loginAsUser?.(profile.id, false);
+  }), []);
 
   useEffect(() => {
     const handleUpdated = () => setClientsVersion((v) => v + 1);
@@ -187,9 +129,7 @@ function InnerApp() {
   const isPlatformSiteAdmin = Boolean(
     currentUser &&
     !currentUser.clientId &&
-    (currentUser.role === 'level_1_platform_super_admin' ||
-     currentUser.username?.toLowerCase() === 'admin' ||
-     (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
+    currentUser.role === 'level_1_platform_super_admin'
   );
 
   // Hierarchy Level 2: Main Campus Administrator (Client Owner)
@@ -219,7 +159,7 @@ function InnerApp() {
   }, [userClientId, clientsVersion]);
 
   // Login is required for everyone (Early return placed AFTER all hooks to follow Rules of Hooks)
-  if (!currentUser) {
+  if (!verifiedSession || !currentUser || currentUser.uid !== verifiedSession.uid) {
     return <DynamicCampusLoginPortal />;
   }
 
