@@ -18,6 +18,8 @@ import {
   Copy,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Layers,
   Sparkles,
   ArrowRight,
@@ -193,6 +195,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
   const [activeSection, setActiveSection] = useState<PlatformAdminNavSection>(defaultSection);
   const [sidebarSearch, setSidebarSearch] = useState('');
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState(false);
   const [clients, setClients] = useState<SchoolClientOrganization[]>(() => getStoredSchoolClients());
   const [settings, setSettings] = useState<PlatformSystemSettings>(() => getStoredPlatformSettings());
   const [auditLogs, setAuditLogs] = useState<PlatformAuditSecurityEvent[]>(() =>
@@ -1343,33 +1346,48 @@ export const PlatformSiteAdminHub: React.FC<{
       {/* Main 2-Column Split: Navigation Sidebar + Active Module Workspace */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         {/* Left Navigation Sequence (Sections 01 to 12) */}
-        <aside className="w-full md:w-64 bg-slate-950/90 border-r border-slate-800/80 flex flex-col shrink-0">
-          <div className="p-3 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-            <span>Platform Controls</span>
-            <span className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800">
-              25 Modules
-            </span>
+        <aside className={`bg-slate-950/90 border-r border-slate-800/80 flex flex-col shrink-0 transition-all duration-200 ${isSidebarMinimized ? 'w-full md:w-16' : 'w-full md:w-64'}`}>
+          <div className="p-3 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between gap-1">
+            {!isSidebarMinimized && (
+              <>
+                <span className="truncate">Platform Controls</span>
+                <span className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800 shrink-0">
+                  25 Modules
+                </span>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsSidebarMinimized(!isSidebarMinimized)}
+              className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors cursor-pointer ml-auto"
+              title={isSidebarMinimized ? 'Expand sidebar' : 'Minimize sidebar'}
+              aria-label={isSidebarMinimized ? 'Expand sidebar' : 'Minimize sidebar'}
+            >
+              {isSidebarMinimized ? <ChevronRight className="w-4 h-4 text-indigo-400" /> : <ChevronLeft className="w-4 h-4" />}
+            </button>
           </div>
 
-          {/* Module Filter Input */}
-          <div className="p-2 border-b border-slate-800">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                value={sidebarSearch}
-                onChange={(e) => setSidebarSearch(e.target.value)}
-                placeholder="Search modules..."
-                className="w-full pl-8 pr-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500"
-              />
+          {/* Module Filter Input (when expanded) */}
+          {!isSidebarMinimized && (
+            <div className="p-2 border-b border-slate-800">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={sidebarSearch}
+                  onChange={(e) => setSidebarSearch(e.target.value)}
+                  placeholder="Search modules..."
+                  className="w-full pl-8 pr-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 outline-hidden focus:border-indigo-500"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          <nav className="flex-1 p-2 space-y-3 overflow-y-auto max-h-[700px]">
+          <nav className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[700px]">
             {['Core Platform', 'Identity & Access', 'Financial Suite', 'Data & Recovery', 'Security & Operations'].map((cat) => {
               const catItems = NAV_ITEMS.filter((item) => {
                 if (item.category !== cat) return false;
-                if (!sidebarSearch.trim()) return true;
+                if (!sidebarSearch.trim() || isSidebarMinimized) return true;
                 const q = sidebarSearch.toLowerCase();
                 return item.label.toLowerCase().includes(q) || item.number.includes(q);
               });
@@ -1378,9 +1396,11 @@ export const PlatformSiteAdminHub: React.FC<{
 
               return (
                 <div key={cat} className="space-y-1">
-                  <div className="px-2 pt-1 pb-0.5 text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wider">
-                    {cat}
-                  </div>
+                  {!isSidebarMinimized && (
+                    <div className="px-2 pt-1 pb-0.5 text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wider">
+                      {cat}
+                    </div>
+                  )}
                   {catItems.map((item) => {
                     const isActive =
                       activeSection === item.id ||
@@ -1397,6 +1417,26 @@ export const PlatformSiteAdminHub: React.FC<{
                       (item.id === 'global_search' && activeSection === '14_global_search');
 
                     const IconComp = item.icon;
+
+                    if (isSidebarMinimized) {
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setActiveSection(item.id)}
+                          title={`${item.number}. ${item.label} (${item.category})`}
+                          className={`w-full py-2 rounded-xl text-xs font-semibold flex flex-col items-center justify-center transition-all cursor-pointer ${
+                            isActive
+                              ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30'
+                              : 'text-slate-400 hover:bg-slate-800/60 hover:text-white'
+                          }`}
+                        >
+                          <IconComp className={`w-4 h-4 ${isActive ? 'text-white' : 'text-indigo-400'}`} />
+                          <span className="font-mono text-[9px] mt-0.5">{item.number}</span>
+                        </button>
+                      );
+                    }
+
                     return (
                       <button
                         key={item.id}
@@ -1436,6 +1476,7 @@ export const PlatformSiteAdminHub: React.FC<{
               );
             })}
           </nav>
+
 
           {/* Creator Credentials & Info Pill */}
           <div className="p-3 border-t border-slate-800 bg-slate-950 text-[11px] text-slate-400 space-y-1">

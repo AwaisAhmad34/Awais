@@ -17,6 +17,7 @@ import { PhysicalCashReconciliation } from './components/PhysicalCashReconciliat
 import { BudgetVarianceWidget } from './components/BudgetVarianceWidget';
 import { PettyCashCategoryAnalytics } from './components/PettyCashCategoryAnalytics';
 import { ModernErpSuite } from './components/ModernErpSuite';
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   BulkVoucherAndAccessManager,
   installGlobalVisibilityHook,
@@ -34,6 +35,7 @@ import { initFirebaseCloudSync } from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
 import { initAuthListener } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { TenantAuthProvider } from './context/TenantAuthContext';
 
 import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
 
@@ -144,6 +146,45 @@ function InnerApp() {
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
   const [clientsVersion, setClientsVersion] = useState(0);
+
+  // Side navigation bar expanded / minimized state variable in main layout
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('aplus_sidebar_minimized') === 'true';
+    }
+    return false;
+  });
+
+  const toggleSidebarMinimized = () => {
+    setIsSidebarMinimized((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('aplus_sidebar_minimized', String(next));
+        window.dispatchEvent(new CustomEvent('aplus-sidebar-toggle', { detail: { minimized: next } }));
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (isSidebarMinimized) {
+        document.body.classList.add('sidebar-minimized');
+      } else {
+        document.body.classList.remove('sidebar-minimized');
+      }
+    }
+  }, [isSidebarMinimized]);
+
+  useEffect(() => {
+    const handleToggleEvent = (e: any) => {
+      if (e.detail?.minimized !== undefined) {
+        setIsSidebarMinimized(Boolean(e.detail.minimized));
+      }
+    };
+    window.addEventListener('aplus-sidebar-toggle', handleToggleEvent);
+    return () => window.removeEventListener('aplus-sidebar-toggle', handleToggleEvent);
+  }, []);
 
   useEffect(() => {
     initAuthListener((profile) => {
@@ -354,6 +395,29 @@ function InnerApp() {
         </div>
       )}
 
+      {/* Main Layout Clickable Toggle Button for Side Navigation Bar */}
+      <div className="fixed bottom-4 left-4 z-50 print:hidden">
+        <button
+          type="button"
+          onClick={toggleSidebarMinimized}
+          className="px-3.5 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 shadow-2xl flex items-center gap-2 text-xs font-bold transition-all cursor-pointer backdrop-blur-md focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+          title={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
+          aria-label={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
+        >
+          {isSidebarMinimized ? (
+            <>
+              <PanelLeftOpen className="w-4 h-4 text-indigo-400" />
+              <span>Expand Sidebar</span>
+            </>
+          ) : (
+            <>
+              <PanelLeftClose className="w-4 h-4 text-slate-400" />
+              <span>Minimize Sidebar</span>
+            </>
+          )}
+        </button>
+      </div>
+
       <MainApp />
     </div>
   );
@@ -384,9 +448,11 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AccountingProvider>
-        <ErrorBoundary>
-          <InnerApp />
-        </ErrorBoundary>
+        <TenantAuthProvider>
+          <ErrorBoundary>
+            <InnerApp />
+          </ErrorBoundary>
+        </TenantAuthProvider>
       </AccountingProvider>
     </ErrorBoundary>
   );

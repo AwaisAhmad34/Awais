@@ -30,6 +30,8 @@ import {
   User,
   Scale,
   Building2,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
 import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
@@ -142,6 +144,36 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isSiteAdminHubOpen, setIsSiteAdminHubOpen] = useState(false);
   const [isApprovalMatrixModalOpen, setIsApprovalMatrixModalOpen] = useState(false);
   const [isMigrationCenterOpen, setIsMigrationCenterOpen] = useState(false);
+  const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('aplus_sidebar_minimized') === 'true';
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleToggleEvent = (e: any) => {
+      if (e.detail?.minimized !== undefined) {
+        setIsSidebarMinimized(Boolean(e.detail.minimized));
+      }
+    };
+    window.addEventListener('aplus-sidebar-toggle', handleToggleEvent);
+    return () => window.removeEventListener('aplus-sidebar-toggle', handleToggleEvent);
+  }, []);
+
+  const handleToggleSidebar = () => {
+    const next = !isSidebarMinimized;
+    setIsSidebarMinimized(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aplus_sidebar_minimized', String(next));
+      window.dispatchEvent(new CustomEvent('aplus-sidebar-toggle', { detail: { minimized: next } }));
+      if (next) {
+        document.body.classList.add('sidebar-minimized');
+      } else {
+        document.body.classList.remove('sidebar-minimized');
+      }
+    }
+  };
 
   const triggerShortcutToast = (msg: string) => {
     setShortcutFeedback(msg);
@@ -424,6 +456,21 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     <>
       <div className="bg-slate-900 text-white border-b border-slate-800 px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
         <div className="flex items-center gap-2.5 min-w-0">
+          {/* Main Layout Sidebar Toggle Button */}
+          <button
+            type="button"
+            onClick={handleToggleSidebar}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 transition-colors cursor-pointer shrink-0"
+            title={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
+            aria-label={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
+          >
+            {isSidebarMinimized ? (
+              <PanelLeftOpen className="w-4 h-4 text-indigo-400" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4 text-slate-400" />
+            )}
+          </button>
+
           {/* Honest Sync Status Indicators */}
           {!isOnline || syncStats.status === 'offline' ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/25 border border-amber-400/50 text-amber-300 font-bold text-[11px]">

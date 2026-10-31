@@ -21,9 +21,12 @@ app.use('/api', (_req, res, next) => {
   next();
 });
 
+import { platformRouter } from './src/server/platformOwnerRoutes';
+
 // Multi-Campus Tenant Isolation & Financial Reports Access Router
 app.use('/api/tenants', tenantRouter);
 app.use('/api/tenant', tenantRouter);
+app.use('/api/platform', platformRouter);
 
 import { getAdminConfigStatus } from './src/server/adminFirebase';
 

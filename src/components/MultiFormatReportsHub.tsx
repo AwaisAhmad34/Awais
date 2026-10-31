@@ -253,15 +253,32 @@ export const MultiFormatReportsHub: React.FC<{
   const isCampusAdmin = platformRole === 'campus_admin' && Boolean(activeCampusId);
 
   const [selectedFormat, setSelectedFormat] = useState<ReportFormatId>('format_1_main');
+  const [format1Tab, setFormat1Tab] = useState<'trial_balance' | 'profit_loss' | 'balance_sheet' | 'ledger_summary'>('trial_balance');
 
   // Validate if currently authenticated user / client has permissions to view this financial report
   const reportAccess = useMemo(() => {
     const isPlatformAdmin = Boolean(
       currentUser?.role === 'admin' ||
       currentUser?.role === 'superadmin' ||
-      currentUser?.role === 'level_1_platform_super_admin'
+      currentUser?.role === 'super_admin' ||
+      currentUser?.role === 'owner' ||
+      currentUser?.role === 'platform_super_admin' ||
+      currentUser?.role === 'level_1_platform_super_admin' ||
+      currentUser?.isSuperAdmin ||
+      platformRole === 'super_admin'
     );
     if (isPlatformAdmin) return { allowed: true };
+
+    // Standard financial reports are always accessible to institutional accountants & campus admins
+    if (
+      selectedFormat === 'format_1_main' ||
+      selectedFormat === 'format_2_executive_board' ||
+      selectedFormat === 'format_3_daily_daybook' ||
+      selectedFormat === 'format_4_t_account' ||
+      selectedFormat === 'format_5_10col_worksheet'
+    ) {
+      return { allowed: true };
+    }
 
     const allPerms = getStoredClientReportPermissions();
     const tenantCtx = {
@@ -269,7 +286,12 @@ export const MultiFormatReportsHub: React.FC<{
       userId: currentUser?.id || 'usr-active',
       userName: currentUser?.name || 'Active User',
       userRole: currentUser?.role || 'accountant',
-      permissionLevel: (currentUser?.permissionLevel || 'level_4_sub_campus_admin') as any,
+      permissionLevel: (
+        currentUser?.permissionLevel ||
+        (currentUser?.role === 'admin' || currentUser?.role === 'campus_admin'
+          ? 'level_3_main_campus_admin'
+          : 'level_4_sub_campus_admin')
+      ) as any,
       campusId: activeCampusId || (currentCampusId === 'all' ? null : currentCampusId),
       isPlatformAdmin: false,
       isClientAdmin: currentUser?.role === 'level_2_client_super_admin',
@@ -282,7 +304,7 @@ export const MultiFormatReportsHub: React.FC<{
       currentCampusId === 'all',
       allPerms
     );
-  }, [currentUser, selectedFormat, currentCampusId, activeCampusId]);
+  }, [currentUser, selectedFormat, currentCampusId, activeCampusId, platformRole]);
   const [dateFrom, setDateFrom] = useState<string>(() => activePeriod?.startDate || '2026-07-01');
   const [dateTo, setDateTo] = useState<string>(
     () => new Date().toISOString().slice(0, 10)
@@ -727,8 +749,8 @@ export const MultiFormatReportsHub: React.FC<{
             })}
           </div>
 
-          {/* Secondary Filter & Export Bar when Formats 2–10 are selected */}
-          {selectedFormat !== 'format_1_main' && (
+          {/* Secondary Filter & Export Bar for all active formats */}
+          {(!LegacyReportsHub || selectedFormat !== 'format_1_main') && (
             <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 {/* Campus Selector */}
@@ -874,22 +896,13 @@ export const MultiFormatReportsHub: React.FC<{
         </div>
       )}
 
-      {/* FORMAT #1 (MAIN FORMAT WE ALREADY USE): Renders the complete original report suite */}
-      {reportAccess.allowed && selectedFormat === 'format_1_main' && (
-        LegacyReportsHub ? (
-          <LegacyReportsHub />
-        ) : (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 text-center bg-slate-900 border border-slate-800 rounded-2xl">
-            <h4 className="text-sm font-bold text-white mb-1">Financial Report Generator</h4>
-            <p className="text-xs text-slate-400">
-              Select any institutional report format from the tabs above (Executive Board, Daily Daybook, T-Accounts, 10-Col Worksheet, or Campus Columnar) to generate live financial statements.
-            </p>
-          </div>
-        )
+      {/* FORMAT #1: Renders LegacyReportsHub if provided, otherwise renders full Master Financial Suite */}
+      {reportAccess.allowed && selectedFormat === 'format_1_main' && LegacyReportsHub && (
+        <LegacyReportsHub />
       )}
 
-      {/* FORMATS #2 TO #10: Rendered in A4 Printable Institutional Container */}
-      {reportAccess.allowed && selectedFormat !== 'format_1_main' && (
+      {/* A4 Printable Institutional Container for Format 1 (when Legacy is absent) and Formats 2–18 */}
+      {reportAccess.allowed && (!LegacyReportsHub || selectedFormat !== 'format_1_main') && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-10">
           <div
             ref={printRef}
@@ -900,6 +913,326 @@ export const MultiFormatReportsHub: React.FC<{
               title={activeFormatObj.fullTitle}
               subtitle={activeFormatObj.subtitle}
             />
+
+            {/* FORMAT 1: MASTER INSTITUTIONAL FINANCIAL SUITE */}
+            {selectedFormat === 'format_1_main' && (
+              <div className="space-y-6">
+                {/* Metric Strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="border-2 border-black p-3 bg-slate-50">
+                    <div className="text-[10px] font-black uppercase text-slate-600">Total Operating Revenue</div>
+                    <div className="text-lg font-black font-mono mt-0.5 text-emerald-800">Rs. {formatNum(totals.revenue)}</div>
+                  </div>
+                  <div className="border-2 border-black p-3 bg-slate-50">
+                    <div className="text-[10px] font-black uppercase text-slate-600">Total Operating Expenses</div>
+                    <div className="text-lg font-black font-mono mt-0.5 text-rose-800">Rs. {formatNum(totals.expense)}</div>
+                  </div>
+                  <div className="border-2 border-black p-3 bg-slate-50">
+                    <div className="text-[10px] font-black uppercase text-slate-600">Net Operating Surplus / (Deficit)</div>
+                    <div className={`text-lg font-black font-mono mt-0.5 ${totals.revenue >= totals.expense ? 'text-emerald-800' : 'text-rose-800'}`}>
+                      Rs. {formatNum(totals.revenue - totals.expense)}
+                    </div>
+                  </div>
+                  <div className="border-2 border-black p-3 bg-slate-50">
+                    <div className="text-[10px] font-black uppercase text-slate-600">Trial Balance Invariant</div>
+                    <div className="text-xs font-black font-mono mt-1 text-slate-900">
+                      {Math.abs(totals.closingDr - totals.closingCr) < 1 ? (
+                        <span className="text-emerald-700 font-bold">✓ BALANCED (Rs. {formatNum(totals.closingDr)})</span>
+                      ) : (
+                        <span className="text-rose-700 font-bold">Δ Diff: Rs. {formatNum(Math.abs(totals.closingDr - totals.closingCr))}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sub-Format Navigation Tabs (Hidden in Print) */}
+                <div className="flex flex-wrap gap-2 print:hidden border-b-2 border-black pb-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormat1Tab('trial_balance')}
+                    className={`px-3 py-1.5 text-xs font-black uppercase rounded-lg border transition-all cursor-pointer ${
+                      format1Tab === 'trial_balance'
+                        ? 'bg-black text-white border-black'
+                        : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                    }`}
+                  >
+                    1. 8-Column Trial Balance
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormat1Tab('profit_loss')}
+                    className={`px-3 py-1.5 text-xs font-black uppercase rounded-lg border transition-all cursor-pointer ${
+                      format1Tab === 'profit_loss'
+                        ? 'bg-black text-white border-black'
+                        : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                    }`}
+                  >
+                    2. Profit & Loss Statement (P&L)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormat1Tab('balance_sheet')}
+                    className={`px-3 py-1.5 text-xs font-black uppercase rounded-lg border transition-all cursor-pointer ${
+                      format1Tab === 'balance_sheet'
+                        ? 'bg-black text-white border-black'
+                        : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                    }`}
+                  >
+                    3. Balance Sheet (Financial Position)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormat1Tab('ledger_summary')}
+                    className={`px-3 py-1.5 text-xs font-black uppercase rounded-lg border transition-all cursor-pointer ${
+                      format1Tab === 'ledger_summary'
+                        ? 'bg-black text-white border-black'
+                        : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                    }`}
+                  >
+                    4. Master General Ledger Summary
+                  </button>
+                </div>
+
+                {/* Sub-Tab 1: 8-Column Trial Balance */}
+                {format1Tab === 'trial_balance' && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-black uppercase tracking-wider text-black">
+                        Comprehensive 8-Column Institutional Trial Balance
+                      </h3>
+                      <span className="text-[11px] font-mono text-slate-600">
+                        Active Accounts: {activeAccountRows.length}
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto border-2 border-black">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-black text-white text-[10px] uppercase font-mono">
+                            <th rowSpan={2} className="border border-slate-700 p-2 text-left w-20">Code</th>
+                            <th rowSpan={2} className="border border-slate-700 p-2 text-left">Account Head</th>
+                            <th rowSpan={2} className="border border-slate-700 p-2 text-left w-24">Category</th>
+                            <th colSpan={2} className="border border-slate-700 p-1 text-center">Opening Balance</th>
+                            <th colSpan={2} className="border border-slate-700 p-1 text-center">Period Movement</th>
+                            <th colSpan={2} className="border border-slate-700 p-1 text-center">Closing Balance</th>
+                          </tr>
+                          <tr className="bg-slate-900 text-slate-200 text-[9px] uppercase font-mono">
+                            <th className="border border-slate-700 p-1 text-right w-20">Dr</th>
+                            <th className="border border-slate-700 p-1 text-right w-20">Cr</th>
+                            <th className="border border-slate-700 p-1 text-right w-20">Dr</th>
+                            <th className="border border-slate-700 p-1 text-right w-20">Cr</th>
+                            <th className="border border-slate-700 p-1 text-right w-20">Dr</th>
+                            <th className="border border-slate-700 p-1 text-right w-20">Cr</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeAccountRows.map((r, idx) => (
+                            <tr
+                              key={r.head.id || r.head.code}
+                              className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70 hover:bg-slate-100'}
+                            >
+                              <td className="border border-slate-300 p-2 font-mono font-bold">{r.head.code}</td>
+                              <td className="border border-slate-300 p-2 font-bold">{r.head.name}</td>
+                              <td className="border border-slate-300 p-2 font-mono text-[10px] text-slate-600">{r.head.category}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono">{r.openDr ? formatNum(r.openDr) : '—'}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono">{r.openCr ? formatNum(r.openCr) : '—'}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono font-semibold">{r.periodDr ? formatNum(r.periodDr) : '—'}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono font-semibold">{r.periodCr ? formatNum(r.periodCr) : '—'}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono font-black">{r.closingDr ? formatNum(r.closingDr) : '—'}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono font-black">{r.closingCr ? formatNum(r.closingCr) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-black text-white font-mono text-xs font-black">
+                            <td colSpan={3} className="border border-black p-2.5 uppercase">Consolidated Totals</td>
+                            <td className="border border-black p-2.5 text-right">{formatNum(totals.openDr)}</td>
+                            <td className="border border-black p-2.5 text-right">{formatNum(totals.openCr)}</td>
+                            <td className="border border-black p-2.5 text-right">{formatNum(totals.periodDr)}</td>
+                            <td className="border border-black p-2.5 text-right">{formatNum(totals.periodCr)}</td>
+                            <td className="border border-black p-2.5 text-right">{formatNum(totals.closingDr)}</td>
+                            <td className="border border-black p-2.5 text-right">{formatNum(totals.closingCr)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-Tab 2: Profit & Loss Statement */}
+                {format1Tab === 'profit_loss' && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-black">
+                      Comprehensive Statement of Profit & Loss (Income & Expenditure)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Operating Revenues */}
+                      <div className="border-2 border-black p-4 space-y-3">
+                        <div className="border-b-2 border-black pb-1.5 flex justify-between items-center font-black uppercase text-xs">
+                          <span>A. Operating Revenues & Inflows</span>
+                          <span className="font-mono">Amount (PKR)</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {activeAccountRows
+                            .filter((r) => r.head.category === 'Revenue')
+                            .map((r) => (
+                              <div key={r.head.id} className="flex justify-between text-xs py-1 border-b border-slate-200">
+                                <span className="font-medium">{r.head.name} ({r.head.code})</span>
+                                <span className="font-mono font-bold">Rs. {formatNum(Math.max(0, r.closingCr - r.closingDr))}</span>
+                              </div>
+                            ))}
+                        </div>
+                        <div className="border-t-2 border-black pt-2 flex justify-between text-xs font-black uppercase">
+                          <span>Total Operating Revenues</span>
+                          <span className="font-mono text-emerald-800">Rs. {formatNum(totals.revenue)}</span>
+                        </div>
+                      </div>
+
+                      {/* Operating Expenditures */}
+                      <div className="border-2 border-black p-4 space-y-3">
+                        <div className="border-b-2 border-black pb-1.5 flex justify-between items-center font-black uppercase text-xs">
+                          <span>B. Operating Expenditures & Disbursements</span>
+                          <span className="font-mono">Amount (PKR)</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {activeAccountRows
+                            .filter((r) => r.head.category === 'Expense')
+                            .map((r) => (
+                              <div key={r.head.id} className="flex justify-between text-xs py-1 border-b border-slate-200">
+                                <span className="font-medium">{r.head.name} ({r.head.code})</span>
+                                <span className="font-mono font-bold">Rs. {formatNum(Math.max(0, r.closingDr - r.closingCr))}</span>
+                              </div>
+                            ))}
+                        </div>
+                        <div className="border-t-2 border-black pt-2 flex justify-between text-xs font-black uppercase">
+                          <span>Total Operating Expenditures</span>
+                          <span className="font-mono text-rose-800">Rs. {formatNum(totals.expense)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border-2 border-black p-4 bg-slate-50 flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-black uppercase text-slate-700">Net Operating Surplus / (Deficit) for the Period</div>
+                        <div className="text-[11px] text-slate-500">Total Operating Revenues minus Total Operating Expenditures</div>
+                      </div>
+                      <div className={`text-xl font-black font-mono ${totals.revenue >= totals.expense ? 'text-emerald-800' : 'text-rose-800'}`}>
+                        Rs. {formatNum(totals.revenue - totals.expense)}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-Tab 3: Balance Sheet */}
+                {format1Tab === 'balance_sheet' && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-black">
+                      Classified Statement of Financial Position (Balance Sheet)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Assets */}
+                      <div className="border-2 border-black p-4 space-y-3">
+                        <div className="border-b-2 border-black pb-1.5 flex justify-between items-center font-black uppercase text-xs">
+                          <span>Institutional Assets</span>
+                          <span className="font-mono">Amount (PKR)</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {activeAccountRows
+                            .filter((r) => r.head.category === 'Asset')
+                            .map((r) => (
+                              <div key={r.head.id} className="flex justify-between text-xs py-1 border-b border-slate-200">
+                                <span className="font-medium">{r.head.name} ({r.head.code})</span>
+                                <span className="font-mono font-bold">Rs. {formatNum(Math.max(0, r.closingDr - r.closingCr))}</span>
+                              </div>
+                            ))}
+                        </div>
+                        <div className="border-t-2 border-black pt-2 flex justify-between text-xs font-black uppercase bg-slate-50 p-2">
+                          <span>Total Institutional Assets</span>
+                          <span className="font-mono">Rs. {formatNum(totals.assets)}</span>
+                        </div>
+                      </div>
+
+                      {/* Liabilities & Equity */}
+                      <div className="border-2 border-black p-4 space-y-3">
+                        <div className="border-b-2 border-black pb-1.5 flex justify-between items-center font-black uppercase text-xs">
+                          <span>Liabilities & Institutional Capital</span>
+                          <span className="font-mono">Amount (PKR)</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Current & Long-Term Liabilities</div>
+                          {activeAccountRows
+                            .filter((r) => r.head.category === 'Liability')
+                            .map((r) => (
+                              <div key={r.head.id} className="flex justify-between text-xs py-1 border-b border-slate-200">
+                                <span className="font-medium">{r.head.name} ({r.head.code})</span>
+                                <span className="font-mono font-bold">Rs. {formatNum(Math.max(0, r.closingCr - r.closingDr))}</span>
+                              </div>
+                            ))}
+                          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pt-2">Capital & Accumulated Surplus</div>
+                          {activeAccountRows
+                            .filter((r) => r.head.category === 'Equity')
+                            .map((r) => (
+                              <div key={r.head.id} className="flex justify-between text-xs py-1 border-b border-slate-200">
+                                <span className="font-medium">{r.head.name} ({r.head.code})</span>
+                                <span className="font-mono font-bold">Rs. {formatNum(Math.max(0, r.closingCr - r.closingDr))}</span>
+                              </div>
+                            ))}
+                          <div className="flex justify-between text-xs py-1 border-b border-slate-200 font-bold">
+                            <span>Current Period Operating Surplus</span>
+                            <span className="font-mono">Rs. {formatNum(totals.revenue - totals.expense)}</span>
+                          </div>
+                        </div>
+                        <div className="border-t-2 border-black pt-2 flex justify-between text-xs font-black uppercase bg-slate-50 p-2">
+                          <span>Total Liabilities & Capital</span>
+                          <span className="font-mono">Rs. {formatNum(totals.liabilities + totals.equity + (totals.revenue - totals.expense))}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-Tab 4: General Ledger Summary */}
+                {format1Tab === 'ledger_summary' && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-black">
+                      Master General Ledger Activity & Balance Summary
+                    </h3>
+                    <div className="overflow-x-auto border-2 border-black">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-black text-white text-[10px] uppercase font-mono">
+                            <th className="border border-slate-700 p-2 text-left">Code</th>
+                            <th className="border border-slate-700 p-2 text-left">Account Title</th>
+                            <th className="border border-slate-700 p-2 text-left">Category</th>
+                            <th className="border border-slate-700 p-2 text-right">Debit Activity</th>
+                            <th className="border border-slate-700 p-2 text-right">Credit Activity</th>
+                            <th className="border border-slate-700 p-2 text-right">Net Closing Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeAccountRows.map((r, idx) => (
+                            <tr key={r.head.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                              <td className="border border-slate-300 p-2 font-mono font-bold">{r.head.code}</td>
+                              <td className="border border-slate-300 p-2 font-bold">{r.head.name}</td>
+                              <td className="border border-slate-300 p-2 font-mono text-[10px] text-slate-600">{r.head.category}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono">{formatNum(r.periodDr)}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono">{formatNum(r.periodCr)}</td>
+                              <td className="border border-slate-300 p-2 text-right font-mono font-black">
+                                {r.closingDr ? `Rs. ${formatNum(r.closingDr)} Dr` : r.closingCr ? `Rs. ${formatNum(r.closingCr)} Cr` : 'Rs. 0'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Dynamic 6-Signature Authorization Footer */}
+                <div className="pt-4 border-t-2 border-black">
+                  <OfficialSignatureFooter />
+                </div>
+              </div>
+            )}
 
             {/* FORMAT 2: EXECUTIVE BOARD & TRUSTEE SUMMARY */}
             {selectedFormat === 'format_2_executive_board' && (

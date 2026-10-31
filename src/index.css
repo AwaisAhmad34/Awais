@@ -212,39 +212,58 @@ body {
   background: #f59e0b;
 }
 
-/* Financial Tables, Modals & Overflow Containers Scrollbar */
-.overflow-x-auto,
-.overflow-y-auto,
-.overflow-auto {
-  scrollbar-width: thin;
-  scrollbar-color: #94a3b8 #f8fafc;
+/* Global Scrollbar Removal: Hide all visible scrollbars while maintaining full scroll capability */
+* {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 
-.overflow-x-auto::-webkit-scrollbar,
-.overflow-y-auto::-webkit-scrollbar,
-.overflow-auto::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+*::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+div::-webkit-scrollbar,
+table::-webkit-scrollbar,
+aside::-webkit-scrollbar,
+main::-webkit-scrollbar,
+section::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
 }
 
-.overflow-x-auto::-webkit-scrollbar-track,
-.overflow-y-auto::-webkit-scrollbar-track,
-.overflow-auto::-webkit-scrollbar-track {
-  background: #f8fafc;
-  border-radius: 9999px;
+/* Sidebar Minimized Mode */
+aside.w-72 {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
-.overflow-x-auto::-webkit-scrollbar-thumb,
-.overflow-y-auto::-webkit-scrollbar-thumb,
-.overflow-auto::-webkit-scrollbar-thumb {
-  background: #94a3b8;
-  border-radius: 9999px;
+body.sidebar-minimized aside.w-72 {
+  width: 5rem !important;
+  min-width: 5rem !important;
+  max-width: 5rem !important;
 }
 
-.overflow-x-auto::-webkit-scrollbar-thumb:hover,
-.overflow-y-auto::-webkit-scrollbar-thumb:hover,
-.overflow-auto::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+/* Hide text labels, headings, select inputs and descriptions when minimized */
+body.sidebar-minimized aside.w-72 h1,
+body.sidebar-minimized aside.w-72 p,
+body.sidebar-minimized aside.w-72 label,
+body.sidebar-minimized aside.w-72 select,
+body.sidebar-minimized aside.w-72 .truncate,
+body.sidebar-minimized aside.w-72 span:not(:has(svg)) {
+  display: none !important;
+}
+
+/* Center nav icons and improve touch / click UX */
+body.sidebar-minimized aside.w-72 nav button,
+body.sidebar-minimized aside.w-72 button {
+  justify-content: center !important;
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+  text-align: center !important;
+}
+
+body.sidebar-minimized aside.w-72 svg {
+  margin: 0 auto !important;
 }
 
 

@@ -3,10 +3,12 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   type User,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { SEED_MULTI_TENANT_USERS } from './multiTenantDataService';
 
 let verifiedProfile: any = null;
 let authListenerAttached = false;
@@ -50,103 +52,119 @@ export function resolveUserEmail(input: string): string {
  */
 export async function authenticateAccount(emailOrUsername: string, password: string) {
   verifiedProfile = null;
-  const email = resolveUserEmail(emailOrUsername);
-  const effectivePass = password.length < 6 ? `${password}123456`.slice(0, 6) : password;
+  const cleanInput = (emailOrUsername || '').trim();
+  const cleanPassword = (password || '').trim();
 
-  const candidates = [password];
-  if (effectivePass !== password) candidates.push(effectivePass);
-  if (email === 'siteowner@platform.org') {
-    candidates.push('admin12345', 'admin123', 'admin', 'campus');
-  } else {
-    candidates.push('campus', 'admin12345', 'admin123');
+  if (!cleanInput || !cleanPassword) {
+    throw new Error('Unable to sign in. Check your email/username and password.');
   }
 
-  const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
+  const email = resolveUserEmail(cleanInput);
 
-  // 1. Try candidates in sequence
-  for (const candidate of uniqueCandidates) {
-    try {
-      const credential = await signInWithEmailAndPassword(auth, email, candidate);
-      return await restoreAccount(credential.user);
-    } catch {}
-  }
+  // Check if this input matches an official pre-seeded institutional user
+  const seededUser = SEED_MULTI_TENANT_USERS.find(
+    (u) =>
+      u.email.toLowerCase() === email.toLowerCase() ||
+      u.username.toLowerCase() === cleanInput.toLowerCase()
+  );
 
-  // 2. If all failed, check if account exists or create on first login
+  // 1. Strictly attempt sign-in with the exact password provided
   try {
-    const credential = await createUserWithEmailAndPassword(auth, email, effectivePass);
+    const credential = await signInWithEmailAndPassword(auth, email, cleanPassword);
     return await restoreAccount(credential.user);
-  } catch (createErr: any) {
+  } catch (authErr: any) {
+    // 2. ONLY for recognized registered seeded users on first-time deployment with matching registered password
+    if (seededUser && seededUser.password === cleanPassword) {
+      try {
+        const credential = await createUserWithEmailAndPassword(auth, seededUser.email, cleanPassword);
+        return await restoreAccount(credential.user);
+      } catch (seedErr: any) {
+        console.warn(`[Authentication Diagnostic] Seeded user sync deferred for ${seededUser.email}:`, seedErr?.message);
+      }
+    }
+
+    // Sign out any dangling session
     await signOut(auth).catch(() => {});
-    if (createErr?.code === 'auth/email-already-in-use') {
-      throw new Error(`Incorrect password for ${email}. Please check your password or use "Platform Owner Setup".`);
-    }
-    if (createErr?.code?.startsWith('auth/')) {
-      throw new Error(`Firebase Authentication error: ${createErr.message || createErr.code}`);
-    }
-    throw createErr;
+    // Nonexistent accounts, random usernames, and wrong passwords receive strictly identical generic error
+    throw new Error('Unable to sign in. Check your email/username and password.');
   }
 }
 
 /**
- * Controlled initial platform owner account setup procedure.
- * Allows the verified site owner to bootstrap the owner account into Firebase Authentication
- * and create the authoritative root membership without hardcoded bypasses.
+ * Checks if a Platform Owner account is already initialized in trusted server environment
  */
-export async function provisionInitialPlatformOwner(email: string, password: string, name?: string) {
+export async function checkPlatformOwnerStatus(): Promise<{ initialized: boolean; ownerEmailMasked?: string }> {
+  try {
+    const res = await fetch('/api/platform/owner-status');
+    if (res.ok) {
+      const data = await res.json();
+      return { initialized: Boolean(data.initialized), ownerEmailMasked: data.ownerEmailMasked };
+    }
+  } catch {}
+  return { initialized: false };
+}
+
+/**
+ * Sends a verified password recovery email
+ */
+export async function sendAccountPasswordRecovery(emailOrUsername: string): Promise<string> {
+  const email = resolveUserEmail(emailOrUsername);
+  await sendPasswordResetEmail(auth, email);
+  return `Password reset link sent to ${email}. Please check your inbox.`;
+}
+
+/**
+ * Controlled initial platform owner account setup procedure.
+ * Enforces transactional execution in a trusted server environment.
+ */
+export async function provisionInitialPlatformOwner(
+  email: string,
+  password: string,
+  name?: string,
+  bootstrapSecret?: string
+) {
   if (!email || !email.includes('@')) {
     throw new Error('Please provide a valid platform owner email address.');
   }
-  if (!password || password.length < 6) {
-    throw new Error('Owner password must be at least 6 characters for security.');
+  if (!password || password.length < 8) {
+    throw new Error('Owner password must be at least 8 characters for security.');
   }
 
-  const effectivePass = password.length < 6 ? `${password}123456`.slice(0, 6) : password;
-
-  // Create or sign in user via Firebase Auth
-  let user: User;
+  // First delegate to trusted backend server endpoint
   try {
-    const credential = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), effectivePass);
-    user = credential.user;
-  } catch (err: any) {
-    if (err?.code === 'auth/email-already-in-use') {
-      const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), effectivePass);
-      user = credential.user;
-    } else {
-      throw new Error(`Owner provisioning failed: ${err.message || err.code}`);
+    const response = await fetch('/api/platform/bootstrap-owner', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name, bootstrapSecret }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      if (response.status === 409 || data.error === 'ALREADY_INITIALIZED') {
+        throw new Error(
+          'Platform owner account has already been established. Privilege elevation can only be performed by an existing authenticated Platform Owner or through verified password recovery.'
+        );
+      }
+      throw new Error(data.message || 'Platform owner setup could not be authorized on server.');
     }
+
+    // Now sign in the newly provisioned owner
+    const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+    return await restoreAccount(credential.user);
+  } catch (err: any) {
+    if (err.message?.includes('already been established') || err.message?.includes('ALREADY_INITIALIZED')) {
+      throw err;
+    }
+    // If running in purely client environment where server API is unreachable, verify against cloud Firestore registry
+    const registrySnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry')).catch(() => null);
+    if (registrySnap && registrySnap.exists() && registrySnap.data()?.isInitialized) {
+      throw new Error(
+        'Platform owner account has already been established. Privilege elevation can only be performed by an existing authenticated Platform Owner or through verified password recovery.'
+      );
+    }
+    throw new Error(err.message || 'Platform owner initialization failed.');
   }
-
-  // Authoritative server/cloud document
-  const membershipRef = doc(db, 'memberships', user.uid);
-  const membershipData = {
-    name: name?.trim() || 'Platform Super Admin (Site Owner)',
-    email: user.email?.toLowerCase(),
-    permissionLevel: 'level_1_platform_super_admin',
-    clientId: null,
-    campusId: null,
-    status: 'active',
-    allowedModules: ['all'],
-    delegatedCampusIds: ['all'],
-    createdAt: new Date().toISOString(),
-    isPlatformAdmin: true,
-  };
-
-  await setDoc(membershipRef, membershipData, { merge: true });
-
-  // Also register in system_state
-  try {
-    await setDoc(
-      doc(db, 'system_state', 'platform_owner_registry'),
-      {
-        ownerUid: user.uid,
-        ownerEmail: user.email?.toLowerCase(),
-        initializedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  } catch {}
-
-  return await restoreAccount(user);
 }
 
 export async function logoutAccount() {
@@ -162,28 +180,37 @@ export async function restoreAccount(user: User) {
   const snapshot = await getDoc(mRef);
   let membership = snapshot.data();
 
-  // If user has no membership yet, provision active membership
+  // If user has no membership yet, strictly verify against registered directory
   if (!snapshot.exists()) {
     const emailLower = user.email?.toLowerCase() || '';
     const isOwner =
       emailLower === 'siteowner@platform.org' ||
       emailLower === 'bajwaahmedsaad345@gmail.com' ||
       emailLower.startsWith('admin@');
-    const isApex = emailLower.includes('apex');
+
+    const seeded = SEED_MULTI_TENANT_USERS.find(
+      (u) => u.email.toLowerCase() === emailLower
+    );
+
+    if (!isOwner && !seeded) {
+      await signOut(auth).catch(() => {});
+      throw new Error('Access denied. No registered institutional membership found for this account.');
+    }
 
     const permissionLevel = isOwner
       ? 'level_1_platform_super_admin'
-      : 'level_2_client_super_admin';
+      : (seeded?.role as any) || 'level_2_client_super_admin';
 
     const defaultMembership = {
-      name: user.displayName || (isOwner ? 'Platform Super Admin' : isApex ? 'Apex Academy Management' : 'Aplus Central Management'),
+      name: user.displayName || seeded?.name || (isOwner ? 'Platform Super Admin' : 'Campus Administrator'),
+      username: seeded?.username || (isOwner ? 'admin' : emailLower.split('@')[0]),
       email: emailLower,
       permissionLevel,
-      clientId: isOwner ? null : isApex ? 'client-apex' : 'client-aplus',
-      campusId: isOwner ? null : isApex ? 'campus-apex-main' : 'campus-khiali',
+      clientId: isOwner ? null : seeded?.clientId || 'client-aplus',
+      campusId: isOwner ? null : seeded?.campusId || 'campus-khiali',
       status: 'active',
-      allowedModules: ['all'],
-      delegatedCampusIds: ['all'],
+      allowedModules: seeded?.allowedModules || ['all'],
+      delegatedCampusIds: seeded?.permittedCampusIds || ['all'],
       createdAt: new Date().toISOString(),
       isPlatformAdmin: isOwner,
     };
