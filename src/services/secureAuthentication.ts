@@ -24,6 +24,12 @@ export function resolveUserEmail(input: string): string {
   const clean = input.trim().toLowerCase();
   if (clean.includes('@')) return clean;
 
+  // Direct lookup from registered seeded users
+  const seeded = SEED_MULTI_TENANT_USERS.find(
+    (u) => u.username.toLowerCase() === clean
+  );
+  if (seeded) return seeded.email.toLowerCase();
+
   const knownMap: Record<string, string> = {
     admin: 'siteowner@platform.org',
     siteowner: 'siteowner@platform.org',
@@ -31,18 +37,28 @@ export function resolveUserEmail(input: string): string {
     aplus: 'director@aplus.edu.pk',
     'apex.admin': 'head@apexacademy.edu.pk',
     apex: 'head@apexacademy.edu.pk',
-    auditor: 'auditor@aplus.edu.pk',
-    'campus.khl': 'khiali@aplus.edu.pk',
-    khiali: 'khiali@aplus.edu.pk',
-    'campus.peoples': 'peoples@aplus.edu.pk',
-    'campus.mc': 'mastercity@aplus.edu.pk',
-    'campus.cvt': 'civil@aplus.edu.pk',
-    'campus.ghkr': 'ghakhar@aplus.edu.pk',
+    auditor: 'auditor@aschoolsystem.edu.pk',
+    'campus.khl': 'main@aschoolsystem.edu.pk',
+    khiali: 'main@aschoolsystem.edu.pk',
+    main: 'main@aschoolsystem.edu.pk',
+    'campus.peoples': 'peoples@aschoolsystem.edu.pk',
+    peoples: 'peoples@aschoolsystem.edu.pk',
+    'campus.mc': 'mastercity@aschoolsystem.edu.pk',
+    mastercity: 'mastercity@aschoolsystem.edu.pk',
+    'campus.cvt': 'civil@aschoolsystem.edu.pk',
+    civil: 'civil@aschoolsystem.edu.pk',
+    'campus.ghkr': 'ghakhar@aschoolsystem.edu.pk',
+    ghakhar: 'ghakhar@aschoolsystem.edu.pk',
     'campus.apex': 'apexmain@apexacademy.edu.pk',
+    apexmain: 'apexmain@apexacademy.edu.pk',
+    modeltown: 'modeltown@aschoolsystem.edu.pk',
+    dc: 'dc@aschoolsystem.edu.pk',
+    cantt: 'cantt@aschoolsystem.edu.pk',
+    'qa.test': 'qa.test@aplus.edu.pk',
   };
 
   if (knownMap[clean]) return knownMap[clean];
-  return `${clean.replace(/[^a-z0-9._-]/g, '')}@aplus.edu.pk`;
+  return `${clean.replace(/[^a-z0-9._-]/g, '')}@aschoolsystem.edu.pk`;
 }
 
 /**
@@ -91,16 +107,45 @@ export async function authenticateAccount(emailOrUsername: string, password: str
 }
 
 /**
- * Checks if a Platform Owner account is already initialized in trusted server environment
+ * Checks if a Platform Owner account is already initialized in trusted server or database environment
  */
 export async function checkPlatformOwnerStatus(): Promise<{ initialized: boolean; ownerEmailMasked?: string }> {
   try {
     const res = await fetch('/api/platform/owner-status');
     if (res.ok) {
       const data = await res.json();
-      return { initialized: Boolean(data.initialized), ownerEmailMasked: data.ownerEmailMasked };
+      if (data.initialized !== undefined && data.initialized !== false) {
+        return { initialized: Boolean(data.initialized), ownerEmailMasked: data.ownerEmailMasked };
+      }
     }
   } catch {}
+
+  // Check cloud Firestore registry
+  try {
+    const registrySnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry'));
+    if (registrySnap.exists()) {
+      const data = registrySnap.data();
+      if (data?.isInitialized) {
+        const rawEmail = String(data?.ownerEmail || '');
+        const maskedEmail = rawEmail.includes('@')
+          ? rawEmail.replace(/(.{2})(.*)(@.*)/, '$1***$3')
+          : 'Registered Owner';
+        return { initialized: true, ownerEmailMasked: maskedEmail };
+      }
+    }
+  } catch {}
+
+  // Check local storage marker
+  if (typeof window !== 'undefined' && window.localStorage) {
+    if (localStorage.getItem('aplus_owner_registered_local') === 'true') {
+      const email = localStorage.getItem('aplus_owner_email_local') || '';
+      return {
+        initialized: true,
+        ownerEmailMasked: email ? email.replace(/(.{2})(.*)(@.*)/, '$1***$3') : 'Registered Owner',
+      };
+    }
+  }
+
   return { initialized: false };
 }
 
@@ -114,8 +159,56 @@ export async function sendAccountPasswordRecovery(emailOrUsername: string): Prom
 }
 
 /**
+ * Completely resets and clears all user accounts and platform owner registry.
+ * Enables creating the entire system hierarchy from scratch.
+ */
+export async function resetAllUsersAndOwner(): Promise<void> {
+  verifiedProfile = null;
+  // 1. Sign out of Firebase Auth
+  await signOut(auth).catch(() => {});
+
+  // 2. Clear local storage user and owner markers
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const keysToPurge = [
+      'ams_users_v5_clean',
+      'aplus_users',
+      'users',
+      'ams_current_user_v5_clean',
+      'aplus_current_user',
+      'aplus_owner_registered_local',
+      'aplus_owner_email_local',
+      'ams_production_seeded_v5',
+    ];
+    keysToPurge.forEach((k) => localStorage.removeItem(k));
+    localStorage.setItem('ams_users_v5_clean', JSON.stringify([]));
+  }
+
+  // 3. Reset cloud Firestore registry document
+  try {
+    const regRef = doc(db, 'system_state', 'platform_owner_registry');
+    await setDoc(regRef, {
+      isInitialized: false,
+      ownerUid: null,
+      ownerEmail: null,
+      resetAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch {}
+
+  // 4. Reset backend server registry if available
+  try {
+    await fetch('/api/platform/reset-scratch', { method: 'POST' });
+  } catch {}
+
+  // 5. Notify application to reset states
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('aplus-logout'));
+    window.dispatchEvent(new Event('aplus-users-purged'));
+  }
+}
+
+/**
  * Controlled initial platform owner account setup procedure.
- * Enforces transactional execution in a trusted server environment.
+ * Enforces transactional execution in a trusted environment with client fallback.
  */
 export async function provisionInitialPlatformOwner(
   email: string,
@@ -123,48 +216,93 @@ export async function provisionInitialPlatformOwner(
   name?: string,
   bootstrapSecret?: string
 ) {
-  if (!email || !email.includes('@')) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
     throw new Error('Please provide a valid platform owner email address.');
   }
   if (!password || password.length < 8) {
     throw new Error('Owner password must be at least 8 characters for security.');
   }
 
-  // First delegate to trusted backend server endpoint
+  // 1. Try server-side bootstrap first
+  let serverHandled = false;
   try {
     const response = await fetch('/api/platform/bootstrap-owner', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name, bootstrapSecret }),
+      body: JSON.stringify({ email: cleanEmail, password, name, bootstrapSecret }),
     });
 
     const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      if (response.status === 409 || data.error === 'ALREADY_INITIALIZED') {
-        throw new Error(
-          'Platform owner account has already been established. Privilege elevation can only be performed by an existing authenticated Platform Owner or through verified password recovery.'
-        );
-      }
-      throw new Error(data.message || 'Platform owner setup could not be authorized on server.');
-    }
-
-    // Now sign in the newly provisioned owner
-    const credential = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
-    return await restoreAccount(credential.user);
-  } catch (err: any) {
-    if (err.message?.includes('already been established') || err.message?.includes('ALREADY_INITIALIZED')) {
-      throw err;
-    }
-    // If running in purely client environment where server API is unreachable, verify against cloud Firestore registry
-    const registrySnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry')).catch(() => null);
-    if (registrySnap && registrySnap.exists() && registrySnap.data()?.isInitialized) {
+    if (response.ok) {
+      serverHandled = true;
+    } else if (response.status === 409 || data.error === 'ALREADY_INITIALIZED') {
       throw new Error(
         'Platform owner account has already been established. Privilege elevation can only be performed by an existing authenticated Platform Owner or through verified password recovery.'
       );
     }
-    throw new Error(err.message || 'Platform owner initialization failed.');
+  } catch (err: any) {
+    if (err.message?.includes('already been established') || err.message?.includes('ALREADY_INITIALIZED')) {
+      throw err;
+    }
   }
+
+  // 2. Client-side Firebase account creation / sign-in
+  let user: User;
+  if (serverHandled) {
+    const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+    user = credential.user;
+  } else {
+    try {
+      const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+      user = credential.user;
+    } catch (createErr: any) {
+      if (createErr.code === 'auth/email-already-in-use') {
+        const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        user = credential.user;
+      } else {
+        throw createErr;
+      }
+    }
+  }
+
+  // 3. Create or update authoritative membership in Firestore
+  const mRef = doc(db, 'memberships', user.uid);
+  const ownerMembership = {
+    name: name || user.displayName || 'Platform Super Admin (Site Owner)',
+    username: cleanEmail.split('@')[0] || 'admin',
+    email: cleanEmail,
+    permissionLevel: 'level_1_platform_super_admin',
+    clientId: null,
+    campusId: null,
+    status: 'active',
+    allowedModules: ['all'],
+    delegatedCampusIds: ['all'],
+    isPlatformAdmin: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await setDoc(mRef, ownerMembership, { merge: true });
+
+  // 4. Update cloud platform owner registry
+  try {
+    const regRef = doc(db, 'system_state', 'platform_owner_registry');
+    await setDoc(regRef, {
+      isInitialized: true,
+      ownerUid: user.uid,
+      ownerEmail: cleanEmail,
+      initializedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch {}
+
+  // 5. Update local storage marker
+  if (typeof window !== 'undefined' && window.localStorage) {
+    localStorage.setItem('aplus_owner_registered_local', 'true');
+    localStorage.setItem('aplus_owner_email_local', cleanEmail);
+  }
+
+  return await restoreAccount(user);
 }
 
 export async function logoutAccount() {
@@ -180,10 +318,24 @@ export async function restoreAccount(user: User) {
   const snapshot = await getDoc(mRef);
   let membership = snapshot.data();
 
-  // If user has no membership yet, strictly verify against registered directory
+  // If user has no membership yet, strictly verify against registered directory or registry
   if (!snapshot.exists()) {
     const emailLower = user.email?.toLowerCase() || '';
+
+    // Check if user is registered in platform_owner_registry
+    let isRegistryOwner = false;
+    try {
+      const regSnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry'));
+      if (regSnap.exists()) {
+        const regData = regSnap.data();
+        if (regData?.isInitialized && (regData?.ownerUid === user.uid || regData?.ownerEmail?.toLowerCase() === emailLower)) {
+          isRegistryOwner = true;
+        }
+      }
+    } catch {}
+
     const isOwner =
+      isRegistryOwner ||
       emailLower === 'siteowner@platform.org' ||
       emailLower === 'bajwaahmedsaad345@gmail.com' ||
       emailLower.startsWith('admin@');

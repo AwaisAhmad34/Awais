@@ -26,6 +26,7 @@ import {
   getVerifiedProfile,
   checkPlatformOwnerStatus,
   sendAccountPasswordRecovery,
+  resetAllUsersAndOwner,
 } from '../services/secureAuthentication';
 
 interface DynamicCampusLoginPortalProps {
@@ -305,6 +306,30 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     }
   };
 
+  const [isResettingScratch, setIsResettingScratch] = useState(false);
+
+  const handleResetFromScratch = async () => {
+    if (!window.confirm('Are you sure you want to completely remove all users and the platform owner? You will be able to create your Platform Owner account from scratch.')) {
+      return;
+    }
+    setIsResettingScratch(true);
+    try {
+      await resetAllUsersAndOwner();
+      setIsOwnerAlreadyRegistered(false);
+      setSuccessNotice('All users and site owner removed. You can now create your Platform Owner account from scratch.');
+      setIsOwnerSetupOpen(true);
+      setOwnerEmail('');
+      setOwnerPassword('');
+      setConfirmOwnerPassword('');
+      setOwnerName('');
+      setBootstrapSecret('');
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Could not reset accounts.');
+    } finally {
+      setIsResettingScratch(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
       {/* Top Banner */}
@@ -340,12 +365,20 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               setIsOwnerSetupOpen(true);
               setOwnerSetupStatus(null);
             }}
-            className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            title="Setup or bootstrap the Platform Site Owner account"
+            className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap focus:outline-hidden focus:ring-2 ${
+              !isOwnerAlreadyRegistered
+                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md ring-amber-400'
+                : 'bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white focus:ring-indigo-500'
+            }`}
+            title={!isOwnerAlreadyRegistered ? 'Create Platform Site Owner account from scratch' : 'Manage Platform Site Owner account'}
           >
-            <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="hidden sm:inline">Platform Owner Setup</span>
-            <span className="sm:hidden">Owner Setup</span>
+            <KeyRound className={`w-4 h-4 shrink-0 ${!isOwnerAlreadyRegistered ? 'text-slate-950' : 'text-amber-400'}`} />
+            <span className="hidden sm:inline">
+              {!isOwnerAlreadyRegistered ? 'Initialize Platform Owner' : 'Platform Owner Setup'}
+            </span>
+            <span className="sm:hidden">
+              {!isOwnerAlreadyRegistered ? 'Setup Owner' : 'Owner Setup'}
+            </span>
           </button>
         </div>
       </header>
@@ -371,6 +404,30 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 Sign in with your verified institutional account to access multi-campus vouchers, general ledgers, and financial reports.
               </p>
             </div>
+
+            {/* Clean Slate Setup Mode Notice */}
+            {!isOwnerAlreadyRegistered && (
+              <div className="mb-4 p-3 rounded-xl bg-amber-950/60 border border-amber-800/80 text-amber-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+                <KeyRound className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-amber-300">Clean Slate Setup Mode</div>
+                  <div className="text-[11px] text-amber-200/90 leading-relaxed">
+                    All pre-existing users have been removed. Click{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsOwnerSetupOpen(true);
+                        setOwnerSetupStatus(null);
+                      }}
+                      className="font-black underline text-amber-300 hover:text-white cursor-pointer"
+                    >
+                      Initialize Platform Owner
+                    </button>{' '}
+                    to create your Level 1 Platform Super Admin account from scratch.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Task 5: Live Region for Authentication Errors */}
             {errorMessage && (
@@ -677,6 +734,19 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 >
                   <span>{isSettingUpOwner ? 'Provisioning...' : 'Initialize Owner Account'}</span>
                   <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Clean-Slate Scratch Action */}
+              <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="text-slate-400 text-[11px]">Need to wipe all local data & start fresh?</span>
+                <button
+                  type="button"
+                  disabled={isResettingScratch || isSettingUpOwner}
+                  onClick={handleResetFromScratch}
+                  className="text-rose-400 hover:text-rose-300 font-bold underline text-[11px] cursor-pointer disabled:opacity-50 transition-colors"
+                >
+                  {isResettingScratch ? 'Resetting...' : 'Remove All & Create from Scratch'}
                 </button>
               </div>
             </form>

@@ -33,7 +33,7 @@ import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub'
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
 import { initFirebaseCloudSync } from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
-import { initAuthListener } from './services/secureAuthentication';
+import { initAuthListener, resetAllUsersAndOwner } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TenantAuthProvider } from './context/TenantAuthContext';
 
@@ -75,6 +75,25 @@ function purgeDuplicateUsersFromStorage() {
 // ----------------------------------------------------------------------------
 // PRODUCTION RECOVERY BOOTSTRAP: Ensure Master Accounts Exist on Fresh Vercel Deployments
 // ----------------------------------------------------------------------------
+function ensureCleanSlateBootstrap() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const cleanSlateKey = 'ams_clean_slate_v3_applied';
+    if (!localStorage.getItem(cleanSlateKey)) {
+      localStorage.removeItem('ams_users_v5_clean');
+      localStorage.removeItem('aplus_users');
+      localStorage.removeItem('users');
+      localStorage.removeItem('ams_current_user_v5_clean');
+      localStorage.removeItem('aplus_current_user');
+      localStorage.removeItem('aplus_owner_registered_local');
+      localStorage.removeItem('aplus_owner_email_local');
+      localStorage.removeItem('ams_production_seeded_v5');
+      localStorage.setItem('ams_users_v5_clean', JSON.stringify([]));
+      localStorage.setItem(cleanSlateKey, 'true');
+    }
+  } catch {}
+}
+
 function bootstrapProductionDefaultAccounts() {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
@@ -107,8 +126,12 @@ function bootstrapProductionDefaultAccounts() {
   }
 }
 
+// Clean-slate setup: ensure all legacy cached users and owner sessions are wiped
+ensureCleanSlateBootstrap();
+
 // One-time cleanup utility available on window.__PURGE_PRODUCTION_DATA__ for emergency resets
 (window as any).__PURGE_PRODUCTION_DATA__ = purgeAllProductionData;
+(window as any).__RESET_ALL_USERS_AND_OWNER__ = resetAllUsersAndOwner;
 purgeDuplicateUsersFromStorage();
 bootstrapProductionDefaultAccounts();
 initFirebaseCloudSync();
