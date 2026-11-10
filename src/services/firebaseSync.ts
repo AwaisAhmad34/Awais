@@ -537,17 +537,44 @@ export function initFirebaseCloudSync() {
       } catch {}
     },
 
-    // Debounced local cache snapshot for network resiliency
+    // Debounced global cloud persistence: stores authoritative state dynamically in Firestore
     autoSaveMasterState(state: any) {
-      if (!state || !cloudHydrated) return;
-      saveSnapshotToIndexedDB(state, !navigator.onLine).catch(() => {});
+      if (!state) return;
+
+      // Save local cache for offline resiliency
+      saveSnapshotToIndexedDB(state, typeof navigator !== 'undefined' ? !navigator.onLine : false).catch(() => {});
 
       if (autoSaveTimer) clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(async () => {
         try {
           if (typeof navigator !== 'undefined' && !navigator.onLine) return;
           const clientId = getEffectiveClientId();
-          // Store organization heartbeat metadata
+          const profile = getVerifiedProfile();
+
+          const sanitizedState = {
+            clientId,
+            updatedAt: new Date().toISOString(),
+            updatedBy: profile?.username || profile?.email || 'authenticated_user',
+            voucherCount: state?.transactions?.length || 0,
+            campusCount: state?.campuses?.length || 0,
+            pettyCashCount: state?.pettyCashTransactions?.length || 0,
+            accountHeadCount: state?.accountHeads?.length || 0,
+            transactions: sanitizeForFirestore(state?.transactions || []),
+            campuses: sanitizeForFirestore(state?.campuses || []),
+            pettyCashTransactions: sanitizeForFirestore(state?.pettyCashTransactions || []),
+            accountHeads: sanitizeForFirestore(state?.accountHeads || []),
+            orgSettings: sanitizeForFirestore(state?.orgSettings || {}),
+            periods: sanitizeForFirestore(state?.periods || []),
+          };
+
+          // 1. Authoritative Cloud Master Snapshot
+          await setDoc(
+            doc(db, 'organizations', clientId, 'snapshots', 'live_state'),
+            sanitizedState,
+            { merge: true }
+          );
+
+          // 2. Organization root heartbeat
           await setDoc(
             doc(db, 'organizations', clientId),
             {
@@ -557,23 +584,61 @@ export function initFirebaseCloudSync() {
               lastActivityAt: new Date().toISOString(),
               voucherCount: state?.transactions?.length || 0,
               campusCount: state?.campuses?.length || 0,
+              updatedAt: new Date().toISOString(),
             },
             { merge: true }
           );
+
+          // 3. Incrementally ensure individual entity documents are synchronized in subcollections
+          try {
+            const batch = writeBatch(db);
+            let opCount = 0;
+
+            // Sync most recent vouchers
+            const recentVouchers = (state?.transactions || []).slice(0, 30);
+            for (const v of recentVouchers) {
+              if (v?.id && opCount < 40) {
+                batch.set(
+                  doc(db, 'organizations', clientId, 'vouchers', String(v.id)),
+                  { ...sanitizeForFirestore(v), clientId, updatedAt: new Date().toISOString() },
+                  { merge: true }
+                );
+                opCount++;
+              }
+            }
+
+            // Sync campuses
+            for (const c of (state?.campuses || []).slice(0, 20)) {
+              if (c?.id && opCount < 50) {
+                batch.set(
+                  doc(db, 'organizations', clientId, 'campuses', String(c.id)),
+                  { ...sanitizeForFirestore(c), clientId, updatedAt: new Date().toISOString() },
+                  { merge: true }
+                );
+                opCount++;
+              }
+            }
+
+            if (opCount > 0) {
+              await batch.commit();
+            }
+          } catch {}
+
           await saveSnapshotToIndexedDB(state, false);
+
           notify({
             status: 'saved_to_cloud',
             offlinePendingCount: 0,
             indexedDbCached: true,
             lastSyncedAt: new Date().toISOString(),
-            message: `Saved to cloud (${state?.transactions?.length || 0} vouchers, ${
+            message: `Saved to global cloud (${state?.transactions?.length || 0} vouchers, ${
               state?.campuses?.length || 0
             } campuses)`,
           });
-        } catch {
-          // Non-blocking
+        } catch (err: any) {
+          console.warn('[Cloud Persistence] Master state autoSave notice:', err?.message);
         }
-      }, 800);
+      }, 700);
     },
   };
 
@@ -636,14 +701,14 @@ function cleanupSubscriptions() {
 }
 
 /**
- * Starts real-time subscriptions and loads authoritative cloud records for active tenant.
+ * Starts real-time subscriptions and loads authoritative global cloud records for active tenant.
  */
 async function startCrossBrowserRealtimeSync() {
   cleanupSubscriptions();
-  notify({ status: 'connecting', message: 'Connecting to Cloud Datastore...' });
+  notify({ status: 'connecting', message: 'Connecting to Authoritative Cloud Datastore...' });
 
   try {
-    // 1. Check local IndexedDB cache first for instant boot
+    // 1. Initial local cache check for instant render
     const idbCached = await loadSnapshotFromIndexedDB();
     if (idbCached?.state) {
       window.__APLUS_HYDRATE_FROM_CLOUD__?.(idbCached.state);
@@ -654,7 +719,7 @@ async function startCrossBrowserRealtimeSync() {
       notify({
         status: 'offline',
         indexedDbCached: true,
-        message: 'Offline Mode — Operating on IndexedDB local cache',
+        message: 'Offline Mode — Operating on local offline cache',
       });
       return;
     }
@@ -664,7 +729,7 @@ async function startCrossBrowserRealtimeSync() {
       notify({
         status: 'idle',
         indexedDbCached: true,
-        message: 'Terminal ready. Sign in with your institutional credentials to connect.',
+        message: 'Portal secured. Please sign in with registered institutional credentials to connect.',
       });
       return;
     }
@@ -672,7 +737,7 @@ async function startCrossBrowserRealtimeSync() {
     const profile = getVerifiedProfile();
     const clientId = profile?.clientId || 'client-aplus';
 
-    notify({ status: 'synchronizing', message: `Loading records for ${clientId}...` });
+    notify({ status: 'synchronizing', message: `Loading global records for ${clientId}...` });
 
     // Ensure organization root document exists
     try {
@@ -696,8 +761,9 @@ async function startCrossBrowserRealtimeSync() {
       }
     } catch {}
 
-    // 2. Fetch authoritative subcollections for this client
-    const [vouchersSnap, pettySnap, campusesSnap, coaSnap, trashSnap] = await Promise.all([
+    // 2. Fetch authoritative master live snapshot AND subcollections for this client
+    const [liveSnapDoc, vouchersSnap, pettySnap, campusesSnap, coaSnap, trashSnap] = await Promise.all([
+      getDoc(doc(db, 'organizations', clientId, 'snapshots', 'live_state')),
       getDocs(collection(db, 'organizations', clientId, 'vouchers')),
       getDocs(collection(db, 'organizations', clientId, 'petty_cash')),
       getDocs(collection(db, 'organizations', clientId, 'campuses')),
@@ -706,6 +772,7 @@ async function startCrossBrowserRealtimeSync() {
     ]);
 
     const trashIds = new Set(trashSnap.docs.map((d) => d.id));
+    const cloudMasterData = liveSnapDoc.exists() ? liveSnapDoc.data() : null;
 
     const cloudVouchers = vouchersSnap.docs
       .map((d) => ({ ...d.data(), id: d.id }))
@@ -723,20 +790,41 @@ async function startCrossBrowserRealtimeSync() {
       .map((d) => ({ ...d.data(), id: d.id }))
       .filter((a: any) => !trashIds.has(a.id));
 
-    // If cloud has records, hydrate directly; otherwise fall back to existing state
     const localState = window.__APLUS_GET_CURRENT_STATE__?.() || idbCached?.state || {};
 
-    const hydratedCampuses = cloudCampuses.length > 0 ? cloudCampuses : localState.campuses || [];
-    const hydratedTransactions = cloudVouchers.length > 0 ? cloudVouchers : localState.transactions || [];
-    const hydratedPettyCash = cloudPettyCash.length > 0 ? cloudPettyCash : localState.pettyCashTransactions || [];
-    const hydratedCOA = cloudCOA.length > 0 ? cloudCOA : localState.accountHeads || [];
+    // Cloud is authoritative over browser cache
+    const finalCampuses = cloudCampuses.length > 0
+      ? cloudCampuses
+      : Array.isArray(cloudMasterData?.campuses) && cloudMasterData.campuses.length > 0
+      ? cloudMasterData.campuses
+      : localState.campuses || [];
+
+    const finalTransactions = cloudVouchers.length > 0
+      ? cloudVouchers
+      : Array.isArray(cloudMasterData?.transactions)
+      ? cloudMasterData.transactions
+      : localState.transactions || [];
+
+    const finalPettyCash = cloudPettyCash.length > 0
+      ? cloudPettyCash
+      : Array.isArray(cloudMasterData?.pettyCashTransactions)
+      ? cloudMasterData.pettyCashTransactions
+      : localState.pettyCashTransactions || [];
+
+    const finalCOA = cloudCOA.length > 0
+      ? cloudCOA
+      : Array.isArray(cloudMasterData?.accountHeads) && cloudMasterData.accountHeads.length > 0
+      ? cloudMasterData.accountHeads
+      : localState.accountHeads || [];
 
     const finalState = {
       ...localState,
-      campuses: hydratedCampuses,
-      transactions: hydratedTransactions,
-      pettyCashTransactions: hydratedPettyCash,
-      accountHeads: hydratedCOA,
+      campuses: finalCampuses,
+      transactions: finalTransactions,
+      pettyCashTransactions: finalPettyCash,
+      accountHeads: finalCOA,
+      orgSettings: cloudMasterData?.orgSettings || localState.orgSettings,
+      periods: cloudMasterData?.periods || localState.periods,
     };
 
     window.__APLUS_HYDRATE_FROM_CLOUD__?.(finalState);
@@ -750,17 +838,52 @@ async function startCrossBrowserRealtimeSync() {
       lastSyncedAt: new Date().toISOString(),
       offlinePendingCount: 0,
       indexedDbCached: true,
-      message: `Saved to cloud (${hydratedTransactions.length} vouchers · ${hydratedCampuses.length} campuses)`,
+      message: `Global Cloud Connected (${finalTransactions.length} vouchers · ${finalCampuses.length} campuses)`,
     });
 
-    // 3. Set up REAL-TIME ON-SNAPSHOT LISTENERS for instantaneous cross-device sync
+    // 3. REAL-TIME ON-SNAPSHOT LISTENERS for cross-device & cross-terminal synchronization
+    // 3A. Master Live Snapshot Listener
+    const unsubMaster = onSnapshot(
+      doc(db, 'organizations', clientId, 'snapshots', 'live_state'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (!data) return;
+        // Avoid applying our own immediate writes
+        const profile = getVerifiedProfile();
+        const currentUserId = profile?.username || profile?.email || 'authenticated_user';
+        if (data.updatedBy === currentUserId && Date.now() - new Date(data.updatedAt).getTime() < 1200) {
+          return;
+        }
+        const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+        if (cur) {
+          window.__APLUS_HYDRATE_FROM_CLOUD__?.({
+            ...cur,
+            transactions: Array.isArray(data.transactions) ? data.transactions : cur.transactions,
+            campuses: Array.isArray(data.campuses) ? data.campuses : cur.campuses,
+            pettyCashTransactions: Array.isArray(data.pettyCashTransactions) ? data.pettyCashTransactions : cur.pettyCashTransactions,
+            accountHeads: Array.isArray(data.accountHeads) && data.accountHeads.length > 0 ? data.accountHeads : cur.accountHeads,
+            orgSettings: data.orgSettings || cur.orgSettings,
+          });
+          notify({
+            status: 'saved_to_cloud',
+            lastSyncedAt: new Date().toISOString(),
+            message: 'Realtime update received from cloud datastore',
+          });
+        }
+      },
+      (err) => console.warn('Master onSnapshot notice:', err.message)
+    );
+    activeUnsubscribers.push(unsubMaster);
+
+    // 3B. Vouchers Real-Time Listener
     const unsubVouchers = onSnapshot(
       collection(db, 'organizations', clientId, 'vouchers'),
       (snap) => {
         const updated = snap.docs
           .map((d) => ({ ...d.data(), id: d.id }))
           .filter((v: any) => !trashIds.has(v.id) && !v.deletedAt);
-        if (updated.length > 0) {
+        if (Array.isArray(updated) && updated.length > 0) {
           const cur = window.__APLUS_GET_CURRENT_STATE__?.();
           if (cur) {
             window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, transactions: updated });
@@ -776,13 +899,14 @@ async function startCrossBrowserRealtimeSync() {
     );
     activeUnsubscribers.push(unsubVouchers);
 
+    // 3C. Petty Cash Real-Time Listener
     const unsubPetty = onSnapshot(
       collection(db, 'organizations', clientId, 'petty_cash'),
       (snap) => {
         const updated = snap.docs
           .map((d) => ({ ...d.data(), id: d.id }))
           .filter((p: any) => !trashIds.has(p.id) && !p.deletedAt);
-        if (updated.length > 0) {
+        if (Array.isArray(updated) && updated.length > 0) {
           const cur = window.__APLUS_GET_CURRENT_STATE__?.();
           if (cur) {
             window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, pettyCashTransactions: updated });
@@ -792,6 +916,24 @@ async function startCrossBrowserRealtimeSync() {
       (err) => console.warn('Petty cash onSnapshot notice:', err.message)
     );
     activeUnsubscribers.push(unsubPetty);
+
+    // 3D. Campuses Real-Time Listener
+    const unsubCampuses = onSnapshot(
+      collection(db, 'organizations', clientId, 'campuses'),
+      (snap) => {
+        const updated = snap.docs
+          .map((d) => ({ ...d.data(), id: d.id }))
+          .filter((c: any) => !trashIds.has(c.id));
+        if (Array.isArray(updated) && updated.length > 0) {
+          const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+          if (cur) {
+            window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, campuses: updated });
+          }
+        }
+      },
+      (err) => console.warn('Campuses onSnapshot notice:', err.message)
+    );
+    activeUnsubscribers.push(unsubCampuses);
 
   } catch (err: any) {
     console.error('Realtime sync initiation error:', err);

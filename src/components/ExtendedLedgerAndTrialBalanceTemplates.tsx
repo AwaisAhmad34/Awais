@@ -52,6 +52,33 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
   scopedPettyCash = [],
   totals,
 }) => {
+  // Defensive normalization so rows handle both raw account head structures and analytics summary shapes
+  const normalizedRows = (activeAccountRows || []).map((r) => {
+    const code = r.code || r.head?.code || r.head?.accountId || '';
+    const name = r.name || r.head?.name || '';
+    const category = r.category || r.head?.category || '';
+    const group = r.groupName || r.head?.groupName || r.head?.accountType || '';
+    const openingDr = Number(r.openingDr ?? r.openDr ?? 0);
+    const openingCr = Number(r.openingCr ?? r.openCr ?? 0);
+    const periodDr = Number(r.periodDr ?? 0);
+    const periodCr = Number(r.periodCr ?? 0);
+    const closingDr = Number(r.closingDr ?? 0);
+    const closingCr = Number(r.closingCr ?? 0);
+    return {
+      ...r,
+      code,
+      name,
+      category,
+      group,
+      openingDr,
+      openingCr,
+      periodDr,
+      periodCr,
+      closingDr,
+      closingCr,
+    };
+  });
+
   // Format 11: Multi-Pattern Trial Balance Suite
   if (selectedFormat === 'format_11_all_trial_balances') {
     return (
@@ -64,7 +91,7 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
             </h3>
           </div>
           <span className="text-xs bg-slate-800 border border-slate-700 px-2.5 py-1 rounded font-mono">
-            {activeAccountRows.length} Ledger Heads
+            {normalizedRows.length} Ledger Heads
           </span>
         </div>
 
@@ -83,7 +110,7 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
               </tr>
             </thead>
             <tbody>
-              {activeAccountRows.map((row, idx) => (
+              {normalizedRows.map((row, idx) => (
                 <tr
                   key={row.code || idx}
                   className={`border-b border-slate-200 ${
@@ -265,8 +292,8 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
 
   // Format 14: Multi-Pattern Income Statement
   if (selectedFormat === 'format_14_income_statement_patterns') {
-    const revenueRows = activeAccountRows.filter((r) => r.category === 'Revenue');
-    const expenseRows = activeAccountRows.filter((r) => r.category === 'Expense');
+    const revenueRows = normalizedRows.filter((r) => r.category === 'Revenue');
+    const expenseRows = normalizedRows.filter((r) => r.category === 'Expense');
     const totalRev = revenueRows.reduce((s, r) => s + (r.closingCr || r.periodCr || 0), 0);
     const totalExp = expenseRows.reduce((s, r) => s + (r.closingDr || r.periodDr || 0), 0);
     const netSurplus = totalRev - totalExp;
@@ -341,7 +368,7 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
           </h3>
         </div>
         <span className="text-xs bg-slate-800 border border-slate-700 px-2.5 py-1 rounded font-mono">
-          {activeAccountRows.length} Accounts
+          {normalizedRows.length} Accounts
         </span>
       </div>
 
@@ -357,7 +384,7 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
             </tr>
           </thead>
           <tbody>
-            {activeAccountRows.slice(0, 30).map((r, i) => (
+            {normalizedRows.slice(0, 50).map((r, i) => (
               <tr key={r.code || i} className="border-b border-slate-200">
                 <td className="p-2 border-r border-black font-mono font-bold">{r.code}</td>
                 <td className="p-2 border-r border-black font-semibold">{r.name}</td>
