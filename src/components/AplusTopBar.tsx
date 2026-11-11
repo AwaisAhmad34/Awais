@@ -32,8 +32,10 @@ import {
   Building2,
   PanelLeftClose,
   PanelLeftOpen,
+  Zap,
+  Wallet,
 } from 'lucide-react';
-import { useAccounting, ImportCategoryTab } from '../core/aplusEngine';
+import { useAccounting, ImportCategoryTab, Transaction } from '../core/aplusEngine';
 import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
 import {
   subscribeCloudSync,
@@ -71,6 +73,10 @@ import {
 } from '../services/platformSiteAdminService';
 import { DataMigrationControlCenter } from './DataMigrationControlCenter';
 import { DeploymentReadinessHub } from './DeploymentReadinessHub';
+import { SmartCommandBar } from './SmartCommandBar';
+import { ExpressVoucherModal } from './ExpressVoucherModal';
+import { ExpressPettyCashModal } from './ExpressPettyCashModal';
+import { VoucherDetailModal } from './VoucherDetailModal';
 
 interface AplusTopBarProps {
   activeTab: string;
@@ -144,6 +150,9 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const [isSiteAdminHubOpen, setIsSiteAdminHubOpen] = useState(false);
   const [isApprovalMatrixModalOpen, setIsApprovalMatrixModalOpen] = useState(false);
   const [isMigrationCenterOpen, setIsMigrationCenterOpen] = useState(false);
+  const [selectedVoucherForDetail, setSelectedVoucherForDetail] = useState<Transaction | null>(null);
+  const [isExpressVoucherOpen, setIsExpressVoucherOpen] = useState(false);
+  const [isExpressPettyCashOpen, setIsExpressPettyCashOpen] = useState(false);
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('aplus_sidebar_minimized') === 'true';
@@ -560,7 +569,39 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           </span>
         </div>
 
+        {/* Global Smart Command Search Bar */}
+        <div className="w-full xl:w-auto xl:flex-1 xl:max-w-md min-w-[220px]">
+          <SmartCommandBar
+            onNavigate={onNavigate}
+            onOpenExpressVoucher={() => setIsExpressVoucherOpen(true)}
+            onOpenExpressPettyCash={() => setIsExpressPettyCashOpen(true)}
+            onSelectVoucher={(voucher) => setSelectedVoucherForDetail(voucher)}
+          />
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 ml-auto">
+          {/* Quick Express Voucher button */}
+          <button
+            type="button"
+            onClick={() => setIsExpressVoucherOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+            title="Open Express Voucher Overlay for rapid entry without page reload (Alt+N)"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-300 fill-current" />
+            <span>Express Voucher</span>
+          </button>
+
+          {/* Quick Express Petty Cash button */}
+          <button
+            type="button"
+            onClick={() => setIsExpressPettyCashOpen(true)}
+            className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+            title="Record Petty Cash Expense Slip (Alt+P)"
+          >
+            <Wallet className="w-3.5 h-3.5 text-emerald-200" />
+            <span>Petty Cash</span>
+          </button>
+
           {currentUser && (
             <button
               type="button"
@@ -1388,14 +1429,30 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         onClose={() => setIsMigrationCenterOpen(false)}
       />
 
-      {/* Production Deployment Readiness Modal */}
-      {isDeploymentHubOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="max-w-4xl w-full max-h-[92vh] overflow-y-auto">
-            <DeploymentReadinessHub onClose={() => setIsDeploymentHubOpen(false)} />
-          </div>
-        </div>
-      )}
+      {/* Express Voucher Rapid Entry Overlay */}
+      <ExpressVoucherModal
+        isOpen={isExpressVoucherOpen}
+        onClose={() => setIsExpressVoucherOpen(false)}
+        onVoucherCreated={(voucher) => setSelectedVoucherForDetail(voucher)}
+      />
+
+      {/* Express Petty Cash Expense Slip Overlay */}
+      <ExpressPettyCashModal
+        isOpen={isExpressPettyCashOpen}
+        onClose={() => setIsExpressPettyCashOpen(false)}
+      />
+
+      {/* Voucher Detail Modal for 1-Click Smart Jump & Inspect */}
+      <VoucherDetailModal
+        voucher={selectedVoucherForDetail}
+        campuses={campuses}
+        isOpen={Boolean(selectedVoucherForDetail)}
+        onClose={() => setSelectedVoucherForDetail(null)}
+        onNavigateToLedger={(voucherNo) => {
+          setSelectedVoucherForDetail(null);
+          onNavigate('alltransactions');
+        }}
+      />
     </>
   );
 };

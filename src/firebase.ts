@@ -7,6 +7,8 @@ import {
   memoryLruGarbageCollector,
   setLogLevel,
   Firestore,
+  doc,
+  getDocFromServer,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -42,3 +44,15 @@ try {
 
 export const db = firestoreDb;
 export const auth = getAuth(app);
+
+// Skill Directive: Test Firestore connectivity on boot
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'system_state', 'connection_test'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+testConnection();

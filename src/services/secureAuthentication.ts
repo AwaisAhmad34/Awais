@@ -1,6 +1,8 @@
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -104,6 +106,18 @@ export async function authenticateAccount(emailOrUsername: string, password: str
     // Nonexistent accounts, random usernames, and wrong passwords receive strictly identical generic error
     throw new Error('Unable to sign in. Check your email/username and password.');
   }
+}
+
+/**
+ * Signs in securely using Google Sign-in with Firebase Auth (popup flow).
+ * Seamlessly authenticates institutional users and provisions Platform Owner privileges.
+ */
+export async function signInWithGoogle() {
+  verifiedProfile = null;
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const credential = await signInWithPopup(auth, provider);
+  return await restoreAccount(credential.user);
 }
 
 /**
@@ -334,7 +348,7 @@ export async function restoreAccount(user: User) {
       }
     } catch {}
 
-    const isOwner =
+    let isOwner =
       isRegistryOwner ||
       emailLower === 'siteowner@platform.org' ||
       emailLower === 'bajwaahmedsaad345@gmail.com' ||
@@ -343,6 +357,26 @@ export async function restoreAccount(user: User) {
     const seeded = SEED_MULTI_TENANT_USERS.find(
       (u) => u.email.toLowerCase() === emailLower
     );
+
+    // Auto-bootstrap: If platform owner is uninitialized, allow first authenticated Google/institutional user to claim Site Owner
+    if (!isOwner && !seeded) {
+      try {
+        const regSnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry'));
+        if (!regSnap.exists() || !regSnap.data()?.isInitialized) {
+          isOwner = true;
+          await setDoc(doc(db, 'system_state', 'platform_owner_registry'), {
+            isInitialized: true,
+            ownerUid: user.uid,
+            ownerEmail: emailLower,
+            initializedAt: new Date().toISOString(),
+          }, { merge: true });
+          if (typeof window !== 'undefined' && window.localStorage) {
+            localStorage.setItem('aplus_owner_registered_local', 'true');
+            localStorage.setItem('aplus_owner_email_local', emailLower);
+          }
+        }
+      } catch {}
+    }
 
     if (!isOwner && !seeded) {
       await signOut(auth).catch(() => {});

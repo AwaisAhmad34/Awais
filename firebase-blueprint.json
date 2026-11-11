@@ -123,9 +123,30 @@
         "updatedBy": { "type": "string" }
       },
       "required": ["clientId", "reportKey", "enabled"]
+    },
+    "Membership": {
+      "title": "Membership",
+      "description": "User membership, permission levels, and assigned campus profile",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "permissionLevel": { "type": "string" },
+        "clientId": { "type": "string" },
+        "campusId": { "type": "string" },
+        "status": { "type": "string" },
+        "isPlatformAdmin": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["email", "permissionLevel", "status"]
     }
   },
   "firestore": {
+    "/memberships/{uid}": {
+      "schema": { "$ref": "#/entities/Membership" },
+      "description": "Authoritative user account and permission level memberships"
+    },
     "/campuses/{campusId}": {
       "schema": { "$ref": "#/entities/Campus" },
       "description": "School campuses collection"

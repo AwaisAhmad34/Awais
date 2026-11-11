@@ -16,7 +16,7 @@ export interface CampusLoginActivity {
   ipAddress: string;
   device: string;
   status: 'success' | 'failed' | 'locked';
-  method: 'portal_login' | 'vault_one_click' | 'dynamic_auth' | 'switch_branch';
+  method: 'portal_login' | 'vault_one_click' | 'dynamic_auth' | 'switch_branch' | 'google_oauth_popup';
   remarks?: string;
 }
 

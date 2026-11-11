@@ -36,6 +36,7 @@ import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromC
 import { initAuthListener, resetAllUsersAndOwner } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TenantAuthProvider } from './context/TenantAuthContext';
+import { FloatingQuickActionMenu } from './components/FloatingQuickActionMenu';
 
 import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
 
@@ -418,28 +419,30 @@ function InnerApp() {
         </div>
       )}
 
-      {/* Main Layout Clickable Toggle Button for Side Navigation Bar */}
-      <div className="fixed bottom-4 left-4 z-50 print:hidden">
-        <button
-          type="button"
-          onClick={toggleSidebarMinimized}
-          className="px-3.5 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 shadow-2xl flex items-center gap-2 text-xs font-bold transition-all cursor-pointer backdrop-blur-md focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-          title={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
-          aria-label={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
-        >
-          {isSidebarMinimized ? (
-            <>
-              <PanelLeftOpen className="w-4 h-4 text-indigo-400" />
-              <span>Expand Sidebar</span>
-            </>
-          ) : (
-            <>
-              <PanelLeftClose className="w-4 h-4 text-slate-400" />
-              <span>Minimize Sidebar</span>
-            </>
-          )}
-        </button>
-      </div>
+      {/* Main Layout Clickable Toggle Button for Side Navigation Bar (shown when expanded) */}
+      {!isSidebarMinimized && (
+        <div className="fixed bottom-4 left-4 z-50 print:hidden">
+          <button
+            type="button"
+            onClick={toggleSidebarMinimized}
+            className="px-3.5 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 shadow-2xl flex items-center gap-2 text-xs font-bold transition-all cursor-pointer backdrop-blur-md focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+            title="Minimize side navigation bar"
+            aria-label="Minimize side navigation bar"
+          >
+            <PanelLeftClose className="w-4 h-4 text-slate-400" />
+            <span>Minimize Sidebar</span>
+          </button>
+        </div>
+      )}
+
+      {/* Floating Quick Action Speed-Dial Menu when sidebar is minimized */}
+      <FloatingQuickActionMenu
+        isSidebarMinimized={isSidebarMinimized}
+        onToggleSidebar={toggleSidebarMinimized}
+        onOpenSmartSearch={() => {
+          window.dispatchEvent(new CustomEvent('aplus-open-smart-command'));
+        }}
+      />
 
       <MainApp />
     </div>
