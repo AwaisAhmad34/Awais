@@ -12,6 +12,7 @@ import {
   FileText,
   Building2,
   CheckCircle2,
+  CheckSquare,
   Sparkles,
 } from 'lucide-react';
 import { useAccounting } from '../core/aplusEngine';
@@ -22,12 +23,14 @@ interface FloatingQuickActionMenuProps {
   isSidebarMinimized: boolean;
   onToggleSidebar?: () => void;
   onOpenSmartSearch?: () => void;
+  onNavigate?: (tab: string) => void;
 }
 
 export const FloatingQuickActionMenu: React.FC<FloatingQuickActionMenuProps> = ({
   isSidebarMinimized,
   onToggleSidebar,
   onOpenSmartSearch,
+  onNavigate,
 }) => {
   const {
     campuses,
@@ -154,6 +157,35 @@ export const FloatingQuickActionMenu: React.FC<FloatingQuickActionMenuProps> = (
               <kbd className="text-[9px] font-mono bg-slate-950/60 px-1.5 py-0.5 rounded text-emerald-300">
                 Alt+P
               </kbd>
+            </button>
+
+            {/* Action 3: Bulk Voucher Approval */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsMenuOpen(false);
+                if (onNavigate) {
+                  onNavigate('alltransactions');
+                } else {
+                  window.dispatchEvent(new CustomEvent('aplus-navigate-tab', { detail: { tab: 'alltransactions' } }));
+                }
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl bg-slate-800/90 hover:bg-emerald-700/80 border border-slate-700 hover:border-emerald-500/60 text-slate-100 hover:text-white font-bold text-xs flex items-center justify-between gap-2 transition-all cursor-pointer shadow-xs"
+            >
+              <div className="flex items-center gap-2">
+                <div className="p-1 rounded-lg bg-emerald-600 text-white">
+                  <CheckSquare className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <div className="leading-tight">Bulk Voucher Approval</div>
+                  <div className="text-[10px] text-slate-400 group-hover:text-emerald-100 font-normal">
+                    Approve/Reject batch pending
+                  </div>
+                </div>
+              </div>
+              <span className="text-[9px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-600/40 px-1.5 py-0.5 rounded">
+                Batch
+              </span>
             </button>
 
             {/* Action 3: Smart Command Search Trigger */}

@@ -794,7 +794,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {isPlatformSiteAdmin && isModuleAllowed('alltransactions') && (
+          {(isPlatformSiteAdmin || isClientOwnerMainAdmin || currentUser?.role?.includes('admin') || currentUser?.role?.includes('accountant') || isModuleAllowed('alltransactions')) && (
             <button
               onClick={() => onNavigate('alltransactions')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -802,10 +802,10 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
                   ? 'bg-emerald-600 text-white shadow-xs'
                   : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
               }`}
-              title="Open Bulk Pending Voucher Approval & Super Admin Role Visibility Matrix"
+              title="Bulk Voucher Approval: Select multiple pending vouchers to approve or reject in a single batch operation (Auto-synced to Cloud)"
             >
               <CheckSquare className="w-3.5 h-3.5" />
-              <span>Bulk Approval & Role Access ({pendingCount} Pending)</span>
+              <span>Bulk Voucher Approval ({pendingCount} Pending)</span>
             </button>
           )}
 

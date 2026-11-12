@@ -22,7 +22,6 @@ import { getStoredSchoolClients } from '../services/platformSiteAdminService';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
 import {
   authenticateAccount,
-  signInWithGoogle,
   provisionInitialPlatformOwner,
   getVerifiedProfile,
   checkPlatformOwnerStatus,
@@ -242,70 +241,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     }
   };
 
-  const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
-
-  const handleGoogleSignIn = async () => {
-    setIsGoogleSigningIn(true);
-    setErrorMessage(null);
-    setSuccessNotice(null);
-    try {
-      const profile = await signInWithGoogle();
-      if (!profile) {
-        throw new Error('Unable to establish institutional session with Google.');
-      }
-      setSuccessNotice(`Signed in as ${profile.name || profile.username}! Loading workspace...`);
-      const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
-
-      let targetUser = users?.find(
-        (u) =>
-          u.id === profile.id ||
-          (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
-          (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
-      );
-
-      if (!targetUser && addUser) {
-        targetUser = addUser({
-          id: profile.id,
-          username: profile.username || profile.email?.split('@')[0] || 'admin',
-          name: profile.name || 'Campus Administrator',
-          email: profile.email || 'siteowner@platform.org',
-          role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
-          status: 'active',
-          clientId: profile.clientId || null,
-          campusId: profile.campusId || null,
-          permittedCampusIds: profile.delegatedCampusIds || ['all'],
-          allowedModules: profile.allowedModules || ['all'],
-        });
-      }
-
-      const effectiveId = targetUser?.id || profile.id;
-      if (loginAsUser) {
-        loginAsUser(effectiveId, isSuper);
-      }
-
-      recordCampusLoginActivity({
-        campusId: profile.campusId || 'campus-khiali',
-        campusName: isSuper ? 'Platform Central Command' : 'Main Campus',
-        campusCode: isSuper ? 'HQ' : 'MAIN',
-        clientId: profile.clientId || (isSuper ? undefined : 'client-aplus'),
-        clientName: isSuper ? 'Platform Site Owner' : 'Aplus School System',
-        userName: profile.name || profile.username,
-        userRole: profile.role || profile.permissionLevel,
-        userEmail: profile.email || 'google-user@firebase.auth',
-        ipAddress: '127.0.0.1 (Google Auth Verified)',
-        device: navigator.userAgent.slice(0, 45),
-        status: 'success',
-        method: 'google_oauth_popup',
-        remarks: `Authenticated via Google Sign-In with Firebase Auth (${profile.permissionLevel})`,
-      });
-    } catch (err: any) {
-      console.warn('Google Sign-In failed:', err);
-      setErrorMessage(err?.message || 'Google Sign-in failed. Please ensure popup windows are allowed.');
-    } finally {
-      setIsGoogleSigningIn(false);
-    }
-  };
-
   // Task 1: Secure platform-owner initialization
   const handleOwnerSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -522,44 +457,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               </div>
             )}
 
-            {/* Google Sign-In with Firebase Auth */}
-            <div className="space-y-3 mb-5">
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                disabled={isGoogleSigningIn || isAuthenticating}
-                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-900 font-bold text-xs flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-md border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-indigo-400"
-              >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                  />
-                </svg>
-                <span>{isGoogleSigningIn ? 'Connecting to Google Auth...' : 'Continue with Google Account'}</span>
-              </button>
-
-              <div className="relative flex items-center justify-center my-3">
-                <div className="border-t border-slate-800 w-full" />
-                <span className="bg-slate-900 px-3 text-[10px] uppercase font-bold text-slate-400 tracking-wider absolute">
-                  Or Sign In with Credentials
-                </span>
-              </div>
-            </div>
-
-            {/* Task 3: Accessible Form with connected htmlFor labels, aria-invalid and aria-describedby */}
+            {/* Credential-Based Institutional Terminal Sign-In */}
             <form onSubmit={handleLoginSubmit} className="space-y-4" noValidate={false}>
               <div>
                 <label

@@ -518,6 +518,137 @@ export const PlatformSiteAdminHub: React.FC<{
     triggerToast('info', `Client '${target?.name}' status changed to ${newStatus}.`);
   };
 
+  const handleDeleteClient = (client: SchoolClientOrganization) => {
+    const confirmText = `Are you sure you want to delete client organization '${client.name}' (${client.code})?\n\nThis will remove the organization and its registered configuration.`;
+    if (!window.confirm(confirmText)) return;
+
+    const updated = clients.filter((c) => c.id !== client.id);
+    setClients(updated);
+    syncSchoolClientsToCloud(updated);
+
+    recordSiteAdminSecurityEvent({
+      actorName: currentUser?.name || 'Platform Site Admin',
+      actorRole: 'Level 1 Platform Creator',
+      severity: 'high',
+      category: 'CLIENT_MANAGEMENT',
+      action: 'DELETE_CLIENT_ORGANIZATION',
+      targetEntity: 'SchoolClientOrganization',
+      targetId: client.id,
+      details: `Permanently deleted client organization '${client.name}' (${client.code}).`,
+    });
+
+    triggerToast('success', `Client organization '${client.name}' deleted successfully.`);
+  };
+
+  const handleDeleteGlobalUser = (user: any) => {
+    if (user.username === 'admin' || user.id === 'usr-admin' || user.role === 'level_1_platform_super_admin') {
+      triggerToast('error', 'The primary Platform Site Admin root user cannot be deleted.');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to delete user account '${user.name || user.username}' (@${user.username})?`)) {
+      return;
+    }
+
+    try {
+      const userKeys = ['ams_users_v5_clean', 'aplus_users', 'users'];
+      userKeys.forEach((key) => {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const clean = list.filter((u: any) => u.id !== user.id && u.username?.toLowerCase() !== user.username?.toLowerCase());
+            localStorage.setItem(key, JSON.stringify(clean));
+          }
+        }
+      });
+
+      recordSiteAdminSecurityEvent({
+        actorName: currentUser?.name || 'Platform Site Admin',
+        actorRole: 'Level 1 Platform Creator',
+        severity: 'high',
+        category: 'AUTHENTICATION',
+        action: 'DELETE_USER_ACCOUNT',
+        targetEntity: 'User',
+        targetId: user.id || user.username,
+        details: `Deleted user account '${user.name || user.username}' (@${user.username}) from global directory.`,
+      });
+
+      triggerToast('success', `User account '@${user.username}' deleted.`);
+      // Dispatch storage update so consumers re-read
+      window.dispatchEvent(new Event('storage'));
+    } catch (err: any) {
+      triggerToast('error', `Failed to delete user: ${err.message}`);
+    }
+  };
+
+  const handleDownloadCampusBackend = (campus: ExtendedCampusNode) => {
+    try {
+      const campusVouchers = (transactions || []).filter((tx) => tx.campusId === campus.id);
+      const campusPetty = (pettyCashTransactions || []).filter((pt) => pt.campusId === campus.id);
+      const campusUsers = (users || []).filter((u) => u.campusId === campus.id);
+      const subCampuses = (campuses || []).filter((c: any) => c.parentCampusId === campus.id);
+
+      const backendPayload = {
+        meta: {
+          exportType: 'CAMPUS_BACKEND_SNAPSHOT',
+          campusId: campus.id,
+          campusName: campus.name,
+          campusCode: campus.code,
+          exportedAt: new Date().toISOString(),
+          exporter: currentUser?.name || 'Platform Site Admin',
+          version: '2.5.0',
+        },
+        campusProfile: campus,
+        hierarchy: {
+          isMainCampus: Boolean(campus.isMainCampus),
+          parentCampusId: campus.parentCampusId || null,
+          subCampusesCount: subCampuses.length,
+          subCampuses: subCampuses.map((sc) => ({ id: sc.id, code: sc.code, name: sc.name })),
+        },
+        financials: {
+          currentPettyCashFloat: campus.currentPettyCash || campus.pettyCashFloat,
+          totalVouchers: campusVouchers.length,
+          totalPettyCashSlips: campusPetty.length,
+          totalVoucherVolumeDebitPKR: campusVouchers.reduce((sum, v) => sum + Number(v.totalDebit || 0), 0),
+          totalVoucherVolumeCreditPKR: campusVouchers.reduce((sum, v) => sum + Number(v.totalCredit || 0), 0),
+        },
+        transactions: campusVouchers,
+        pettyCashTransactions: campusPetty,
+        assignedUsers: campusUsers.map((u) => ({
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          role: u.role,
+          permissionLevel: u.permissionLevel,
+        })),
+      };
+
+      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backendPayload, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute('download', `backend_campus_${campus.code.toLowerCase()}_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+
+      recordSiteAdminSecurityEvent({
+        actorName: currentUser?.name || 'Platform Site Admin',
+        actorRole: 'Level 1 Platform Creator',
+        severity: 'low',
+        category: 'SYSTEM_SETTINGS',
+        action: 'DOWNLOAD_CAMPUS_BACKEND',
+        targetEntity: 'Campus',
+        targetId: campus.id,
+        details: `Downloaded complete backend dataset for campus '${campus.name}' (${campus.code}) containing ${campusVouchers.length} vouchers and ${campusPetty.length} petty cash slips.`,
+      });
+
+      triggerToast('success', `Downloaded backend dataset for campus '${campus.name}' (${campus.code})!`);
+    } catch (err: any) {
+      triggerToast('error', `Download failed: ${err.message}`);
+    }
+  };
+
   // --------------------------------------------------------------------------
   // CAMPUS HIERARCHY HANDLERS & CYCLE PREVENTION
   // --------------------------------------------------------------------------
@@ -1947,6 +2078,16 @@ export const PlatformSiteAdminHub: React.FC<{
                                 <Sliders className="w-3 h-3 text-indigo-400" />
                                 <span>Modules ({c.enabledModules?.length || DEFAULT_CLIENT_MODULES.length}/16)</span>
                               </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteClient(c)}
+                                className="px-2 py-1 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold text-[10px] border border-rose-800/80 transition-colors cursor-pointer flex items-center gap-1"
+                                title={`Delete client organization '${c.name}'`}
+                              >
+                                <Trash2 className="w-3 h-3 text-rose-400" />
+                                <span>Delete</span>
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -2118,6 +2259,16 @@ export const PlatformSiteAdminHub: React.FC<{
 
                             <button
                               type="button"
+                              onClick={() => handleDownloadCampusBackend(campus)}
+                              className="px-2.5 py-1 rounded-lg bg-blue-950/90 hover:bg-blue-900 text-blue-300 border border-blue-700/80 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                              title={`Download complete backend database and transactions for ${campus.name}`}
+                            >
+                              <Download className="w-3 h-3 text-blue-400" />
+                              <span>Backend</span>
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => handleOpenAddUserModal(campus.id)}
                               className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
                               title={`Create a login user account assigned to ${campus.name}`}
@@ -2259,6 +2410,17 @@ export const PlatformSiteAdminHub: React.FC<{
                                 >
                                   Edit
                                 </button>
+                                {!isCreator && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteGlobalUser(u)}
+                                    className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold text-[10px] transition-colors cursor-pointer border border-rose-800/80 flex items-center gap-1"
+                                    title={`Delete user account @${u.username}`}
+                                  >
+                                    <Trash2 className="w-2.5 h-2.5 text-rose-400" />
+                                    <span>Delete</span>
+                                  </button>
+                                )}
                                 <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800">
                                   Active ✓
                                 </span>

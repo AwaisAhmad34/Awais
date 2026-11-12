@@ -22,6 +22,7 @@ import {
   BulkVoucherAndAccessManager,
   installGlobalVisibilityHook,
 } from './components/BulkVoucherAndAccessManager';
+import { BulkVoucherApprovalHub } from './components/BulkVoucherApprovalHub';
 import { FinancialHealthAndSuggestions } from './components/FinancialHealthAndSuggestions';
 import { DailyCashSummary } from './components/DailyCashSummary';
 import { MultiFormatReportsHub } from './components/MultiFormatReportsHub';
@@ -145,8 +146,8 @@ window.__APLUS_CASH_RECONCILIATION__ = PhysicalCashReconciliation;
 window.__APLUS_BUDGET_VARIANCE_WIDGET__ = BudgetVarianceWidget;
 window.__APLUS_PETTY_CASH_CHART__ = PettyCashCategoryAnalytics;
 window.__APLUS_MODERN_ERP__ = ModernErpSuite;
-// Executive Dashboard is reserved exclusively for charts & institutional performance
-window.__APLUS_BULK_VOUCHER_HUB__ = undefined;
+// Dedicated Bulk Voucher Approval Hub for Campus Admins & Site Admins
+window.__APLUS_BULK_VOUCHER_HUB__ = BulkVoucherApprovalHub;
 window.__APLUS_SUGGESTIONS_HUB__ = undefined;
 window.__APLUS_DAILY_CASH_SUMMARY__ = DailyCashSummary;
 window.__APLUS_SITE_ADMIN_HUB__ = PlatformSiteAdminHub;
@@ -459,8 +460,8 @@ export default function App() {
     window.__APLUS_CASH_RECONCILIATION__ = PhysicalCashReconciliation;
     window.__APLUS_BUDGET_VARIANCE_WIDGET__ = BudgetVarianceWidget;
     window.__APLUS_PETTY_CASH_CHART__ = PettyCashCategoryAnalytics;
-    // Executive Dashboard is reserved exclusively for charts & institutional performance
-    window.__APLUS_BULK_VOUCHER_HUB__ = undefined;
+    // Dedicated Bulk Voucher Approval Hub for Campus Admins & Site Admins
+    window.__APLUS_BULK_VOUCHER_HUB__ = BulkVoucherApprovalHub;
     window.__APLUS_SUGGESTIONS_HUB__ = undefined;
     window.__APLUS_DAILY_CASH_SUMMARY__ = DailyCashSummary;
     window.__APLUS_SITE_ADMIN_HUB__ = PlatformSiteAdminHub;

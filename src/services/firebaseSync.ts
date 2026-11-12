@@ -1188,3 +1188,27 @@ export async function loadMultiSchoolRegistryFromCloud(): Promise<any | null> {
     return null;
   }
 }
+
+export async function syncVoucher(voucher: any): Promise<void> {
+  if (window.__APLUS_CLOUD_SYNC__?.syncVoucher) {
+    await window.__APLUS_CLOUD_SYNC__.syncVoucher(voucher);
+    return;
+  }
+  if (!voucher?.id) return;
+  const clientId = getEffectiveClientId(voucher);
+  const path = `organizations/${clientId}/vouchers/${String(voucher.id)}`;
+  await setDoc(doc(db, path), {
+    ...sanitizeForFirestore(voucher),
+    clientId,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+export function autoSaveMasterState(state: any): void {
+  if (window.__APLUS_CLOUD_SYNC__?.autoSaveMasterState) {
+    window.__APLUS_CLOUD_SYNC__.autoSaveMasterState(state);
+    return;
+  }
+  pushMasterCloudSnapshot(state).catch(() => {});
+}
+

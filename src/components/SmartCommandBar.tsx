@@ -7,12 +7,15 @@ import {
   CreditCard,
   FileText,
   ArrowRight,
-  Sparkles,
-  Command,
-  X,
   ExternalLink,
   Wallet,
   CheckCircle2,
+  History,
+  Trash2,
+  Clock,
+  Sparkles,
+  Command,
+  X,
 } from 'lucide-react';
 import {
   useAccounting,
@@ -20,6 +23,13 @@ import {
   Campus,
   AccountHead,
 } from '../core/aplusEngine';
+import {
+  getRecentVoucherSearches,
+  saveRecentVoucherSearch,
+  deleteRecentVoucherSearch,
+  clearAllRecentVoucherSearches,
+  RecentVoucherSearch,
+} from '../services/recentSearchesIndexedDb';
 
 interface SmartCommandBarProps {
   onNavigate?: (tab: string) => void;
@@ -49,9 +59,31 @@ export const SmartCommandBar: React.FC<SmartCommandBarProps> = ({
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [recentSearches, setRecentSearches] = useState<RecentVoucherSearch[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Load IndexedDB recent searches
+  useEffect(() => {
+    getRecentVoucherSearches().then((list) => {
+      setRecentSearches(list);
+    });
+  }, [isOpen]);
+
+  // Persist search query to IndexedDB on debounce
+  useEffect(() => {
+    if (!query || query.trim().length < 2) return;
+    const timer = setTimeout(() => {
+      saveRecentVoucherSearch({
+        query: query.trim(),
+        campusId: currentCampusId,
+      }).then((updated) => {
+        setRecentSearches(updated);
+      });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [query, currentCampusId]);
 
   // Global keyboard shortcut: Ctrl+K or Cmd+K to focus command bar, or custom event
   useEffect(() => {
@@ -320,6 +352,52 @@ export const SmartCommandBar: React.FC<SmartCommandBarProps> = ({
             </span>
             <span>Use ↑↓ to navigate • Enter to jump</span>
           </div>
+
+          {/* Recent Searches Header & Chips (when query is empty or partially filled) */}
+          {recentSearches.length > 0 && (
+            <div className="p-2.5 bg-slate-950/80 border-b border-slate-800">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 font-semibold mb-1.5">
+                <span className="flex items-center gap-1.5 text-indigo-300 font-bold">
+                  <History className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Recent Searches (IndexedDB)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearAllRecentVoucherSearches().then(() => setRecentSearches([]));
+                  }}
+                  className="text-[10px] text-slate-500 hover:text-rose-400 font-mono transition-colors cursor-pointer"
+                >
+                  Clear History
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {recentSearches.slice(0, 6).map((rec) => (
+                  <div
+                    key={rec.id}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-900/60 border border-slate-700 hover:border-indigo-500 text-slate-200 hover:text-white text-[11px] font-medium transition-all group cursor-pointer"
+                    onClick={() => {
+                      setQuery(rec.query);
+                      inputRef.current?.focus();
+                    }}
+                  >
+                    <Clock className="w-2.5 h-2.5 text-slate-400 group-hover:text-indigo-400" />
+                    <span>{rec.query}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteRecentVoucherSearch(rec.id).then((upd) => setRecentSearches(upd));
+                      }}
+                      className="text-slate-500 hover:text-rose-400 ml-0.5"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="overflow-y-auto divide-y divide-slate-800/60 p-1.5">
             {flatList.length === 0 ? (
