@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   AccountingProvider,
   MainApp,
@@ -32,7 +32,12 @@ import { PermissionEngine } from './components/PermissionEngine';
 import { PlatformSiteAdminHub } from './components/PlatformSiteAdminHub';
 import { ClientOwnerManagementHub } from './components/ClientOwnerManagementHub';
 import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyBudgetExpenditureChart';
-import { initFirebaseCloudSync } from './services/firebaseSync';
+import {
+  initFirebaseCloudSync,
+  subscribeCloudSync,
+  triggerInstantCloudSyncAndLoad,
+  type CloudSyncStats,
+} from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
 import { initAuthListener, resetAllUsersAndOwner } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -172,6 +177,11 @@ function InnerApp() {
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
   const [clientsVersion, setClientsVersion] = useState(0);
+  const [syncStats, setSyncStats] = useState<CloudSyncStats | null>(null);
+
+  useEffect(() => {
+    return subscribeCloudSync(setSyncStats);
+  }, []);
 
   // Side navigation bar expanded / minimized state variable in main layout
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
@@ -212,52 +222,50 @@ function InnerApp() {
     return () => window.removeEventListener('aplus-sidebar-toggle', handleToggleEvent);
   }, []);
 
+  const authBridgeRef = useRef({ currentUser, loginAsUser, users, addUser, updateUser });
+  authBridgeRef.current = { currentUser, loginAsUser, users, addUser, updateUser };
+
   useEffect(() => {
     initAuthListener((profile) => {
-      if (profile && loginAsUser) {
-        const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
-        let target = users?.find(
-          (u: any) =>
-            u.id === profile.id ||
-            (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
-            (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
-        );
+      const bridge = authBridgeRef.current;
+      if (!profile || !bridge.loginAsUser) return;
+      const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
+      let target = bridge.users?.find(
+        (u: any) =>
+          u.id === profile.id ||
+          (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
+          (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
+      );
 
-        if (!target && addUser) {
-          target = addUser({
-            id: profile.id,
-            uid: profile.uid,
-            username: profile.username || profile.email?.split('@')[0] || 'user',
-            name: profile.name || 'Campus Administrator',
-            email: profile.email || `${profile.username}@institution.edu.pk`,
-            role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
-            permissionLevel: profile.permissionLevel,
-            status: 'active',
-            clientId: profile.clientId || null,
-            campusId: profile.campusId || null,
-            permittedCampusIds: profile.permittedCampusIds || ['all'],
-            delegatedSubCampusIds: profile.delegatedCampusIds || [],
-            allowedModules: profile.allowedModules || ['all'],
-          });
-        } else if (target && updateUser) {
-          updateUser(target.id, {
-            uid: profile.uid,
-            permissionLevel: profile.permissionLevel,
-            role: profile.role || target.role,
-            clientId: profile.clientId ?? target.clientId ?? null,
-            campusId: profile.campusId ?? target.campusId ?? null,
-            permittedCampusIds: profile.permittedCampusIds || target.permittedCampusIds || ['all'],
-            delegatedSubCampusIds: profile.delegatedCampusIds || target.delegatedSubCampusIds || [],
-            allowedModules: profile.allowedModules || target.allowedModules || ['all'],
-          });
-        }
+      const resolvedUserObj = {
+        id: target?.id || profile.id,
+        uid: profile.uid,
+        username: profile.username || target?.username || profile.email?.split('@')[0] || 'user',
+        name: profile.name || target?.name || 'Campus Administrator',
+        email: profile.email || target?.email || `${profile.username}@institution.edu.pk`,
+        role: profile.role || target?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+        permissionLevel: profile.permissionLevel,
+        status: 'active',
+        clientId: profile.clientId ?? target?.clientId ?? null,
+        campusId: profile.campusId ?? target?.campusId ?? null,
+        permittedCampusIds: profile.permittedCampusIds || target?.permittedCampusIds || ['all'],
+        delegatedSubCampusIds: profile.delegatedCampusIds || target?.delegatedSubCampusIds || [],
+        allowedModules: profile.allowedModules || target?.allowedModules || ['all'],
+      };
 
-        fetchSchoolClientsFromCloud().catch(() => {});
-        const effectiveId = target?.id || profile.id;
-        loginAsUser(effectiveId, isSuper);
+      if (!target && bridge.addUser) {
+        target = bridge.addUser(resolvedUserObj);
+      } else if (target && bridge.updateUser) {
+        bridge.updateUser(target.id, resolvedUserObj);
+      }
+
+      fetchSchoolClientsFromCloud().catch(() => {});
+      const effectiveId = target?.id || resolvedUserObj.id;
+      if (bridge.currentUser?.id !== effectiveId) {
+        (bridge.loginAsUser as any)(effectiveId, isSuper, { ...resolvedUserObj, id: effectiveId });
       }
     });
-  }, [loginAsUser, users, addUser, updateUser]);
+  }, []);
 
   useEffect(() => {
     const handleUpdated = () => setClientsVersion((v) => v + 1);
@@ -318,6 +326,32 @@ function InnerApp() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void triggerInstantCloudSyncAndLoad();
+              }}
+              className="px-2.5 py-1 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Auto-Sync active (syncs changes <=1s, loads cloud delta every 2s). Click to run immediate sync & load."
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>
+                {syncStats?.status === 'synchronizing'
+                  ? 'Syncing...'
+                  : syncStats?.status === 'offline'
+                  ? 'Offline Queue'
+                  : 'Auto-Synced (1s)'}
+              </span>
+              {(syncStats?.lastCloudLoadAt || syncStats?.lastSyncedAt) && (
+                <span className="font-mono text-[10px] text-emerald-400/90">
+                  {new Date(syncStats.lastCloudLoadAt || syncStats.lastSyncedAt || '').toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+              )}
+            </button>
             <button
               type="button"
               onClick={() => setAdminViewMode('campus_operations')}

@@ -43,7 +43,9 @@ import {
   pushMasterCloudSnapshot,
   pullMasterCloudSnapshot,
   fetchCashReconciliationsFromCloud,
+  triggerInstantCloudSyncAndLoad,
 } from '../services/firebaseSync';
+import { logoutAccount } from '../services/secureAuthentication';
 import { SuperAdminImportModal } from './SuperAdminImportModal';
 import { VoucherA4PrintStudioModal } from './PrintableVoucherA4Layout';
 import { PlatformSiteAdminHub } from './PlatformSiteAdminHub';
@@ -512,15 +514,28 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
               <span>Synchronization failed</span>
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold text-[11px]">
+            <button
+              type="button"
+              onClick={() => {
+                setBusy(true);
+                triggerInstantCloudSyncAndLoad().finally(() => setBusy(false));
+              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/35 text-emerald-300 font-bold text-[11px] transition-colors cursor-pointer"
+              title="Auto-Sync & Cloud Load active (syncs changes in <=1s, checks cloud every 2s). Click to run instant sync & load now."
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Saved to cloud</span>
-              {syncStats.lastSyncedAt && (
-                <span className="text-[10px] text-emerald-400/80 font-normal">
-                  ({new Date(syncStats.lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+              <span>Auto-Synced (1s)</span>
+              {(syncStats.lastCloudLoadAt || syncStats.lastSyncedAt) && (
+                <span className="text-[10px] text-emerald-400/90 font-mono font-normal">
+                  {new Date(syncStats.lastCloudLoadAt || syncStats.lastSyncedAt || '').toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
                 </span>
               )}
-            </span>
+            </button>
           )}
 
           {/* Active Tenant Badge */}
@@ -606,6 +621,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             <button
               type="button"
               onClick={() => {
+                logoutAccount().catch(() => {});
                 if (logout) {
                   logout();
                 }

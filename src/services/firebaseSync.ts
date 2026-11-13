@@ -15,6 +15,7 @@ import {
 import { auth, db } from '../firebase';
 import {
   saveStoredSchoolClients,
+  getStoredSchoolClients,
   subscribeSchoolClientsFromCloud,
 } from './platformSiteAdminService';
 import {
@@ -22,6 +23,10 @@ import {
   subscribeToGlobalUsersFromCloud,
   type GlobalUserRecord,
 } from './globalUserSyncService';
+import {
+  RealtimeAutoSyncScheduler,
+  type SyncFingerprintInput,
+} from './realtimeSyncScheduler';
 
 export type SyncStatus =
   | 'connecting'
@@ -37,6 +42,9 @@ export type SyncStatus =
 
 export interface CloudSyncStats {
   lastSyncedAt: string | null;
+  lastCloudLoadAt?: string | null;
+  autoSyncActive?: boolean;
+  autoSyncIntervalMs?: number;
   status: SyncStatus;
   message?: string;
   activeTenant?: string;
@@ -50,10 +58,15 @@ export interface CloudSyncStats {
 type Listener = (stats: CloudSyncStats) => void;
 const listeners = new Set<Listener>();
 
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let syncInitialized = false;
 let cloudHydrated = false;
 let activeUnsubscribers: Unsubscribe[] = [];
+let autoSyncEnabled = true;
+let syncScheduler: RealtimeAutoSyncScheduler | null = null;
+let lastAppliedCloudUpdatedAt = '';
+let lastOwnWriteStamp = 0;
+let activeTrashIds = new Set<string>();
+let instantBroadcastChannel: BroadcastChannel | null = null;
 
 // ============================================================================
 // NATIVE INDEXEDDB NAMESPACED OFFLINE CACHE & OUTBOX
@@ -225,6 +238,9 @@ async function drainOfflineOutbox(): Promise<number> {
 
 let currentStats: CloudSyncStats = {
   lastSyncedAt: null,
+  lastCloudLoadAt: null,
+  autoSyncActive: true,
+  autoSyncIntervalMs: 1000,
   status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'connecting',
   message: 'Connecting to Cloud Datastore...',
   offlinePendingCount: 0,
@@ -238,9 +254,47 @@ function notify(partial: Partial<CloudSyncStats>) {
     activeTenant: profile?.clientId || 'Aplus Network',
     activeCampus: profile?.campusId || 'Central Administration',
     authenticatedUser: profile?.name || profile?.email || 'Authenticated User',
+    autoSyncActive: autoSyncEnabled,
+    autoSyncIntervalMs: 1000,
     ...partial,
   };
   listeners.forEach((fn) => fn(currentStats));
+}
+
+async function hasPendingOutboxOps(): Promise<boolean> {
+  const idb = await openOfflineIndexedDB();
+  if (!idb) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = idb.transaction(IDB_STORE_OUTBOX, 'readonly');
+      const req = tx.objectStore(IDB_STORE_OUTBOX).count();
+      req.onsuccess = () => resolve((req.result || 0) > 0);
+      req.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+function getCombinedSyncSnapshot(): SyncFingerprintInput | null {
+  if (typeof window === 'undefined') return null;
+  const engineState = window.__APLUS_GET_CURRENT_STATE__?.();
+  if (!engineState) return null;
+  return {
+    ...engineState,
+    schoolClients: getStoredSchoolClients(),
+  };
+}
+
+function broadcastLocalStateUpdate(state: any) {
+  try {
+    instantBroadcastChannel?.postMessage({
+      type: 'STATE_SYNCED',
+      updatedAt: new Date().toISOString(),
+      voucherCount: state?.transactions?.length || 0,
+      campusCount: state?.campuses?.length || 0,
+    });
+  } catch {}
 }
 
 export function subscribeCloudSync(fn: Listener) {
@@ -545,113 +599,35 @@ export function initFirebaseCloudSync() {
       } catch {}
     },
 
-    // Debounced global cloud persistence: stores authoritative state dynamically in Firestore
+    // Reactive sub-second global cloud persistence via 1-second RealtimeAutoSyncScheduler
     autoSaveMasterState(state: any) {
       if (!state) return;
 
-      // Save local cache for offline resiliency
+      // Save local cache immediately for offline resiliency
       saveSnapshotToIndexedDB(state, typeof navigator !== 'undefined' ? !navigator.onLine : false).catch(() => {});
 
-      if (autoSaveTimer) clearTimeout(autoSaveTimer);
-      autoSaveTimer = setTimeout(async () => {
-        try {
-          if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-          const clientId = getEffectiveClientId();
-          const profile = getVerifiedProfile();
-
-          const sanitizedState = {
-            clientId,
-            updatedAt: new Date().toISOString(),
-            updatedBy: profile?.username || profile?.email || 'authenticated_user',
-            voucherCount: state?.transactions?.length || 0,
-            campusCount: state?.campuses?.length || 0,
-            pettyCashCount: state?.pettyCashTransactions?.length || 0,
-            accountHeadCount: state?.accountHeads?.length || 0,
-            transactions: sanitizeForFirestore(state?.transactions || []),
-            campuses: sanitizeForFirestore(state?.campuses || []),
-            pettyCashTransactions: sanitizeForFirestore(state?.pettyCashTransactions || []),
-            accountHeads: sanitizeForFirestore(state?.accountHeads || []),
-            orgSettings: sanitizeForFirestore(state?.orgSettings || {}),
-            periods: sanitizeForFirestore(state?.periods || []),
-          };
-
-          // 1. Authoritative Cloud Master Snapshot
-          await setDoc(
-            doc(db, 'organizations', clientId, 'snapshots', 'live_state'),
-            sanitizedState,
-            { merge: true }
-          );
-
-          // 2. Organization root heartbeat
-          await setDoc(
-            doc(db, 'organizations', clientId),
-            {
-              id: clientId,
-              status: 'active',
-              migrationStatus: 'ready',
-              lastActivityAt: new Date().toISOString(),
-              voucherCount: state?.transactions?.length || 0,
-              campusCount: state?.campuses?.length || 0,
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-
-          // 3. Incrementally ensure individual entity documents are synchronized in subcollections
-          try {
-            const batch = writeBatch(db);
-            let opCount = 0;
-
-            // Sync most recent vouchers
-            const recentVouchers = (state?.transactions || []).slice(0, 30);
-            for (const v of recentVouchers) {
-              if (v?.id && opCount < 40) {
-                batch.set(
-                  doc(db, 'organizations', clientId, 'vouchers', String(v.id)),
-                  { ...sanitizeForFirestore(v), clientId, updatedAt: new Date().toISOString() },
-                  { merge: true }
-                );
-                opCount++;
-              }
-            }
-
-            // Sync campuses
-            for (const c of (state?.campuses || []).slice(0, 20)) {
-              if (c?.id && opCount < 50) {
-                batch.set(
-                  doc(db, 'organizations', clientId, 'campuses', String(c.id)),
-                  { ...sanitizeForFirestore(c), clientId, updatedAt: new Date().toISOString() },
-                  { merge: true }
-                );
-                opCount++;
-              }
-            }
-
-            if (opCount > 0) {
-              await batch.commit();
-            }
-          } catch {}
-
-          await saveSnapshotToIndexedDB(state, false);
-
-          notify({
-            status: 'saved_to_cloud',
-            offlinePendingCount: 0,
-            indexedDbCached: true,
-            lastSyncedAt: new Date().toISOString(),
-            message: `Saved to global cloud (${state?.transactions?.length || 0} vouchers, ${
-              state?.campuses?.length || 0
-            } campuses)`,
-          });
-        } catch (err: any) {
-          console.warn('[Cloud Persistence] Master state autoSave notice:', err?.message);
-        }
-      }, 700);
+      const scheduler = ensureAutoSyncScheduler();
+      scheduler.markDirty({
+        ...state,
+        schoolClients: getStoredSchoolClients(),
+      });
     },
   };
 
   if (syncInitialized) return;
   syncInitialized = true;
+
+  // Cross-tab instant synchronization channel (<50ms between browser tabs)
+  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    try {
+      instantBroadcastChannel = new BroadcastChannel('aplus_instant_sync_v1');
+      instantBroadcastChannel.onmessage = () => {
+        if (auth.currentUser && navigator.onLine) {
+          void ensureAutoSyncScheduler().pullNow();
+        }
+      };
+    } catch {}
+  }
 
   // Listen for online/offline transitions
   if (typeof window !== 'undefined') {
@@ -670,6 +646,7 @@ export function initFirebaseCloudSync() {
       });
       try {
         const drained = await drainOfflineOutbox();
+        await triggerInstantCloudSyncAndLoad();
         notify({
           status: 'saved_to_cloud',
           offlinePendingCount: 0,
@@ -681,22 +658,269 @@ export function initFirebaseCloudSync() {
         notify({ status: 'saved_to_cloud' });
       }
     });
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && auth.currentUser) {
+        void ensureAutoSyncScheduler().tick();
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    const handleEntityChangeEvent = () => {
+      if (auth.currentUser) {
+        const snap = getCombinedSyncSnapshot();
+        if (snap) ensureAutoSyncScheduler().markDirty(snap);
+      }
+    };
+    window.addEventListener('aplus-clients-updated', handleEntityChangeEvent);
+    window.addEventListener('aplus-global-users-updated', handleEntityChangeEvent);
+    window.addEventListener('aplus-force-cloud-sync', () => {
+      void triggerInstantCloudSyncAndLoad();
+    });
   }
 
   window.addEventListener('aplus-logout', () => {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    syncScheduler?.stop();
     cleanupSubscriptions();
   });
 
   window.addEventListener('aplus-verified-login', () => {
     void startCrossBrowserRealtimeSync();
+    ensureAutoSyncScheduler().start();
   });
+
+  ensureAutoSyncScheduler().start();
 
   setTimeout(() => {
     startCrossBrowserRealtimeSync().catch(() => {
       window.__APLUS_MARK_CLOUD_READY__?.();
     });
   }, 100);
+}
+
+async function flushMasterSnapshotToCloud(state: any): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  if (!auth.currentUser) return;
+
+  await drainOfflineOutbox().catch(() => 0);
+
+  const clientId = getEffectiveClientId();
+  const profile = getVerifiedProfile();
+  const nowIso = new Date().toISOString();
+  lastOwnWriteStamp = Date.now();
+  lastAppliedCloudUpdatedAt = nowIso;
+
+  const sanitizedState = {
+    clientId,
+    updatedAt: nowIso,
+    updatedBy: profile?.username || profile?.email || 'authenticated_user',
+    voucherCount: state?.transactions?.length || 0,
+    campusCount: state?.campuses?.length || 0,
+    pettyCashCount: state?.pettyCashTransactions?.length || 0,
+    accountHeadCount: state?.accountHeads?.length || 0,
+    transactions: sanitizeForFirestore(state?.transactions || []),
+    campuses: sanitizeForFirestore(state?.campuses || []),
+    pettyCashTransactions: sanitizeForFirestore(state?.pettyCashTransactions || []),
+    accountHeads: sanitizeForFirestore(state?.accountHeads || []),
+    orgSettings: sanitizeForFirestore(state?.orgSettings || {}),
+    periods: sanitizeForFirestore(state?.periods || []),
+  };
+
+  // 1. Authoritative Cloud Master Snapshot
+  await setDoc(
+    doc(db, 'organizations', clientId, 'snapshots', 'live_state'),
+    sanitizedState,
+    { merge: true }
+  );
+
+  // 2. Organization root heartbeat
+  await setDoc(
+    doc(db, 'organizations', clientId),
+    {
+      id: clientId,
+      status: 'active',
+      migrationStatus: 'ready',
+      lastActivityAt: nowIso,
+      voucherCount: state?.transactions?.length || 0,
+      campusCount: state?.campuses?.length || 0,
+      updatedAt: nowIso,
+    },
+    { merge: true }
+  );
+
+  // 3. Incrementally mirror entities into tenant subcollections
+  try {
+    const batch = writeBatch(db);
+    let opCount = 0;
+
+    for (const v of (state?.transactions || []).slice(0, 40)) {
+      if (v?.id && opCount < 60) {
+        batch.set(
+          doc(db, 'organizations', clientId, 'vouchers', String(v.id)),
+          { ...sanitizeForFirestore(v), clientId, updatedAt: nowIso },
+          { merge: true }
+        );
+        opCount++;
+      }
+    }
+
+    for (const p of (state?.pettyCashTransactions || []).slice(0, 25)) {
+      if (p?.id && opCount < 90) {
+        batch.set(
+          doc(db, 'organizations', clientId, 'petty_cash', String(p.id)),
+          { ...sanitizeForFirestore(p), clientId, updatedAt: nowIso },
+          { merge: true }
+        );
+        opCount++;
+      }
+    }
+
+    for (const c of (state?.campuses || []).slice(0, 20)) {
+      if (c?.id && opCount < 115) {
+        batch.set(
+          doc(db, 'organizations', clientId, 'campuses', String(c.id)),
+          { ...sanitizeForFirestore(c), clientId, updatedAt: nowIso },
+          { merge: true }
+        );
+        opCount++;
+      }
+    }
+
+    for (const a of (state?.accountHeads || []).slice(0, 35)) {
+      if (a?.id && opCount < 155) {
+        batch.set(
+          doc(db, 'organizations', clientId, 'account_heads', String(a.id)),
+          { ...sanitizeForFirestore(a), clientId, updatedAt: nowIso },
+          { merge: true }
+        );
+        opCount++;
+      }
+    }
+
+    if (opCount > 0) {
+      await batch.commit();
+    }
+  } catch {}
+
+  await saveSnapshotToIndexedDB(state, false);
+  broadcastLocalStateUpdate(state);
+
+  notify({
+    status: 'saved_to_cloud',
+    offlinePendingCount: 0,
+    indexedDbCached: true,
+    lastSyncedAt: nowIso,
+    message: `Auto-synced to cloud (${state?.transactions?.length || 0} vouchers · ${
+      state?.campuses?.length || 0
+    } campuses)`,
+  });
+}
+
+async function pullDeltaCloudUpdate(): Promise<void> {
+  if (!auth.currentUser || !cloudHydrated) return;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+  const clientId = getEffectiveClientId();
+  try {
+    const snap = await getDoc(doc(db, 'organizations', clientId, 'snapshots', 'live_state'));
+    const nowIso = new Date().toISOString();
+    if (!snap.exists()) {
+      notify({ lastCloudLoadAt: nowIso });
+      return;
+    }
+
+    const data = snap.data();
+    const remoteUpdatedAt = String(data?.updatedAt || '');
+    const withinOwnEchoWindow = Date.now() - lastOwnWriteStamp < 1200;
+
+    if (
+      remoteUpdatedAt &&
+      remoteUpdatedAt !== lastAppliedCloudUpdatedAt &&
+      remoteUpdatedAt > lastAppliedCloudUpdatedAt &&
+      !withinOwnEchoWindow
+    ) {
+      const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+      if (cur) {
+        lastAppliedCloudUpdatedAt = remoteUpdatedAt;
+        const hydrated = {
+          ...cur,
+          transactions: Array.isArray(data.transactions) ? data.transactions : cur.transactions,
+          campuses: Array.isArray(data.campuses) ? data.campuses : cur.campuses,
+          pettyCashTransactions: Array.isArray(data.pettyCashTransactions)
+            ? data.pettyCashTransactions
+            : cur.pettyCashTransactions,
+          accountHeads:
+            Array.isArray(data.accountHeads) && data.accountHeads.length > 0
+              ? data.accountHeads
+              : cur.accountHeads,
+          orgSettings: data.orgSettings || cur.orgSettings,
+          periods: Array.isArray(data.periods) && data.periods.length > 0 ? data.periods : cur.periods,
+        };
+        window.__APLUS_HYDRATE_FROM_CLOUD__?.(hydrated);
+        syncScheduler?.markHydratedFromCloud({
+          ...hydrated,
+          schoolClients: getStoredSchoolClients(),
+        });
+        await saveSnapshotToIndexedDB(hydrated, false);
+        notify({
+          status: 'saved_to_cloud',
+          lastSyncedAt: nowIso,
+          lastCloudLoadAt: nowIso,
+          message: `Auto-loaded latest cloud update (${hydrated.transactions?.length || 0} vouchers)`,
+        });
+        return;
+      }
+    }
+
+    notify({ lastCloudLoadAt: nowIso });
+  } catch (err: any) {
+    console.warn('[AutoSync] Delta load check notice:', err?.message);
+  }
+}
+
+function ensureAutoSyncScheduler(): RealtimeAutoSyncScheduler {
+  if (!syncScheduler) {
+    syncScheduler = new RealtimeAutoSyncScheduler({
+      tickIntervalMs: 1000,
+      debounceMs: 250,
+      maxWaitMs: 1000,
+      cloudLoadIntervalMs: 2000,
+      getSnapshot: () => getCombinedSyncSnapshot(),
+      canSyncNetwork: () => {
+        if (!autoSyncEnabled) return false;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
+        return Boolean(auth.currentUser);
+      },
+      hasPendingOutbox: hasPendingOutboxOps,
+      onFlushChanges: async (snapshot) => {
+        await flushMasterSnapshotToCloud(snapshot);
+      },
+      onPullLatest: async () => {
+        await pullDeltaCloudUpdate();
+      },
+    });
+  }
+  return syncScheduler;
+}
+
+export async function triggerInstantCloudSyncAndLoad(): Promise<void> {
+  const scheduler = ensureAutoSyncScheduler();
+  await scheduler.flushIfDirty();
+  await scheduler.pullNow();
+}
+
+export function setAutoSyncEnabled(enabled: boolean): void {
+  autoSyncEnabled = enabled;
+  const scheduler = ensureAutoSyncScheduler();
+  if (enabled) {
+    scheduler.start();
+    void scheduler.tick();
+  } else {
+    scheduler.stop();
+  }
+  notify({ autoSyncActive: enabled });
 }
 
 function cleanupSubscriptions() {
@@ -780,24 +1004,27 @@ async function startCrossBrowserRealtimeSync() {
       fetchGlobalUsersFromCloud(),
     ]);
 
-    const trashIds = new Set(trashSnap.docs.map((d) => d.id));
+    activeTrashIds = new Set(trashSnap.docs.map((d) => d.id));
     const cloudMasterData = liveSnapDoc.exists() ? liveSnapDoc.data() : null;
+    if (cloudMasterData?.updatedAt) {
+      lastAppliedCloudUpdatedAt = String(cloudMasterData.updatedAt);
+    }
 
     const cloudVouchers = vouchersSnap.docs
       .map((d) => ({ ...d.data(), id: d.id }))
-      .filter((v: any) => !trashIds.has(v.id) && !v.deletedAt);
+      .filter((v: any) => !activeTrashIds.has(v.id) && !v.deletedAt);
 
     const cloudPettyCash = pettySnap.docs
       .map((d) => ({ ...d.data(), id: d.id }))
-      .filter((p: any) => !trashIds.has(p.id) && !p.deletedAt);
+      .filter((p: any) => !activeTrashIds.has(p.id) && !p.deletedAt);
 
     const cloudCampuses = campusesSnap.docs
       .map((d) => ({ ...d.data(), id: d.id }))
-      .filter((c: any) => !trashIds.has(c.id));
+      .filter((c: any) => !activeTrashIds.has(c.id));
 
     const cloudCOA = coaSnap.docs
       .map((d) => ({ ...d.data(), id: d.id }))
-      .filter((a: any) => !trashIds.has(a.id));
+      .filter((a: any) => !activeTrashIds.has(a.id));
 
     const localState = window.__APLUS_GET_CURRENT_STATE__?.() || idbCached?.state || {};
 
@@ -845,43 +1072,75 @@ async function startCrossBrowserRealtimeSync() {
 
     cloudHydrated = true;
     window.__APLUS_MARK_CLOUD_READY__?.();
+    ensureAutoSyncScheduler().markHydratedFromCloud({
+      ...finalState,
+      schoolClients: getStoredSchoolClients(),
+    });
+    ensureAutoSyncScheduler().start();
 
     notify({
       status: 'saved_to_cloud',
       lastSyncedAt: new Date().toISOString(),
+      lastCloudLoadAt: new Date().toISOString(),
       offlinePendingCount: 0,
       indexedDbCached: true,
-      message: `Global Cloud Connected (${finalTransactions.length} vouchers · ${finalCampuses.length} campuses · ${finalUsers.length} users)`,
+      message: `Auto-Sync Active (1s) · ${finalTransactions.length} vouchers · ${finalCampuses.length} campuses · ${finalUsers.length} users`,
     });
 
-    // 3. REAL-TIME ON-SNAPSHOT LISTENERS for cross-device & cross-terminal synchronization
-    // 3A. Master Live Snapshot Listener
+    // 3. REAL-TIME ON-SNAPSHOT LISTENERS for cross-device & cross-terminal synchronization (<1s)
+    // 3A. Live Trash Listener so deleted records stay deleted across all sessions
+    const unsubTrash = onSnapshot(
+      collection(db, 'organizations', clientId, 'trash'),
+      (snap) => {
+        activeTrashIds = new Set(snap.docs.map((d) => d.id));
+      },
+      (err) => console.warn('Trash onSnapshot notice:', err.message)
+    );
+    activeUnsubscribers.push(unsubTrash);
+
+    // 3B. Master Live Snapshot Listener
     const unsubMaster = onSnapshot(
       doc(db, 'organizations', clientId, 'snapshots', 'live_state'),
       (snap) => {
         if (!snap.exists()) return;
         const data = snap.data();
         if (!data) return;
-        // Avoid applying our own immediate writes
-        const profile = getVerifiedProfile();
-        const currentUserId = profile?.username || profile?.email || 'authenticated_user';
-        if (data.updatedBy === currentUserId && Date.now() - new Date(data.updatedAt).getTime() < 1200) {
+        // Skip echo of our own immediate local write
+        if (
+          Date.now() - lastOwnWriteStamp < 1200 &&
+          data.updatedAt === lastAppliedCloudUpdatedAt
+        ) {
           return;
+        }
+        if (data.updatedAt) {
+          lastAppliedCloudUpdatedAt = String(data.updatedAt);
         }
         const cur = window.__APLUS_GET_CURRENT_STATE__?.();
         if (cur) {
-          window.__APLUS_HYDRATE_FROM_CLOUD__?.({
+          const nextState = {
             ...cur,
             transactions: Array.isArray(data.transactions) ? data.transactions : cur.transactions,
             campuses: Array.isArray(data.campuses) ? data.campuses : cur.campuses,
-            pettyCashTransactions: Array.isArray(data.pettyCashTransactions) ? data.pettyCashTransactions : cur.pettyCashTransactions,
-            accountHeads: Array.isArray(data.accountHeads) && data.accountHeads.length > 0 ? data.accountHeads : cur.accountHeads,
+            pettyCashTransactions: Array.isArray(data.pettyCashTransactions)
+              ? data.pettyCashTransactions
+              : cur.pettyCashTransactions,
+            accountHeads:
+              Array.isArray(data.accountHeads) && data.accountHeads.length > 0
+                ? data.accountHeads
+                : cur.accountHeads,
             orgSettings: data.orgSettings || cur.orgSettings,
+            periods: Array.isArray(data.periods) && data.periods.length > 0 ? data.periods : cur.periods,
+          };
+          window.__APLUS_HYDRATE_FROM_CLOUD__?.(nextState);
+          syncScheduler?.markHydratedFromCloud({
+            ...nextState,
+            schoolClients: getStoredSchoolClients(),
           });
           notify({
             status: 'saved_to_cloud',
             lastSyncedAt: new Date().toISOString(),
-            message: 'Realtime update received from cloud datastore',
+            lastCloudLoadAt: new Date().toISOString(),
+            message: 'Realtime update loaded from cloud datastore',
           });
         }
       },
@@ -889,21 +1148,25 @@ async function startCrossBrowserRealtimeSync() {
     );
     activeUnsubscribers.push(unsubMaster);
 
-    // 3B. Vouchers Real-Time Listener
+    // 3C. Vouchers Real-Time Listener (including last-item deletion)
     const unsubVouchers = onSnapshot(
       collection(db, 'organizations', clientId, 'vouchers'),
       (snap) => {
         const updated = snap.docs
           .map((d) => ({ ...d.data(), id: d.id }))
-          .filter((v: any) => !trashIds.has(v.id) && !v.deletedAt);
-        if (Array.isArray(updated) && updated.length > 0) {
+          .filter((v: any) => !activeTrashIds.has(v.id) && !v.deletedAt);
+        const hasRemovals = snap.docChanges().some((c) => c.type === 'removed');
+        if (updated.length > 0 || hasRemovals) {
           const cur = window.__APLUS_GET_CURRENT_STATE__?.();
           if (cur) {
-            window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, transactions: updated });
+            const next = { ...cur, transactions: updated };
+            window.__APLUS_HYDRATE_FROM_CLOUD__?.(next);
+            syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
             notify({
               status: 'saved_to_cloud',
               lastSyncedAt: new Date().toISOString(),
-              message: `Realtime update: ${updated.length} vouchers synchronized`,
+              lastCloudLoadAt: new Date().toISOString(),
+              message: `Realtime sync: ${updated.length} vouchers loaded`,
             });
           }
         }
@@ -912,17 +1175,20 @@ async function startCrossBrowserRealtimeSync() {
     );
     activeUnsubscribers.push(unsubVouchers);
 
-    // 3C. Petty Cash Real-Time Listener
+    // 3D. Petty Cash Real-Time Listener (including last-item deletion)
     const unsubPetty = onSnapshot(
       collection(db, 'organizations', clientId, 'petty_cash'),
       (snap) => {
         const updated = snap.docs
           .map((d) => ({ ...d.data(), id: d.id }))
-          .filter((p: any) => !trashIds.has(p.id) && !p.deletedAt);
-        if (Array.isArray(updated) && updated.length > 0) {
+          .filter((p: any) => !activeTrashIds.has(p.id) && !p.deletedAt);
+        const hasRemovals = snap.docChanges().some((c) => c.type === 'removed');
+        if (updated.length > 0 || hasRemovals) {
           const cur = window.__APLUS_GET_CURRENT_STATE__?.();
           if (cur) {
-            window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, pettyCashTransactions: updated });
+            const next = { ...cur, pettyCashTransactions: updated };
+            window.__APLUS_HYDRATE_FROM_CLOUD__?.(next);
+            syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
           }
         }
       },
@@ -930,17 +1196,20 @@ async function startCrossBrowserRealtimeSync() {
     );
     activeUnsubscribers.push(unsubPetty);
 
-    // 3D. Campuses Real-Time Listener
+    // 3E. Campuses Real-Time Listener (including last-item deletion)
     const unsubCampuses = onSnapshot(
       collection(db, 'organizations', clientId, 'campuses'),
       (snap) => {
         const updated = snap.docs
           .map((d) => ({ ...d.data(), id: d.id }))
-          .filter((c: any) => !trashIds.has(c.id));
-        if (Array.isArray(updated) && updated.length > 0) {
+          .filter((c: any) => !activeTrashIds.has(c.id));
+        const hasRemovals = snap.docChanges().some((c) => c.type === 'removed');
+        if (updated.length > 0 || hasRemovals) {
           const cur = window.__APLUS_GET_CURRENT_STATE__?.();
           if (cur) {
-            window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, campuses: updated });
+            const next = { ...cur, campuses: updated };
+            window.__APLUS_HYDRATE_FROM_CLOUD__?.(next);
+            syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
           }
         }
       },
@@ -948,11 +1217,34 @@ async function startCrossBrowserRealtimeSync() {
     );
     activeUnsubscribers.push(unsubCampuses);
 
-    // 3E. Global School Clients Registry Real-Time Listener
-    const unsubClients = subscribeSchoolClientsFromCloud(() => {});
+    // 3F. Chart of Accounts Real-Time Listener
+    const unsubCOA = onSnapshot(
+      collection(db, 'organizations', clientId, 'account_heads'),
+      (snap) => {
+        const updated = snap.docs
+          .map((d) => ({ ...d.data(), id: d.id }))
+          .filter((a: any) => !activeTrashIds.has(a.id));
+        const hasRemovals = snap.docChanges().some((c) => c.type === 'removed');
+        if (updated.length > 0 || hasRemovals) {
+          const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+          if (cur) {
+            const next = { ...cur, accountHeads: updated };
+            window.__APLUS_HYDRATE_FROM_CLOUD__?.(next);
+            syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
+          }
+        }
+      },
+      (err) => console.warn('COA onSnapshot notice:', err.message)
+    );
+    activeUnsubscribers.push(unsubCOA);
+
+    // 3G. Global School Clients Registry Real-Time Listener
+    const unsubClients = subscribeSchoolClientsFromCloud(() => {
+      notify({ lastCloudLoadAt: new Date().toISOString() });
+    });
     activeUnsubscribers.push(unsubClients);
 
-    // 3F. Global Users Real-Time Listener (syncs logins live across browsers)
+    // 3H. Global Users Real-Time Listener (syncs logins live across browsers)
     const unsubGlobalUsers = subscribeToGlobalUsersFromCloud((cloudList) => {
       const cur = window.__APLUS_GET_CURRENT_STATE__?.();
       const merged = mergeUsersWithCloud(cloudList, cur?.users || []);
@@ -960,6 +1252,7 @@ async function startCrossBrowserRealtimeSync() {
       if (cur && cloudList.length > 0) {
         window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, users: merged });
       }
+      notify({ lastCloudLoadAt: new Date().toISOString() });
     });
     activeUnsubscribers.push(unsubGlobalUsers);
 

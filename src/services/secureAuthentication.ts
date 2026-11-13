@@ -605,7 +605,12 @@ export async function restoreAccount(user: User) {
 /**
  * Initializes automatic background session recovery on page reload
  */
+let latestProfileCallback: ((profile: any) => void) | undefined;
+
 export function initAuthListener(onProfileReady?: (profile: any) => void) {
+  if (onProfileReady) {
+    latestProfileCallback = onProfileReady;
+  }
   if (authListenerAttached) return;
   authListenerAttached = true;
 
@@ -613,7 +618,7 @@ export function initAuthListener(onProfileReady?: (profile: any) => void) {
     if (user) {
       try {
         const profile = await restoreAccount(user);
-        if (onProfileReady) onProfileReady(profile);
+        if (latestProfileCallback) latestProfileCallback(profile);
       } catch (err) {
         console.warn('Membership verification pending or failed for signed-in Firebase user:', err);
         verifiedProfile = null;

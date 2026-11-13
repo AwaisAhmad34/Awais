@@ -195,57 +195,52 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
       );
 
+      const resolvedUserObj = {
+        id: targetUser?.id || profile.id,
+        uid: profile.uid,
+        username: profile.username || targetUser?.username || profile.email?.split('@')[0] || 'user',
+        name: profile.name || targetUser?.name || 'Campus Administrator',
+        email: profile.email || targetUser?.email || `${profile.username}@institution.edu.pk`,
+        role: profile.role || targetUser?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+        permissionLevel: profile.permissionLevel,
+        status: 'active',
+        clientId: profile.clientId ?? targetUser?.clientId ?? null,
+        campusId: profile.campusId ?? targetUser?.campusId ?? null,
+        permittedCampusIds: profile.permittedCampusIds || targetUser?.permittedCampusIds || ['all'],
+        delegatedSubCampusIds: profile.delegatedCampusIds || targetUser?.delegatedSubCampusIds || [],
+        allowedModules: profile.allowedModules || targetUser?.allowedModules || ['all'],
+      };
+
       if (!targetUser && addUser) {
-        targetUser = addUser({
-          id: profile.id,
-          uid: profile.uid,
-          username: profile.username || profile.email?.split('@')[0] || 'user',
-          name: profile.name || 'Campus Administrator',
-          email: profile.email || `${profile.username}@institution.edu.pk`,
-          role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
-          permissionLevel: profile.permissionLevel,
-          status: 'active',
-          clientId: profile.clientId || null,
-          campusId: profile.campusId || null,
-          permittedCampusIds: profile.permittedCampusIds || ['all'],
-          delegatedSubCampusIds: profile.delegatedCampusIds || [],
-          allowedModules: profile.allowedModules || ['all'],
-        });
+        targetUser = addUser(resolvedUserObj);
       } else if (targetUser && updateUser) {
-        updateUser(targetUser.id, {
-          uid: profile.uid,
-          permissionLevel: profile.permissionLevel,
-          role: profile.role || targetUser.role,
-          clientId: profile.clientId ?? targetUser.clientId ?? null,
-          campusId: profile.campusId ?? targetUser.campusId ?? null,
-          permittedCampusIds: profile.permittedCampusIds || targetUser.permittedCampusIds || ['all'],
-          delegatedSubCampusIds: profile.delegatedCampusIds || targetUser.delegatedSubCampusIds || [],
-          allowedModules: profile.allowedModules || targetUser.allowedModules || ['all'],
-        });
+        updateUser(targetUser.id, resolvedUserObj);
       }
 
-      const effectiveId = targetUser?.id || profile.id;
+      const effectiveId = targetUser?.id || resolvedUserObj.id;
       if (loginAsUser) {
-        loginAsUser(effectiveId, isSuper);
+        (loginAsUser as any)(effectiveId, isSuper, { ...resolvedUserObj, id: effectiveId });
       }
 
-      // 3. Record audit activity
-      const userCamp = campuses.find((c) => c.id === profile.campusId) || campuses[0];
-      recordCampusLoginActivity({
-        campusId: profile.campusId || userCamp?.id || 'campus-khiali',
-        campusName: userCamp?.name || (isSuper ? 'Platform Central Command' : 'Main Campus'),
-        campusCode: userCamp?.code || 'HQ',
-        clientId: profile.clientId || (isSuper ? undefined : 'client-aplus'),
-        clientName: matchingClient?.name || (isSuper ? 'Platform Site Owner' : 'Aplus School System'),
-        userName: profile.name || profile.username,
-        userRole: profile.role || profile.permissionLevel,
-        userEmail: profile.email || cleanInput,
-        ipAddress: '127.0.0.1 (Firebase Auth Verified)',
-        device: navigator.userAgent.slice(0, 45),
-        status: 'success',
-        method: 'portal_login',
-        remarks: `Authenticated via Firebase Auth (${profile.permissionLevel})`,
-      });
+      // 3. Record audit activity (non-blocking)
+      try {
+        const userCamp = campuses.find((c) => c.id === profile.campusId) || campuses[0];
+        recordCampusLoginActivity({
+          campusId: profile.campusId || userCamp?.id || 'campus-khiali',
+          campusName: userCamp?.name || (isSuper ? 'Platform Central Command' : 'Main Campus'),
+          campusCode: userCamp?.code || 'HQ',
+          clientId: profile.clientId || (isSuper ? undefined : 'client-aplus'),
+          clientName: matchingClient?.name || (isSuper ? 'Platform Site Owner' : 'Aplus School System'),
+          userName: profile.name || profile.username,
+          userRole: profile.role || profile.permissionLevel,
+          userEmail: profile.email || cleanInput,
+          ipAddress: '127.0.0.1 (Firebase Auth Verified)',
+          device: navigator.userAgent.slice(0, 45),
+          status: 'success',
+          method: 'portal_login',
+          remarks: `Authenticated via Firebase Auth (${profile.permissionLevel})`,
+        });
+      } catch {}
     } catch (err: any) {
       console.warn('Sign-in failure (diagnostic):', err?.message);
       // Strictly generic public message prevents account enumeration and avoids recommending setup
@@ -286,8 +281,27 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       setIsOwnerSetupOpen(false);
       triggerButtonRef.current?.focus();
 
+      const normalizedOwnerEmail = ownerEmail.trim().toLowerCase();
+      const ownerUserObj = {
+        id: profile.id,
+        uid: profile.uid,
+        username: profile.username || normalizedOwnerEmail.split('@')[0] || 'admin',
+        name: profile.name || ownerName || 'Platform Super Admin (Site Owner)',
+        email: profile.email || normalizedOwnerEmail,
+        role: profile.role || 'level_1_platform_super_admin',
+        permissionLevel: 'level_1_platform_super_admin',
+        status: 'active',
+        clientId: null,
+        campusId: null,
+        permittedCampusIds: ['all'],
+        delegatedSubCampusIds: [],
+        allowedModules: ['all'],
+      };
+      if (addUser) {
+        addUser(ownerUserObj);
+      }
       if (loginAsUser) {
-        loginAsUser(profile.id, true);
+        (loginAsUser as any)(ownerUserObj.id, true, ownerUserObj);
       }
     } catch (err: any) {
       setOwnerSetupStatus(err.message || 'Owner initialization failed.');
