@@ -40,7 +40,6 @@ import {
   RoleActivitySummary,
   getStoredCampusLoginActivities,
   calculateUserActivityStats,
-  simulateRandomLoginActivity,
   clearCampusLoginActivities,
   formatRelativeTime,
   normalizeRoleCategory,
@@ -66,7 +65,7 @@ export const SystemUserActivityWidget: React.FC<SystemUserActivityWidgetProps> =
   const [selectedCampusFilter, setSelectedCampusFilter] = useState<string>('all');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isSimulating, setIsSimulating] = useState(false);
+  const [confirmClearTelemetry, setConfirmClearTelemetry] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'by_campus' | 'by_role' | 'trend' | 'live_stream'>('overview');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -111,16 +110,6 @@ export const SystemUserActivityWidget: React.FC<SystemUserActivityWidgetProps> =
     );
   }, [filteredActivities, timeFilter, selectedCampusFilter, selectedRoleFilter]);
 
-  // Handler: Simulate Live Login Event
-  const handleSimulateLogin = () => {
-    setIsSimulating(true);
-    setTimeout(() => {
-      const newAct = simulateRandomLoginActivity(campuses, users);
-      setActivities((prev) => [newAct, ...prev]);
-      setIsSimulating(false);
-      showToast(`Recorded live login for ${newAct.userName} at ${newAct.campusCode} (${newAct.status.toUpperCase()})`);
-    }, 300);
-  };
 
   // Handler: Export Activity Data as CSV
   const handleExportCsv = () => {
@@ -156,11 +145,10 @@ export const SystemUserActivityWidget: React.FC<SystemUserActivityWidgetProps> =
 
   // Handler: Purge Activities
   const handleClearActivities = () => {
-    if (window.confirm('Reset telemetry activity logs back to fresh system default?')) {
-      clearCampusLoginActivities();
-      loadActivities();
-      showToast('Login telemetry reset to baseline state.');
-    }
+    clearCampusLoginActivities();
+    setConfirmClearTelemetry(false);
+    loadActivities();
+    showToast('Login telemetry cleared to 0 entries.');
   };
 
   // Color palette for campus bars
@@ -223,17 +211,6 @@ export const SystemUserActivityWidget: React.FC<SystemUserActivityWidgetProps> =
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleSimulateLogin}
-            disabled={isSimulating}
-            className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50"
-            title="Simulate a real-time authenticated session entry to test live chart responsiveness"
-          >
-            <Zap className={`w-3.5 h-3.5 ${isSimulating ? 'animate-bounce' : 'text-amber-300'}`} />
-            <span>Simulate Live Login</span>
-          </button>
-
-          <button
-            type="button"
             onClick={loadActivities}
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
             title="Reload Activity Telemetry"
@@ -251,14 +228,34 @@ export const SystemUserActivityWidget: React.FC<SystemUserActivityWidgetProps> =
             <span>Export CSV</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleClearActivities}
-            className="p-2 rounded-xl bg-slate-800/60 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-            title="Reset telemetry baseline"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {confirmClearTelemetry ? (
+            <div className="flex items-center gap-1.5 bg-rose-950/90 border border-rose-700 px-2.5 py-1 rounded-xl">
+              <span className="text-[11px] font-bold text-rose-200">Clear logs?</span>
+              <button
+                type="button"
+                onClick={handleClearActivities}
+                className="px-2 py-0.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold cursor-pointer"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmClearTelemetry(false)}
+                className="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmClearTelemetry(true)}
+              className="p-2 rounded-xl bg-slate-800/60 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+              title="Clear login telemetry logs"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

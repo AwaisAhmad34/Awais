@@ -21,6 +21,7 @@ import {
 import {
   fetchGlobalUsersFromCloud,
   subscribeToGlobalUsersFromCloud,
+  normalizeAndDeduplicateGlobalUsers,
   type GlobalUserRecord,
 } from './globalUserSyncService';
 import {
@@ -905,10 +906,31 @@ function ensureAutoSyncScheduler(): RealtimeAutoSyncScheduler {
   return syncScheduler;
 }
 
+function dispatchGlobalUsersSyncedEvent(usersList: GlobalUserRecord[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new CustomEvent('aplus-global-users-synced', { detail: usersList }));
+  } catch {}
+}
+
 export async function triggerInstantCloudSyncAndLoad(): Promise<void> {
   const scheduler = ensureAutoSyncScheduler();
   await scheduler.flushIfDirty();
   await scheduler.pullNow();
+  if (auth.currentUser && (typeof navigator === 'undefined' || navigator.onLine)) {
+    try {
+      const cloudUsers = await fetchGlobalUsersFromCloud();
+      const finalUsers = normalizeAndDeduplicateGlobalUsers(cloudUsers, getVerifiedProfile());
+      syncLocalUsersCache(finalUsers);
+      const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+      if (cur && window.__APLUS_HYDRATE_FROM_CLOUD__) {
+        const next = { ...cur, users: finalUsers };
+        window.__APLUS_HYDRATE_FROM_CLOUD__(next);
+        syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
+      }
+      dispatchGlobalUsersSyncedEvent(finalUsers);
+    } catch {}
+  }
 }
 
 export function setAutoSyncEnabled(enabled: boolean): void {
@@ -943,7 +965,13 @@ async function startCrossBrowserRealtimeSync() {
     // 1. Initial local cache check for instant render
     const idbCached = await loadSnapshotFromIndexedDB();
     if (idbCached?.state) {
-      window.__APLUS_HYDRATE_FROM_CLOUD__?.(idbCached.state);
+      const sanitizedCachedState = {
+        ...idbCached.state,
+        ...(Array.isArray(idbCached.state.users)
+          ? { users: normalizeAndDeduplicateGlobalUsers(idbCached.state.users) }
+          : {}),
+      };
+      window.__APLUS_HYDRATE_FROM_CLOUD__?.(sanitizedCachedState);
     }
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -1068,6 +1096,7 @@ async function startCrossBrowserRealtimeSync() {
 
     window.__APLUS_HYDRATE_FROM_CLOUD__?.(finalState);
     syncLocalUsersCache(finalUsers);
+    dispatchGlobalUsersSyncedEvent(finalUsers);
     await saveSnapshotToIndexedDB(finalState, false);
 
     cloudHydrated = true;
@@ -1246,12 +1275,15 @@ async function startCrossBrowserRealtimeSync() {
 
     // 3H. Global Users Real-Time Listener (syncs logins live across browsers)
     const unsubGlobalUsers = subscribeToGlobalUsersFromCloud((cloudList) => {
-      const cur = window.__APLUS_GET_CURRENT_STATE__?.();
-      const merged = mergeUsersWithCloud(cloudList, cur?.users || []);
+      const merged = mergeUsersWithCloud(cloudList, []);
       syncLocalUsersCache(merged);
-      if (cur && cloudList.length > 0) {
-        window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, users: merged });
+      const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+      if (cur) {
+        const next = { ...cur, users: merged };
+        window.__APLUS_HYDRATE_FROM_CLOUD__?.(next);
+        syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
       }
+      dispatchGlobalUsersSyncedEvent(merged);
       notify({ lastCloudLoadAt: new Date().toISOString() });
     });
     activeUnsubscribers.push(unsubGlobalUsers);
@@ -1266,25 +1298,8 @@ async function startCrossBrowserRealtimeSync() {
   }
 }
 
-function mergeUsersWithCloud(cloudUsers: GlobalUserRecord[], localUsers: any[]): any[] {
-  if (!cloudUsers || cloudUsers.length === 0) {
-    return Array.isArray(localUsers) ? localUsers : [];
-  }
-  const byId = new Map<string, any>();
-  for (const cu of cloudUsers) {
-    if (cu?.id) byId.set(cu.id, cu);
-  }
-  // Ensure currently logged-in root owner stays present if not yet uploaded
-  for (const lu of localUsers || []) {
-    if (
-      lu?.id &&
-      (lu.id === 'user-platform-owner' || lu.id === 'usr-admin' || lu.username === 'admin') &&
-      !byId.has(lu.id)
-    ) {
-      byId.set(lu.id, lu);
-    }
-  }
-  return Array.from(byId.values());
+function mergeUsersWithCloud(cloudUsers: GlobalUserRecord[], _localUsers: any[]): GlobalUserRecord[] {
+  return normalizeAndDeduplicateGlobalUsers(cloudUsers || [], getVerifiedProfile());
 }
 
 function syncLocalUsersCache(usersList: any[]) {

@@ -63,6 +63,13 @@ function purgeDuplicateUsersFromStorage() {
         const clean: any[] = [];
         for (const u of parsed) {
           if (!u) continue;
+          if (
+            u.id === 'user-admin' &&
+            String(u.username || '').toLowerCase() === 'admin' &&
+            String(u.email || '').toLowerCase() === 'admin@aschoolsystem.edu.pk'
+          ) {
+            continue;
+          }
           const uid = u.id ? String(u.id).trim() : '';
           const uname = u.username ? String(u.username).toLowerCase().trim() : '';
           if (uid && seenIds.has(uid)) continue;

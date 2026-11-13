@@ -285,6 +285,8 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
       addUser,
       updateUser,
       resetUserPassword,
+      syncMissingUsersToEngine: true,
+      syncToCloud: true,
     });
 
     logActivity(
@@ -348,6 +350,8 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
       addUser,
       updateUser,
       resetUserPassword,
+      syncMissingUsersToEngine: true,
+      syncToCloud: true,
     });
 
     logActivity(
@@ -383,6 +387,8 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
         addUser,
         updateUser,
         resetUserPassword,
+        syncMissingUsersToEngine: true,
+        syncToCloud: true,
       });
       showToast(
         'success',

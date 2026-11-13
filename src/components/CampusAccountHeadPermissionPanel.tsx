@@ -92,7 +92,7 @@ export const CampusAccountHeadPermissionPanel: React.FC<CampusAccountHeadPermiss
     getStoredHierarchicalRbacConfig(campuses, accountHeads)
   );
 
-  const [activeViewMode, setActiveViewMode] = useState<PanelViewMode>('illustrative_demo');
+  const [activeViewMode, setActiveViewMode] = useState<PanelViewMode>('live_account_heads');
   const [selectedCampusId, setSelectedCampusId] = useState<string>(campuses[0]?.id || '');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');

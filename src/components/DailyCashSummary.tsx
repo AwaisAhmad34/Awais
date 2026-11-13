@@ -477,113 +477,6 @@ export const DailyCashSummary: React.FC<{
   }, [allDailyRecords, activeCampusFilter, recordFilter, searchQuery]);
 
   // 1-Click Quick Sample Seed for the selected date if the user wants to see populated data immediately
-  const handleSeedQuickSample = () => {
-    const targetCampus = campuses[0];
-    if (!targetCampus) return;
-
-    const nextCRVNo = getNextVoucherNumber('CRV', targetCampus.id);
-    const nextCPVNo = getNextVoucherNumber('CPV', targetCampus.id);
-
-    // 1. Add sample CRV (e.g. Student fee cash collection)
-    const crvTx = {
-      id: `crv-demo-${Date.now()}`,
-      voucherNo: nextCRVNo,
-      voucherType: 'CRV' as const,
-      campusId: targetCampus.id,
-      date: selectedDate,
-      narration: `Daily Student Tuition & Admission Cash Collection — ${targetCampus.name}`,
-      entries: [
-        {
-          id: `crv-ent-1-${Date.now()}`,
-          accountId: cashInHandAccount?.id || '1031',
-          accountCode: '100-4-01',
-          accountName: 'Cash In Hand',
-          description: 'Cash received at admission counter',
-          debit: 45000,
-          credit: 0,
-        },
-        {
-          id: `crv-ent-2-${Date.now()}`,
-          accountId: '4001',
-          accountCode: '400-1-01',
-          accountName: 'Tuition Fee Income',
-          description: 'Monthly student tuition fees collected',
-          debit: 0,
-          credit: 45000,
-        },
-      ],
-      totalDebit: 45000,
-      totalCredit: 45000,
-      status: 'Posted' as const,
-      preparedBy: currentUser?.name || 'Cashier Desk',
-    };
-    addTransaction(crvTx);
-
-    // 2. Add sample CPV (e.g. Daily maintenance & utilities cash payment)
-    const cpvTx = {
-      id: `cpv-demo-${Date.now() + 1}`,
-      voucherNo: nextCPVNo,
-      voucherType: 'CPV' as const,
-      campusId: targetCampus.id,
-      date: selectedDate,
-      narration: `Daily Generator Fuel & Electrical Maintenance Cash Payment — ${targetCampus.name}`,
-      entries: [
-        {
-          id: `cpv-ent-1-${Date.now()}`,
-          accountId: '5005',
-          accountCode: '500-2-01',
-          accountName: 'Campus Utilities & Fuel',
-          description: 'Generator diesel emergency purchase',
-          debit: 12500,
-          credit: 0,
-        },
-        {
-          id: `cpv-ent-2-${Date.now()}`,
-          accountId: cashInHandAccount?.id || '1031',
-          accountCode: '100-4-01',
-          accountName: 'Cash In Hand',
-          description: 'Cash paid out to fuel vendor',
-          debit: 0,
-          credit: 12500,
-        },
-      ],
-      totalDebit: 12500,
-      totalCredit: 12500,
-      status: 'Posted' as const,
-      preparedBy: currentUser?.name || 'Cashier Desk',
-    };
-    addTransaction(cpvTx);
-
-    // 3. Add sample Petty Cash disbursement
-    const nextPettyNo = getNextPettyCashNumber(targetCampus.id);
-    addPettyCashTransaction({
-      id: `petty-demo-${Date.now()}`,
-      voucherNo: nextPettyNo,
-      campusId: targetCampus.id,
-      date: selectedDate,
-      type: 'Disbursement',
-      payee: 'City Stationers & Printing',
-      category: 'Exam Papers & Printing',
-      amount: 3200,
-      narration: 'Urgent mock test paper xerox and binding supplies',
-      balanceAfter: Math.max(0, (targetCampus.currentPettyCash || 50000) - 3200),
-      approvedBy: 'Campus Supervisor',
-    });
-
-    logActivity(
-      'CREATE_VOUCHER',
-      'DailyCashSummary',
-      crvTx.voucherNo,
-      `Recorded sample daily cash transactions (CRV Rs. 45,000, CPV Rs. 12,500, Petty Cash Rs. 3,200) for ${selectedDate}`,
-      targetCampus.id,
-      45000
-    );
-
-    triggerNotice(
-      `Recorded live sample cash flow for ${selectedDate} (+Rs. 45,000 Inflow, -Rs. 15,700 Outflow)!`
-    );
-  };
-
   // Quick Action form submission from the dashboard
   const handleQuickEntrySubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1085,7 +978,7 @@ export const DailyCashSummary: React.FC<{
             </div>
           </div>
 
-          {/* Empty state helper with 1-click test populator */}
+          {/* Empty state notice */}
           {consolidatedTotals.totalInflow === 0 && consolidatedTotals.totalOutflow === 0 && (
             <div className="p-4 sm:p-5 rounded-2xl bg-amber-50/70 border border-amber-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -1097,22 +990,12 @@ export const DailyCashSummary: React.FC<{
                     No cash transactions recorded for {selectedDate} yet
                   </h4>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    Campus cashier registers are currently balanced. You can record a live Cash Receipt
-                    (CRV), issue a Cash Payment (CPV), or click below to populate sample transactions for
-                    immediate testing.
+                    Campus cashier registers are currently at 0. Record a live Cash Receipt (CRV) or Cash Payment (CPV) above to begin posting daily cash flow.
                   </p>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={handleSeedQuickSample}
-                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Populate Sample Day Flow</span>
-                </button>
-                {latestActivityDate && latestActivityDate !== selectedDate && (
+              {latestActivityDate && latestActivityDate !== selectedDate && (
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
                     onClick={() => setSelectedDate(latestActivityDate)}
@@ -1120,8 +1003,8 @@ export const DailyCashSummary: React.FC<{
                   >
                     Switch to {latestActivityDate}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
 

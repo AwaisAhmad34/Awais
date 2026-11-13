@@ -1,5 +1,6 @@
 import { Campus } from '../core/aplusEngine';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
+import { provisionGlobalUserAccount } from './globalUserSyncService';
 import {
   collection,
   doc,
@@ -247,11 +248,9 @@ export async function syncAllCampusCredentialsToCloud(
 export async function fetchCampusCredentialsFromCloud(): Promise<CampusCredential[]> {
   try {
     const snap = await getDocs(collection(db, 'campus_credentials'));
-    if (!snap.empty) {
-      const cloudCreds = snap.docs.map((d) => d.data() as CampusCredential);
-      saveLocalStoredCampusCredentials(cloudCreds);
-      return cloudCreds;
-    }
+    const cloudCreds = snap.docs.map((d) => d.data() as CampusCredential);
+    saveLocalStoredCampusCredentials(cloudCreds);
+    return cloudCreds;
   } catch (err) {
     console.warn('Could not fetch campus credentials from Firestore:', err);
   }
@@ -295,10 +294,8 @@ export function subscribeToCloudCampusCredentials(
       onSnapshot(
         collection(db, 'campus_credentials'),
         (snap) => {
-          if (!snap.empty) {
-            const list = snap.docs.map((d) => d.data() as CampusCredential);
-            saveLocalStoredCampusCredentials(list);
-          }
+          const list = snap.docs.map((d) => d.data() as CampusCredential);
+          saveLocalStoredCampusCredentials(list);
         },
         (error) => {
           console.warn('Firestore campus_credentials onSnapshot listener error:', error);
@@ -413,8 +410,18 @@ export function synchronizeCredentialsWithEngineUsers(params: {
   addUser: (u: any) => any;
   updateUser: (id: string, updates: any) => void;
   resetUserPassword?: (userId: string, pass: string) => void;
+  syncMissingUsersToEngine?: boolean;
+  syncToCloud?: boolean;
 }): void {
-  const { credentials, users = [], addUser, updateUser, resetUserPassword } = params;
+  const {
+    credentials,
+    users = [],
+    addUser,
+    updateUser,
+    resetUserPassword,
+    syncMissingUsersToEngine = false,
+    syncToCloud = false,
+  } = params;
   if (!credentials || credentials.length === 0) return;
 
   // Defer execution outside React's render/reconciliation phase
@@ -442,6 +449,7 @@ export function synchronizeCredentialsWithEngineUsers(params: {
         );
 
         const targetName = cred.accountantName || `${cred.campusName} Accountant`;
+        const resolvedEmail = existingUser?.email || `${cred.username}@institution.edu.pk`;
 
         if (existingUser) {
           const needsUpdate =
@@ -462,19 +470,62 @@ export function synchronizeCredentialsWithEngineUsers(params: {
               resetUserPassword(existingUser.id, cred.password);
             }
           }
-        } else {
+
+          if (syncToCloud && auth.currentUser) {
+            provisionGlobalUserAccount({
+              id: existingUser.id,
+              uid: existingUser.uid || null,
+              username: cred.username,
+              name: targetName,
+              email: resolvedEmail,
+              password: cred.password,
+              role: existingUser.role || 'level_3_sub_campus_admin',
+              permissionLevel: existingUser.permissionLevel || 'level_4_sub_campus_admin',
+              isSuperAdmin: false,
+              clientId: existingUser.clientId ?? null,
+              campusId: cred.campusId,
+              campusName: cred.campusName,
+              permittedCampusIds: [cred.campusId],
+              allowedModules: cred.allowedModules,
+              status: cred.status === 'active' ? 'active' : 'suspended',
+              designation: existingUser.designation || `Campus Accountant (${cred.campusCode})`,
+            }).catch(() => {});
+          }
+        } else if (syncMissingUsersToEngine || syncToCloud) {
+          const targetId = `user-${cred.campusId}`;
           addUser({
-            id: `user-${cred.campusId}`,
+            id: targetId,
             username: cred.username,
             name: targetName,
-            email: `${cred.username}@aschoolsystem.edu.pk`,
-            role: 'campus_accountant',
+            email: resolvedEmail,
+            role: 'level_3_sub_campus_admin',
+            permissionLevel: 'level_4_sub_campus_admin',
             campusId: cred.campusId,
+            permittedCampusIds: [cred.campusId],
             password: cred.password,
-            status: cred.status,
+            status: cred.status === 'active' ? 'active' : 'suspended',
             designation: `Campus Accountant (${cred.campusCode})`,
             allowedModules: cred.allowedModules,
           });
+
+          if (syncToCloud && auth.currentUser) {
+            provisionGlobalUserAccount({
+              id: targetId,
+              username: cred.username,
+              name: targetName,
+              email: resolvedEmail,
+              password: cred.password,
+              role: 'level_3_sub_campus_admin',
+              permissionLevel: 'level_4_sub_campus_admin',
+              isSuperAdmin: false,
+              campusId: cred.campusId,
+              campusName: cred.campusName,
+              permittedCampusIds: [cred.campusId],
+              allowedModules: cred.allowedModules,
+              status: cred.status === 'active' ? 'active' : 'suspended',
+              designation: `Campus Accountant (${cred.campusCode})`,
+            }).catch(() => {});
+          }
         }
       });
     } catch (err) {

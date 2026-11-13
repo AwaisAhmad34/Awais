@@ -15,6 +15,7 @@ import {
   lookupLoginDirectoryByUsername,
   findGlobalUserInCloudByEmailOrUid,
   provisionGlobalUserAccount,
+  normalizeUsernameKey,
 } from './globalUserSyncService';
 
 let verifiedProfile: any = null;
@@ -544,6 +545,51 @@ export async function restoreAccount(user: User) {
       status: globalUser.status || membership?.status,
       updatedAt: globalUser.updatedAt,
     };
+  }
+
+  // Ensure every authenticated active member is deterministically mirrored in `global_users` & `login_directory`
+  if (snapshot.exists() && membership?.status === 'active') {
+    const isMemberOwner =
+      emailLower === 'siteowner@platform.org' ||
+      emailLower === 'bajwaahmedsaad345@gmail.com' ||
+      emailLower.startsWith('admin@') ||
+      membership?.isPlatformAdmin === true ||
+      membership?.permissionLevel === 'level_1_platform_super_admin';
+
+    if (!globalUser) {
+      const mirrorUsername =
+        membership.username || (isMemberOwner ? 'admin' : emailLower.split('@')[0] || 'user');
+      const mirrorId = isMemberOwner
+        ? 'user-platform-owner'
+        : membership.userId || `usr-${normalizeUsernameKey(mirrorUsername)}`;
+      await provisionGlobalUserAccount({
+        id: mirrorId,
+        uid: user.uid,
+        username: mirrorUsername,
+        name: membership.name || user.displayName || mirrorUsername,
+        email: emailLower || `${mirrorUsername}@institution.edu.pk`,
+        role: isMemberOwner
+          ? 'level_1_platform_super_admin'
+          : membership.role || membership.permissionLevel || 'level_2_client_super_admin',
+        permissionLevel: isMemberOwner
+          ? 'level_1_platform_super_admin'
+          : membership.permissionLevel || 'level_2_client_super_admin',
+        isSuperAdmin: isMemberOwner,
+        clientId: isMemberOwner ? null : (membership.clientId ?? null),
+        campusId: isMemberOwner ? null : (membership.campusId ?? null),
+        permittedCampusIds:
+          membership.permittedCampusIds || (membership.campusId ? [membership.campusId] : ['all']),
+        delegatedSubCampusIds: membership.delegatedCampusIds || [],
+        allowedModules: membership.allowedModules || ['all'],
+        status: 'active',
+      }).catch(() => {});
+    } else if (!globalUser.uid) {
+      setDoc(
+        doc(db, 'global_users', globalUser.id),
+        { uid: user.uid, updatedAt: new Date().toISOString() },
+        { merge: true }
+      ).catch(() => {});
+    }
   }
 
   if (membership?.status !== 'active') {

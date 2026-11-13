@@ -108,6 +108,157 @@ function normalizePermissionLevel(level?: string, role?: string, isSuperAdmin?: 
   return 'level_5_departmental_staff';
 }
 
+export function normalizeEmailKey(email?: string | null): string {
+  return (email || '').trim().toLowerCase();
+}
+
+export function isLegacyPlaceholderAdmin(user: any): boolean {
+  if (!user || typeof user !== 'object') return false;
+  return (
+    user.id === 'user-admin' &&
+    normalizeUsernameKey(user.username || '') === 'admin' &&
+    normalizeEmailKey(user.email || '') === 'admin@aschoolsystem.edu.pk'
+  );
+}
+
+function parseIsoMs(val: any): number {
+  if (!val) return 0;
+  const parsed = Date.parse(String(val));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toCanonicalGlobalUser(raw: any): GlobalUserRecord {
+  const cleanUsername = normalizeUsernameKey(raw?.username || raw?.email?.split?.('@')?.[0] || raw?.id || 'user') || 'user';
+  const resolvedLevel = normalizePermissionLevel(raw?.permissionLevel, raw?.role, raw?.isSuperAdmin);
+  const isLevel1 = resolvedLevel === 'level_1_platform_super_admin' || Boolean(raw?.isSuperAdmin);
+  const resolvedEmail = normalizeEmailKey(raw?.email) || `${cleanUsername}@institution.edu.pk`;
+  const createdAt = raw?.createdAt ? String(raw.createdAt) : '1970-01-01T00:00:00.000Z';
+  const updatedAt = raw?.updatedAt ? String(raw.updatedAt) : createdAt;
+
+  return {
+    id: String(raw?.id || `usr-${cleanUsername}`),
+    uid: raw?.uid ? String(raw.uid) : null,
+    username: String(raw?.username || cleanUsername).trim().toLowerCase(),
+    name: String(raw?.name || raw?.username || cleanUsername).trim(),
+    email: resolvedEmail,
+    role: String(
+      raw?.role ||
+        (isLevel1
+          ? 'level_1_platform_super_admin'
+          : resolvedLevel === 'level_2_client_super_admin'
+          ? 'level_2_client_super_admin'
+          : 'Accountant')
+    ),
+    permissionLevel: resolvedLevel,
+    isSuperAdmin: isLevel1,
+    clientId: isLevel1 ? null : (raw?.clientId ?? null),
+    campusId: isLevel1 ? null : (raw?.campusId ?? null),
+    campusName: raw?.campusName ? String(raw.campusName) : undefined,
+    permittedCampusIds:
+      Array.isArray(raw?.permittedCampusIds) && raw.permittedCampusIds.length > 0
+        ? raw.permittedCampusIds.map(String)
+        : isLevel1
+        ? ['all']
+        : raw?.campusId
+        ? [String(raw.campusId)]
+        : ['all'],
+    delegatedSubCampusIds: Array.isArray(raw?.delegatedSubCampusIds)
+      ? raw.delegatedSubCampusIds.map(String)
+      : Array.isArray(raw?.delegatedCampusIds)
+      ? raw.delegatedCampusIds.map(String)
+      : [],
+    allowedModules:
+      Array.isArray(raw?.allowedModules) && raw.allowedModules.length > 0
+        ? raw.allowedModules.map(String)
+        : ['all'],
+    status:
+      raw?.status === 'inactive' || raw?.status === 'suspended' ? raw.status : 'active',
+    designation: raw?.designation ? String(raw.designation) : undefined,
+    syncedToCloud: true,
+    createdAt,
+    updatedAt,
+  };
+}
+
+/**
+ * Produces a strictly deterministic, deduplicated, canonically ordered Global User list
+ * so every browser renders the exact same users from Cloud Firestore without stale local leaks.
+ */
+export function normalizeAndDeduplicateGlobalUsers(
+  rawUsers: any[],
+  activeProfile?: any
+): GlobalUserRecord[] {
+  const candidates: GlobalUserRecord[] = [];
+  for (const item of rawUsers || []) {
+    if (!item || typeof item !== 'object') continue;
+    if (isLegacyPlaceholderAdmin(item)) continue;
+    if (!item.id && !item.username && !item.email) continue;
+    candidates.push(toCanonicalGlobalUser(item));
+  }
+
+  if (activeProfile && (activeProfile.id || activeProfile.email) && !isLegacyPlaceholderAdmin(activeProfile)) {
+    const pEmail = normalizeEmailKey(activeProfile.email);
+    const pUser = normalizeUsernameKey(activeProfile.username || '');
+    const pId = String(activeProfile.id || '');
+    const alreadyPresent = candidates.some(
+      (c) =>
+        (pId && c.id === pId) ||
+        (pEmail && normalizeEmailKey(c.email) === pEmail) ||
+        (pUser && normalizeUsernameKey(c.username) === pUser)
+    );
+    if (!alreadyPresent) {
+      candidates.push(toCanonicalGlobalUser(activeProfile));
+    }
+  }
+
+  // Sort deterministically before deduplicating so newest authoritative doc always wins on every browser
+  candidates.sort((a, b) => {
+    const updDiff = parseIsoMs(b.updatedAt) - parseIsoMs(a.updatedAt);
+    if (updDiff !== 0) return updDiff;
+    const ownerBiasA = a.id === 'user-platform-owner' ? 0 : 1;
+    const ownerBiasB = b.id === 'user-platform-owner' ? 0 : 1;
+    if (ownerBiasA !== ownerBiasB) return ownerBiasA - ownerBiasB;
+    const uidBiasA = a.uid ? 0 : 1;
+    const uidBiasB = b.uid ? 0 : 1;
+    if (uidBiasA !== uidBiasB) return uidBiasA - uidBiasB;
+    return a.id.localeCompare(b.id);
+  });
+
+  const seenIds = new Set<string>();
+  const seenEmails = new Set<string>();
+  const seenUsernames = new Set<string>();
+  const deduped: GlobalUserRecord[] = [];
+
+  for (const u of candidates) {
+    const idKey = u.id.trim();
+    const emailKey = normalizeEmailKey(u.email);
+    const unameKey = normalizeUsernameKey(u.username);
+
+    if (idKey && seenIds.has(idKey)) continue;
+    if (emailKey && seenEmails.has(emailKey)) continue;
+    if (unameKey && seenUsernames.has(unameKey)) continue;
+
+    if (idKey) seenIds.add(idKey);
+    if (emailKey) seenEmails.add(emailKey);
+    if (unameKey) seenUsernames.add(unameKey);
+    deduped.push(u);
+  }
+
+  // Deterministic final presentation order across all browsers
+  deduped.sort((a, b) => {
+    const isAdminA = a.isSuperAdmin || a.permissionLevel === 'level_1_platform_super_admin' ? 0 : 1;
+    const isAdminB = b.isSuperAdmin || b.permissionLevel === 'level_1_platform_super_admin' ? 0 : 1;
+    if (isAdminA !== isAdminB) return isAdminA - isAdminB;
+    const crtDiff = parseIsoMs(a.createdAt) - parseIsoMs(b.createdAt);
+    if (crtDiff !== 0) return crtDiff;
+    const nameDiff = a.username.localeCompare(b.username);
+    if (nameDiff !== 0) return nameDiff;
+    return a.id.localeCompare(b.id);
+  });
+
+  return deduped;
+}
+
 function sanitizeFirestorePayload<T extends Record<string, any>>(obj: T): T {
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -142,11 +293,29 @@ export async function provisionGlobalUserAccount(
     ? 'level_1_platform_super_admin'
     : input.role || (resolvedLevel === 'level_2_client_super_admin' ? 'level_2_client_super_admin' : 'Accountant');
 
+  const safeUsernameKey = normalizeUsernameKey(cleanUsername) || 'user';
+  let existingUser: GlobalUserRecord | null = null;
+  if (!input.id && auth.currentUser) {
+    existingUser = await findGlobalUserInCloudByEmailOrUid(cleanEmail, input.uid || undefined).catch(() => null);
+    if (!existingUser) {
+      const dirMatch = await lookupLoginDirectoryByUsername(safeUsernameKey).catch(() => null);
+      if (dirMatch?.userId) {
+        try {
+          const existingSnap = await getDoc(doc(db, 'global_users', dirMatch.userId));
+          if (existingSnap.exists()) {
+            existingUser = { ...(existingSnap.data() as GlobalUserRecord), id: existingSnap.id };
+          }
+        } catch {}
+      }
+    }
+  }
+
   const userId =
     input.id ||
-    `usr-${cleanUsername.replace(/[^a-z0-9_-]/g, '')}-${Date.now().toString(36).slice(-4)}`;
+    existingUser?.id ||
+    `usr-${safeUsernameKey}`;
 
-  let resolvedUid: string | null = input.uid || null;
+  let resolvedUid: string | null = input.uid || existingUser?.uid || null;
   let authProvisioned = false;
   let warning: string | undefined;
 
@@ -234,7 +403,7 @@ export async function provisionGlobalUserAccount(
     status: input.status || 'active',
     designation: input.designation || resolvedRole,
     syncedToCloud: true,
-    createdAt: now,
+    createdAt: existingUser?.createdAt || now,
     updatedAt: now,
   };
 
@@ -416,11 +585,12 @@ export async function fetchGlobalUsersFromCloud(): Promise<GlobalUserRecord[]> {
   if (!auth.currentUser) return [];
   try {
     const snap = await getDocs(collection(db, 'global_users'));
-    return snap.docs.map((d) => ({
+    const raw = snap.docs.map((d) => ({
       ...(d.data() as GlobalUserRecord),
       id: d.id,
       syncedToCloud: true,
     }));
+    return normalizeAndDeduplicateGlobalUsers(raw);
   } catch (err: any) {
     if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {
       handleFirestoreError(err, OperationType.LIST, 'global_users');
@@ -443,7 +613,7 @@ export function subscribeToGlobalUsersFromCloud(
         id: d.id,
         syncedToCloud: true,
       }));
-      onUpdate(list);
+      onUpdate(normalizeAndDeduplicateGlobalUsers(list));
     },
     (err) => {
       if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {

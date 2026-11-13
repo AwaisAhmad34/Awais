@@ -4,7 +4,11 @@ import {
   filterSchoolClients,
   type SchoolClientOrganization,
 } from '../src/services/platformSiteAdminService';
-import { normalizeUsernameKey } from '../src/services/globalUserSyncService';
+import {
+  normalizeUsernameKey,
+  normalizeAndDeduplicateGlobalUsers,
+  isLegacyPlaceholderAdmin,
+} from '../src/services/globalUserSyncService';
 
 const SAMPLE_CLIENTS: SchoolClientOrganization[] = [
   {
@@ -105,4 +109,97 @@ test('normalizeUsernameKey normalizes casing, whitespace, and disallowed documen
   assert.equal(normalizeUsernameKey('  Admin.Main  '), 'admin.main');
   assert.equal(normalizeUsernameKey('campus cvt@01'), 'campuscvt_01');
   assert.equal(normalizeUsernameKey('user/bad:key'), 'user_bad_key');
+});
+
+test('isLegacyPlaceholderAdmin flags hardcoded demo admin without affecting real platform owner', () => {
+  assert.equal(
+    isLegacyPlaceholderAdmin({
+      id: 'user-admin',
+      username: 'admin',
+      email: 'admin@aschoolsystem.edu.pk',
+      name: 'Sir Nadeem / Administrator',
+    }),
+    true
+  );
+  assert.equal(
+    isLegacyPlaceholderAdmin({
+      id: 'user-platform-owner',
+      username: 'bajwa123',
+      email: 'bajwa123@gmail.com',
+      isSuperAdmin: true,
+    }),
+    false
+  );
+});
+
+test('normalizeAndDeduplicateGlobalUsers yields identical lists across browsers regardless of snapshot order or legacy demo leaks', () => {
+  const owner = {
+    id: 'user-platform-owner',
+    uid: 'uid-owner',
+    username: 'bajwa',
+    name: 'Platform Owner',
+    email: 'bajwa@platform.org',
+    role: 'level_1_platform_super_admin',
+    permissionLevel: 'level_1_platform_super_admin',
+    isSuperAdmin: true,
+    clientId: null,
+    campusId: null,
+    status: 'active',
+    createdAt: '2026-01-01T10:00:00.000Z',
+    updatedAt: '2026-01-01T10:00:00.000Z',
+  };
+  const staffOld = {
+    id: 'usr-ali-old',
+    username: 'ali.khl',
+    name: 'Ali Old',
+    email: 'ali.khl@institution.edu.pk',
+    role: 'level_3_sub_campus_admin',
+    permissionLevel: 'level_4_sub_campus_admin',
+    clientId: 'client-aplus',
+    campusId: 'campus-khl',
+    status: 'active',
+    createdAt: '2026-02-01T10:00:00.000Z',
+    updatedAt: '2026-02-01T10:00:00.000Z',
+  };
+  const staffNew = {
+    id: 'usr-ali.khl',
+    uid: 'uid-ali',
+    username: 'Ali.KHL',
+    name: 'Ali Updated',
+    email: 'ALI.KHL@institution.edu.pk',
+    role: 'level_3_main_campus_admin',
+    permissionLevel: 'level_3_main_campus_admin',
+    clientId: 'client-aplus',
+    campusId: 'campus-khl',
+    status: 'active',
+    createdAt: '2026-02-01T10:00:00.000Z',
+    updatedAt: '2026-03-01T12:00:00.000Z',
+  };
+  const demoGhost = {
+    id: 'user-admin',
+    username: 'admin',
+    email: 'admin@aschoolsystem.edu.pk',
+    name: 'Sir Nadeem / Administrator',
+    role: 'super_admin',
+  };
+
+  // Browser A receives stale order + demoGhost
+  const browserA = normalizeAndDeduplicateGlobalUsers([demoGhost, staffOld, staffNew, owner]);
+  // Browser B receives reverse snapshot order without demoGhost
+  const browserB = normalizeAndDeduplicateGlobalUsers([staffNew, owner, staffOld]);
+
+  assert.deepEqual(browserA, browserB);
+  assert.equal(browserA.length, 2);
+  assert.equal(browserA[0].id, 'user-platform-owner');
+  assert.equal(browserA[1].id, 'usr-ali.khl');
+  assert.equal(browserA[1].name, 'Ali Updated');
+});
+
+test('normalizeAndDeduplicateGlobalUsers clears stale users when cloud list is empty', () => {
+  const demoGhost = {
+    id: 'user-admin',
+    username: 'admin',
+    email: 'admin@aschoolsystem.edu.pk',
+  };
+  assert.deepEqual(normalizeAndDeduplicateGlobalUsers([demoGhost]), []);
 });

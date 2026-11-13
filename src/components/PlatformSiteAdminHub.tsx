@@ -99,7 +99,11 @@ import {
   deleteGlobalUserFromCloud,
   fetchGlobalUsersFromCloud,
   subscribeToGlobalUsersFromCloud,
+  normalizeAndDeduplicateGlobalUsers,
+  normalizeUsernameKey,
+  type GlobalUserRecord,
 } from '../services/globalUserSyncService';
+import { getVerifiedProfile } from '../services/secureAuthentication';
 import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
 import { GlobalRecycleBinModule } from './GlobalRecycleBinModule';
 import { GlobalRecordSearchModule } from './GlobalRecordSearchModule';
@@ -291,6 +295,7 @@ export const PlatformSiteAdminHub: React.FC<{
   // --------------------------------------------------------------------------
   // SECTION 04: USERS & LOGIN ACCOUNTS STATE
   // --------------------------------------------------------------------------
+  const [cloudGlobalUsers, setCloudGlobalUsers] = useState<GlobalUserRecord[] | null>(null);
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [selectedUserToEdit, setSelectedUserToEdit] = useState<any | null>(null);
   const [deletingUser, setDeletingUser] = useState<any | null>(null);
@@ -328,36 +333,36 @@ export const PlatformSiteAdminHub: React.FC<{
     };
     window.addEventListener('aplus-clients-updated', handleLocalClientEvent);
 
-    const hydrateUsersToEngine = (cloudUsers: any[]) => {
-      if (!Array.isArray(cloudUsers) || cloudUsers.length === 0) return;
+    const applyCloudUsers = (rawCloudUsers: GlobalUserRecord[]) => {
+      const normalized = normalizeAndDeduplicateGlobalUsers(rawCloudUsers, getVerifiedProfile());
+      setCloudGlobalUsers(normalized);
       const cur = window.__APLUS_GET_CURRENT_STATE__?.();
       if (cur && window.__APLUS_HYDRATE_FROM_CLOUD__) {
-        const merged = [...cloudUsers];
-        for (const lu of cur.users || []) {
-          if (
-            lu?.id &&
-            (lu.id === 'user-platform-owner' || lu.id === 'usr-admin' || lu.username === 'admin') &&
-            !merged.some((cu: any) => cu.id === lu.id || cu.username?.toLowerCase() === lu.username?.toLowerCase())
-          ) {
-            merged.push(lu);
-          }
-        }
-        window.__APLUS_HYDRATE_FROM_CLOUD__({ ...cur, users: merged });
+        window.__APLUS_HYDRATE_FROM_CLOUD__({ ...cur, users: normalized });
       }
     };
 
+    const handleGlobalUsersSyncedEvent = (e: any) => {
+      if (Array.isArray(e?.detail)) {
+        const normalized = normalizeAndDeduplicateGlobalUsers(e.detail, getVerifiedProfile());
+        setCloudGlobalUsers(normalized);
+      }
+    };
+    window.addEventListener('aplus-global-users-synced', handleGlobalUsersSyncedEvent);
+
     fetchGlobalUsersFromCloud()
-      .then((cloudUsers) => hydrateUsersToEngine(cloudUsers))
+      .then((cloudUsers) => applyCloudUsers(cloudUsers))
       .catch(() => {});
 
     const unsubUsers = subscribeToGlobalUsersFromCloud((cloudUsers) => {
-      hydrateUsersToEngine(cloudUsers);
+      applyCloudUsers(cloudUsers);
     });
 
     return () => {
       unsubClients();
       unsubUsers();
       window.removeEventListener('aplus-clients-updated', handleLocalClientEvent);
+      window.removeEventListener('aplus-global-users-synced', handleGlobalUsersSyncedEvent);
     };
   }, []);
 
@@ -384,27 +389,14 @@ export const PlatformSiteAdminHub: React.FC<{
   }, [parentAccountSelect, accountHeads]);
 
   // --------------------------------------------------------------------------
-  // DEDUPLICATED USERS (Defensive deduplication by unique ID and Username)
+  // DEDUPLICATED USERS (Authoritative Firestore Global Directory)
   // --------------------------------------------------------------------------
   const deduplicatedUsers = useMemo(() => {
-    const seenIds = new Set<string>();
-    const seenUsernames = new Set<string>();
-    const result: typeof users = [];
-
-    for (const u of users || []) {
-      if (!u) continue;
-      const idKey = u.id ? String(u.id).trim() : '';
-      const nameKey = u.username ? u.username.toLowerCase().trim() : '';
-
-      if (idKey && seenIds.has(idKey)) continue;
-      if (nameKey && seenUsernames.has(nameKey)) continue;
-
-      if (idKey) seenIds.add(idKey);
-      if (nameKey) seenUsernames.add(nameKey);
-      result.push(u);
+    if (cloudGlobalUsers !== null) {
+      return cloudGlobalUsers;
     }
-    return result;
-  }, [users]);
+    return normalizeAndDeduplicateGlobalUsers(users || [], currentUser);
+  }, [cloudGlobalUsers, users, currentUser]);
 
   // --------------------------------------------------------------------------
   // STATS & AGGREGATIONS FOR DASHBOARD
@@ -546,6 +538,9 @@ export const PlatformSiteAdminHub: React.FC<{
               password: mainAdminPass,
             });
           }
+          setCloudGlobalUsers((prev) =>
+            normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+          );
 
           // Generate dynamic credentials and sync to cloud
           const cred = createDynamicCampusCredential(newMainCampus, undefined, mainAdminPass);
@@ -669,6 +664,12 @@ export const PlatformSiteAdminHub: React.FC<{
           deleteUser?.(u.id);
           await deleteGlobalUserFromCloud(u).catch(() => {});
         }
+        if (linkedUsers.length > 0) {
+          const removedIds = new Set(linkedUsers.map((u: any) => u.id));
+          setCloudGlobalUsers((prev) =>
+            prev ? prev.filter((u) => !removedIds.has(u.id)) : prev
+          );
+        }
       }
 
       recordSiteAdminSecurityEvent({
@@ -723,6 +724,16 @@ export const PlatformSiteAdminHub: React.FC<{
         username: targetUser.username,
         clientId: targetUser.clientId,
       });
+
+      setCloudGlobalUsers((prev) =>
+        prev
+          ? prev.filter(
+              (u) =>
+                u.id !== targetUser.id &&
+                normalizeUsernameKey(u.username) !== normalizeUsernameKey(targetUser.username || '')
+            )
+          : prev
+      );
 
       // 3. Soft delete to Global Recycle Bin
       try {
@@ -996,6 +1007,9 @@ export const PlatformSiteAdminHub: React.FC<{
           password: pass,
         });
       }
+      setCloudGlobalUsers((prev) =>
+        normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+      );
     } catch {
       if (addUser) {
         addUser({
@@ -1347,6 +1361,10 @@ export const PlatformSiteAdminHub: React.FC<{
         status: selectedUserToEdit?.status || 'active',
         designation: resolvedRole,
       });
+
+      setCloudGlobalUsers((prev) =>
+        normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+      );
 
       if (!selectedUserToEdit) {
         addUser({
@@ -2759,7 +2777,7 @@ export const PlatformSiteAdminHub: React.FC<{
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenAddUserModal(u.campusId, u)}
+                                  onClick={() => handleOpenAddUserModal(u.campusId || undefined, u)}
                                   className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer border border-slate-700"
                                   title="Edit user role, scope, or password"
                                 >

@@ -708,7 +708,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
 }> = ({ isOpen, onClose }) => {
   const { transactions, campuses, orgSettings } = useAccounting();
   const [selectedType, setSelectedType] = useState<'BPV' | 'BRV' | 'CPV' | 'CRV'>('BPV');
-  const [selectedVoucherId, setSelectedVoucherId] = useState<string>('sample');
+  const [selectedVoucherId, setSelectedVoucherId] = useState<string>('');
   const [paddingPreset, setPaddingPreset] = useState<A4PaddingPreset>('standard');
   const [typographyScale, setTypographyScale] = useState<A4TypographyScale>('11pt');
   const [busy, setBusy] = useState(false);
@@ -721,17 +721,17 @@ export const VoucherA4PrintStudioModal: React.FC<{
   );
 
   const activeVoucher =
-    selectedVoucherId !== 'sample'
-      ? matchingVouchers.find((v) => v.id === selectedVoucherId) ||
-        matchingVouchers[0] ||
-        SAMPLE_FOUR_VOUCHERS[selectedType]
-      : matchingVouchers[0] || SAMPLE_FOUR_VOUCHERS[selectedType];
+    matchingVouchers.find((v) => v.id === selectedVoucherId) ||
+    matchingVouchers[0] ||
+    null;
 
   const activeCampus =
-    campuses.find((c) => c.id === activeVoucher.campusId) || campuses[0];
+    activeVoucher
+      ? campuses.find((c) => c.id === activeVoucher.campusId) || campuses[0]
+      : campuses[0];
 
   const handleDownloadPdf = async () => {
-    if (!printRef.current || busy) return;
+    if (!printRef.current || busy || !activeVoucher) return;
     setBusy(true);
     try {
       await generateElementPdf(
@@ -745,7 +745,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
   };
 
   const handlePrint = async () => {
-    if (!printRef.current) return;
+    if (!printRef.current || !activeVoucher) return;
     await printOrDownloadElement(printRef.current, {
       title: `${activeVoucher.voucherType} — ${activeVoucher.voucherNo}`,
       fallbackFileName: `A4_${activeVoucher.voucherType}_${activeVoucher.voucherNo}`,
@@ -770,15 +770,16 @@ export const VoucherA4PrintStudioModal: React.FC<{
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownloadPdf}
-              disabled={busy}
-              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              disabled={busy || !activeVoucher}
+              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>{busy ? 'Generating A4 PDF...' : 'Download A4 PDF'}</span>
             </button>
             <button
               onClick={handlePrint}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              disabled={!activeVoucher}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Print A4 Document</span>
@@ -800,7 +801,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
                 key={type}
                 onClick={() => {
                   setSelectedType(type);
-                  setSelectedVoucherId('sample');
+                  setSelectedVoucherId('');
                 }}
                 className={`px-3.5 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
                   selectedType === type
@@ -816,7 +817,7 @@ export const VoucherA4PrintStudioModal: React.FC<{
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-600">Select Voucher:</span>
             <select
-              value={selectedVoucherId}
+              value={activeVoucher?.id || ''}
               onChange={(e) => setSelectedVoucherId(e.target.value)}
               className="px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 font-mono font-bold text-slate-800"
             >
@@ -827,8 +828,8 @@ export const VoucherA4PrintStudioModal: React.FC<{
                   </option>
                 ))
               ) : (
-                <option value="sample">
-                  Standard {selectedType} Template ({SAMPLE_FOUR_VOUCHERS[selectedType].voucherNo})
+                <option value="">
+                  No {selectedType} vouchers recorded
                 </option>
               )}
             </select>
@@ -837,16 +838,27 @@ export const VoucherA4PrintStudioModal: React.FC<{
 
         {/* Scrollable A4 Document Preview Canvas */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1">
-          <div ref={printRef} id="printable-voucher-document">
-            <PrintableVoucherA4Layout
-              voucher={activeVoucher}
-              campus={activeCampus}
-              orgSettings={orgSettings}
-              paddingPreset={paddingPreset}
-              typographyScale={typographyScale}
-              showConfigureBar={true}
-            />
-          </div>
+          {activeVoucher ? (
+            <div ref={printRef} id="printable-voucher-document">
+              <PrintableVoucherA4Layout
+                voucher={activeVoucher}
+                campus={activeCampus}
+                orgSettings={orgSettings}
+                paddingPreset={paddingPreset}
+                typographyScale={typographyScale}
+                showConfigureBar={true}
+              />
+            </div>
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-xl mx-auto my-8">
+              <div className="text-sm font-bold text-slate-800">
+                No {VOUCHER_TYPE_META[selectedType].fullTitle} ({selectedType}) Vouchers Found
+              </div>
+              <p className="text-xs text-slate-500 mt-1.5">
+                Record a {selectedType} transaction in the Voucher Ledger to preview or print its ISO A4 voucher document.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>
