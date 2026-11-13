@@ -466,6 +466,7 @@ export const BulkVoucherAndAccessManager: React.FC<{
   // Dedicated Voucher Editor State
   const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
   const [isVoucherEditorOpen, setIsVoucherEditorOpen] = useState(false);
+  const [voucherToDeleteSingle, setVoucherToDeleteSingle] = useState<any | null>(null);
 
   useEffect(() => {
     installGlobalVisibilityHook();
@@ -663,15 +664,13 @@ export const BulkVoucherAndAccessManager: React.FC<{
   };
 
   const handleDeleteSingleVoucher = (v: any) => {
-    if (
-      !window.confirm(
-        `Are you sure you want to delete voucher #${v.voucherNo} (${v.voucherType} - PKR ${(
-          Number(v.totalDebit) || 0
-        ).toLocaleString()})?\n\nIt will be safely archived to the Global Recycle Bin where it can be recovered if needed.`
-      )
-    ) {
-      return;
-    }
+    setVoucherToDeleteSingle(v);
+  };
+
+  const confirmDeleteSingleVoucher = () => {
+    const v = voucherToDeleteSingle;
+    if (!v) return;
+    setVoucherToDeleteSingle(null);
 
     const c = campuses.find((cmp) => cmp.id === v.campusId);
     softDeleteRecord({
@@ -2528,6 +2527,46 @@ export const BulkVoucherAndAccessManager: React.FC<{
             setEditingVoucherId(null);
           }}
         />
+      )}
+
+      {/* IN-APP SINGLE VOUCHER DELETE CONFIRMATION MODAL */}
+      {voucherToDeleteSingle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-rose-800/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white">Delete Ledger Voucher</h4>
+                <p className="text-xs text-rose-300 font-bold mt-0.5 font-mono">
+                  #{voucherToDeleteSingle.voucherNo} ({voucherToDeleteSingle.voucherType} — PKR{' '}
+                  {(Number(voucherToDeleteSingle.totalDebit) || 0).toLocaleString()})
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  This voucher will be removed from the active ledger and safely archived to the Global Recycle Bin for recovery if needed.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setVoucherToDeleteSingle(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteSingleVoucher}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm &amp; Delete Voucher</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

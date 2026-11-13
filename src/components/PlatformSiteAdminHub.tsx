@@ -63,6 +63,9 @@ import {
   getStoredSchoolClients,
   saveStoredSchoolClients,
   syncSchoolClientsToCloud,
+  fetchSchoolClientsFromCloud,
+  subscribeSchoolClientsFromCloud,
+  filterSchoolClients,
   getStoredPlatformSettings,
   saveStoredPlatformSettings,
   syncPlatformSettingsToCloud,
@@ -88,8 +91,15 @@ import {
   generateDynamicPassword,
   createDynamicCampusCredential,
   saveCampusCredentialToCloud,
+  deleteCampusCredentialFromCloud,
 } from '../services/campusAuthSync';
-import { pushMasterCloudSnapshot } from '../services/firebaseSync';
+import { pushMasterCloudSnapshot, deleteCampusFromCloud } from '../services/firebaseSync';
+import {
+  provisionGlobalUserAccount,
+  deleteGlobalUserFromCloud,
+  fetchGlobalUsersFromCloud,
+  subscribeToGlobalUsersFromCloud,
+} from '../services/globalUserSyncService';
 import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
 import { GlobalRecycleBinModule } from './GlobalRecycleBinModule';
 import { GlobalRecordSearchModule } from './GlobalRecordSearchModule';
@@ -180,6 +190,7 @@ export const PlatformSiteAdminHub: React.FC<{
     users,
     addUser,
     updateUser,
+    deleteUser,
     accountHeads,
     addAccountHead,
     updateAccountHead,
@@ -212,7 +223,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
   const triggerToast = (type: 'success' | 'error' | 'warning' | 'info', message: string) => {
     setFeedbackNotice({ type, message });
-    setTimeout(() => setFeedbackNotice(null), 4500);
+    setTimeout(() => setFeedbackNotice(null), 5000);
   };
 
   const [reportsSubTab, setReportsSubTab] = useState<'permissions' | 'viewer'>('permissions');
@@ -223,6 +234,9 @@ export const PlatformSiteAdminHub: React.FC<{
   // --------------------------------------------------------------------------
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isSavingClient, setIsSavingClient] = useState(false);
+  const [deletingClient, setDeletingClient] = useState<SchoolClientOrganization | null>(null);
+  const [deleteClientCleanupLinked, setDeleteClientCleanupLinked] = useState(true);
   const [clientFormId, setClientFormId] = useState<string | null>(null);
   const [clientFormName, setClientFormName] = useState('');
   const [clientFormCode, setClientFormCode] = useState('');
@@ -279,15 +293,78 @@ export const PlatformSiteAdminHub: React.FC<{
   // --------------------------------------------------------------------------
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [selectedUserToEdit, setSelectedUserToEdit] = useState<any | null>(null);
+  const [deletingUser, setDeletingUser] = useState<any | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [userFormUsername, setUserFormUsername] = useState('');
   const [userFormName, setUserFormName] = useState('');
   const [userFormEmail, setUserFormEmail] = useState('');
   const [userFormPassword, setUserFormPassword] = useState('');
   const [userFormRole, setUserFormRole] = useState<string>('Accountant');
+  const [userFormClientId, setUserFormClientId] = useState<string>('');
   const [userFormCampusId, setUserFormCampusId] = useState<string>(campuses[0]?.id || '');
   const [userFormLevel, setUserFormLevel] = useState<PermissionLevel>('level_4_sub_campus_admin');
   const [userFormDelegatedSubCampuses, setUserFormDelegatedSubCampuses] = useState<string[]>([]);
+
+  // Live Firestore real-time synchronization for Clients & Global Users
+  useEffect(() => {
+    fetchSchoolClientsFromCloud()
+      .then((cloudClients) => {
+        if (Array.isArray(cloudClients)) setClients(cloudClients);
+      })
+      .catch(() => {});
+
+    const unsubClients = subscribeSchoolClientsFromCloud((cloudClients) => {
+      setClients(cloudClients);
+    });
+
+    const handleLocalClientEvent = (e: any) => {
+      if (Array.isArray(e?.detail)) {
+        setClients(e.detail);
+      } else {
+        setClients(getStoredSchoolClients());
+      }
+    };
+    window.addEventListener('aplus-clients-updated', handleLocalClientEvent);
+
+    const hydrateUsersToEngine = (cloudUsers: any[]) => {
+      if (!Array.isArray(cloudUsers) || cloudUsers.length === 0) return;
+      const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+      if (cur && window.__APLUS_HYDRATE_FROM_CLOUD__) {
+        const merged = [...cloudUsers];
+        for (const lu of cur.users || []) {
+          if (
+            lu?.id &&
+            (lu.id === 'user-platform-owner' || lu.id === 'usr-admin' || lu.username === 'admin') &&
+            !merged.some((cu: any) => cu.id === lu.id || cu.username?.toLowerCase() === lu.username?.toLowerCase())
+          ) {
+            merged.push(lu);
+          }
+        }
+        window.__APLUS_HYDRATE_FROM_CLOUD__({ ...cur, users: merged });
+      }
+    };
+
+    fetchGlobalUsersFromCloud()
+      .then((cloudUsers) => hydrateUsersToEngine(cloudUsers))
+      .catch(() => {});
+
+    const unsubUsers = subscribeToGlobalUsersFromCloud((cloudUsers) => {
+      hydrateUsersToEngine(cloudUsers);
+    });
+
+    return () => {
+      unsubClients();
+      unsubUsers();
+      window.removeEventListener('aplus-clients-updated', handleLocalClientEvent);
+    };
+  }, []);
+
+  const filteredClients = useMemo(
+    () => filterSchoolClients(clients, clientSearchQuery),
+    [clients, clientSearchQuery]
+  );
 
   // --------------------------------------------------------------------------
   // SECTION 07: ACCOUNT HEADS & CODE CONFIGURATION STATE
@@ -363,139 +440,161 @@ export const PlatformSiteAdminHub: React.FC<{
   // --------------------------------------------------------------------------
   // CLIENT HANDLERS
   // --------------------------------------------------------------------------
-  const handleSaveClient = (e: React.FormEvent) => {
+  const handleSaveClient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientFormName.trim() || !clientFormCode.trim()) {
       triggerToast('error', 'Client name and identifier code are required.');
       return;
     }
 
-    const now = new Date().toISOString();
-    let updatedList: SchoolClientOrganization[];
+    setIsSavingClient(true);
+    try {
+      const now = new Date().toISOString();
+      let updatedList: SchoolClientOrganization[];
 
-    if (clientFormId) {
-      // Edit existing
-      updatedList = clients.map((c) =>
-        c.id === clientFormId
-          ? {
-              ...c,
-              name: clientFormName.trim(),
-              code: clientFormCode.trim().toUpperCase(),
-              tier: clientFormTier,
-              logoUrl: clientFormLogoUrl.trim() || undefined,
-              contactPerson: clientFormContact.trim(),
-              contactEmail: clientFormEmail.trim(),
-              contactPhone: clientFormPhone.trim(),
-              maxCampuses: Math.max(1, Number(clientFormMaxCampuses) || 5),
-              maxUsers: Math.max(1, Number(clientFormMaxUsers) || 20),
-              updatedAt: now,
-            }
-          : c
-      );
-      recordSiteAdminSecurityEvent({
-        actorName: currentUser?.name || 'Platform Site Admin',
-        actorRole: 'Level 1 Platform Creator',
-        severity: 'medium',
-        category: 'CLIENT_MANAGEMENT',
-        action: 'UPDATE_CLIENT_ORGANIZATION',
-        targetEntity: 'SchoolClientOrganization',
-        targetId: clientFormId,
-        details: `Updated client organization '${clientFormName.trim()}' (${clientFormCode.trim().toUpperCase()}).`,
-      });
-      triggerToast('success', `Client organization '${clientFormName.trim()}' updated!`);
-    } else {
-      // New Client Registration
-      const cleanCode = clientFormCode.trim().toUpperCase();
-      const newId = `client-${cleanCode.toLowerCase()}-${Date.now().toString(36).slice(2, 6)}`;
-      let designatedMainCampusId = campuses[0]?.id || 'campus-main';
+      if (clientFormId) {
+        // Edit existing
+        updatedList = clients.map((c) =>
+          c.id === clientFormId
+            ? {
+                ...c,
+                name: clientFormName.trim(),
+                code: clientFormCode.trim().toUpperCase(),
+                tier: clientFormTier,
+                logoUrl: clientFormLogoUrl.trim() || undefined,
+                contactPerson: clientFormContact.trim(),
+                contactEmail: clientFormEmail.trim(),
+                contactPhone: clientFormPhone.trim(),
+                maxCampuses: Math.max(1, Number(clientFormMaxCampuses) || 5),
+                maxUsers: Math.max(1, Number(clientFormMaxUsers) || 20),
+                updatedAt: now,
+              }
+            : c
+        );
+        recordSiteAdminSecurityEvent({
+          actorName: currentUser?.name || 'Platform Site Admin',
+          actorRole: 'Level 1 Platform Creator',
+          severity: 'medium',
+          category: 'CLIENT_MANAGEMENT',
+          action: 'UPDATE_CLIENT_ORGANIZATION',
+          targetEntity: 'SchoolClientOrganization',
+          targetId: clientFormId,
+          details: `Updated client organization '${clientFormName.trim()}' (${clientFormCode.trim().toUpperCase()}).`,
+        });
+        triggerToast('success', `Client organization '${clientFormName.trim()}' updated & synced globally!`);
+      } else {
+        // New Client Registration
+        const cleanCode = clientFormCode.trim().toUpperCase();
+        const newId = `client-${cleanCode.toLowerCase()}-${Date.now().toString(36).slice(2, 6)}`;
+        let designatedMainCampusId = campuses[0]?.id || 'campus-main';
 
-      // Automatically register the Primary Main Campus against this client organization
-      if (clientFormRegisterMainCampus) {
-        designatedMainCampusId = `campus-${cleanCode.toLowerCase()}-main`;
-        const mainCampusName = clientFormMainCampusName.trim() || `${clientFormName.trim()} Main Campus`;
-        const mainCampusCode = clientFormMainCampusCode.trim().toUpperCase() || `${cleanCode}-MAIN`;
-        const mainCampusCity = clientFormMainCampusCity.trim() || 'Head Office';
-        const mainCampusFloat = Number(clientFormMainCampusFloat) || 50000;
-        const mainAdminName = clientFormContact.trim() || `${clientFormName.trim()} Administrator`;
-        const mainAdminPass = clientFormMainCampusPassword.trim() || 'campus';
+        // Automatically register the Primary Main Campus against this client organization
+        if (clientFormRegisterMainCampus) {
+          designatedMainCampusId = `campus-${cleanCode.toLowerCase()}-main`;
+          const mainCampusName = clientFormMainCampusName.trim() || `${clientFormName.trim()} Main Campus`;
+          const mainCampusCode = clientFormMainCampusCode.trim().toUpperCase() || `${cleanCode}-MAIN`;
+          const mainCampusCity = clientFormMainCampusCity.trim() || 'Head Office';
+          const mainCampusFloat = Number(clientFormMainCampusFloat) || 50000;
+          const mainAdminName = clientFormContact.trim() || `${clientFormName.trim()} Administrator`;
+          const mainAdminPass = clientFormMainCampusPassword.trim() || 'campus123';
 
-        const newMainCampus: ExtendedCampusNode = {
-          id: designatedMainCampusId,
-          code: mainCampusCode,
-          name: mainCampusName,
-          city: mainCampusCity,
-          accountantName: mainAdminName,
-          pettyCashFloat: mainCampusFloat,
-          currentPettyCash: mainCampusFloat,
-          status: 'active',
-          isMainCampus: true,
-          parentCampusId: null,
-          clientId: newId,
-          loginEnabled: true,
-          allowedModules: DEFAULT_CLIENT_MODULES,
-        };
+          const newMainCampus: ExtendedCampusNode = {
+            id: designatedMainCampusId,
+            code: mainCampusCode,
+            name: mainCampusName,
+            city: mainCampusCity,
+            accountantName: mainAdminName,
+            pettyCashFloat: mainCampusFloat,
+            currentPettyCash: mainCampusFloat,
+            status: 'active',
+            isMainCampus: true,
+            parentCampusId: null,
+            clientId: newId,
+            loginEnabled: true,
+            allowedModules: DEFAULT_CLIENT_MODULES,
+          };
 
-        addCampus(newMainCampus);
+          addCampus(newMainCampus);
+          window.__APLUS_CLOUD_SYNC__?.syncCampus?.(newMainCampus).catch(() => {});
 
-        // Register Level 2 Client Super Admin account for this organization & its main campus
-        const adminUsername = `${cleanCode.toLowerCase()}.admin`;
-        if (addUser) {
-          addUser({
+          // Register Level 2 Client Super Admin account globally in Firebase Auth & Firestore DB
+          const adminUsername = `${cleanCode.toLowerCase()}.admin`;
+          const adminEmail =
+            clientFormEmail.trim() || `${adminUsername}@${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}.edu.pk`;
+
+          const provisioned = await provisionGlobalUserAccount({
             id: `user-${newId}-admin`,
             username: adminUsername,
             name: mainAdminName,
-            email: clientFormEmail.trim() || `${adminUsername}@${cleanCode.toLowerCase()}.edu.pk`,
-            role: 'level_2_client_super_admin',
-            status: 'active',
+            email: adminEmail,
             password: mainAdminPass,
+            role: 'level_2_client_super_admin',
+            permissionLevel: 'level_2_client_super_admin',
+            isSuperAdmin: false,
             clientId: newId,
             campusId: designatedMainCampusId,
+            campusName: mainCampusName,
             permittedCampusIds: ['all'],
             allowedModules: DEFAULT_CLIENT_MODULES,
             designation: 'Managing Director & Organization Owner',
+            status: 'active',
           });
+
+          if (addUser) {
+            addUser({
+              ...provisioned.userRecord,
+              password: mainAdminPass,
+            });
+          }
+
+          // Generate dynamic credentials and sync to cloud
+          const cred = createDynamicCampusCredential(newMainCampus, undefined, mainAdminPass);
+          saveCampusCredentialToCloud(cred).catch(() => {});
         }
 
-        // Generate dynamic credentials and sync to cloud
-        const cred = createDynamicCampusCredential(newMainCampus, undefined, mainAdminPass);
-        saveCampusCredentialToCloud(cred);
+        const newClient: SchoolClientOrganization = {
+          id: newId,
+          name: clientFormName.trim(),
+          code: cleanCode,
+          logoUrl: clientFormLogoUrl.trim() || undefined,
+          tier: clientFormTier,
+          status: 'active',
+          contactPerson: clientFormContact.trim() || 'Central Director',
+          contactEmail: clientFormEmail.trim() || 'director@institution.edu.pk',
+          contactPhone: clientFormPhone.trim() || '',
+          mainCampusId: designatedMainCampusId,
+          maxCampuses: Math.max(1, Number(clientFormMaxCampuses) || 10),
+          maxUsers: Math.max(1, Number(clientFormMaxUsers) || 30),
+          billingRenewalDate: '2027-12-31',
+          enabledModules: DEFAULT_CLIENT_MODULES,
+          createdAt: now,
+          updatedAt: now,
+        };
+        updatedList = [newClient, ...clients];
+        recordSiteAdminSecurityEvent({
+          actorName: currentUser?.name || 'Platform Site Admin',
+          actorRole: 'Level 1 Platform Creator',
+          severity: 'high',
+          category: 'CLIENT_MANAGEMENT',
+          action: 'REGISTER_CLIENT_ORGANIZATION',
+          targetEntity: 'SchoolClientOrganization',
+          targetId: newId,
+          details: `Created new client organization '${newClient.name}' with registered Main Campus ID '${designatedMainCampusId}' and synced Level 2 Admin to global DB.`,
+        });
+        triggerToast(
+          'success',
+          `Registered client '${newClient.name}', Primary Main Campus, and synced Admin login globally!`
+        );
       }
 
-      const newClient: SchoolClientOrganization = {
-        id: newId,
-        name: clientFormName.trim(),
-        code: cleanCode,
-        logoUrl: clientFormLogoUrl.trim() || undefined,
-        tier: clientFormTier,
-        status: 'active',
-        contactPerson: clientFormContact.trim() || 'Central Director',
-        contactEmail: clientFormEmail.trim() || 'director@institution.edu.pk',
-        contactPhone: clientFormPhone.trim() || '',
-        mainCampusId: designatedMainCampusId,
-        maxCampuses: Math.max(1, Number(clientFormMaxCampuses) || 10),
-        maxUsers: Math.max(1, Number(clientFormMaxUsers) || 30),
-        billingRenewalDate: '2027-12-31',
-        enabledModules: DEFAULT_CLIENT_MODULES,
-        createdAt: now,
-        updatedAt: now,
-      };
-      updatedList = [newClient, ...clients];
-      recordSiteAdminSecurityEvent({
-        actorName: currentUser?.name || 'Platform Site Admin',
-        actorRole: 'Level 1 Platform Creator',
-        severity: 'high',
-        category: 'CLIENT_MANAGEMENT',
-        action: 'REGISTER_CLIENT_ORGANIZATION',
-        targetEntity: 'SchoolClientOrganization',
-        targetId: newId,
-        details: `Created new client organization '${newClient.name}' with registered Main Campus ID '${designatedMainCampusId}' and Level 2 Admin.`,
-      });
-      triggerToast('success', `Registered client organization '${newClient.name}' and Primary Main Campus!`);
+      setClients(updatedList);
+      await syncSchoolClientsToCloud(updatedList);
+      setIsClientModalOpen(false);
+    } catch (err: any) {
+      triggerToast('error', `Failed to save client organization: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsSavingClient(false);
     }
-
-    setClients(updatedList);
-    syncSchoolClientsToCloud(updatedList);
-    setIsClientModalOpen(false);
   };
 
   const handleToggleClientStatus = (clientId: string, newStatus: 'active' | 'suspended' | 'archived') => {
@@ -519,45 +618,142 @@ export const PlatformSiteAdminHub: React.FC<{
   };
 
   const handleDeleteClient = (client: SchoolClientOrganization) => {
-    const confirmText = `Are you sure you want to delete client organization '${client.name}' (${client.code})?\n\nThis will remove the organization and its registered configuration.`;
-    if (!window.confirm(confirmText)) return;
+    setDeleteClientCleanupLinked(true);
+    setDeletingClient(client);
+  };
 
-    const updated = clients.filter((c) => c.id !== client.id);
-    setClients(updated);
-    syncSchoolClientsToCloud(updated);
+  const handleConfirmDeleteClient = async () => {
+    if (!deletingClient) return;
+    const target = deletingClient;
+    setDeletingClient(null);
 
-    recordSiteAdminSecurityEvent({
-      actorName: currentUser?.name || 'Platform Site Admin',
-      actorRole: 'Level 1 Platform Creator',
-      severity: 'high',
-      category: 'CLIENT_MANAGEMENT',
-      action: 'DELETE_CLIENT_ORGANIZATION',
-      targetEntity: 'SchoolClientOrganization',
-      targetId: client.id,
-      details: `Permanently deleted client organization '${client.name}' (${client.code}).`,
-    });
+    try {
+      const updated = clients.filter((c) => c.id !== target.id);
+      setClients(updated);
+      await syncSchoolClientsToCloud(updated);
 
-    triggerToast('success', `Client organization '${client.name}' deleted successfully.`);
+      try {
+        softDeleteRecord({
+          recordType: 'CLIENT_ORGANIZATION',
+          originalPayload: target,
+          organizationId: target.id,
+          organizationName: target.name,
+          campusId: target.mainCampusId || target.id,
+          campusName: target.name,
+          campusCode: target.code,
+          identifier: target.code,
+          title: `Client: ${target.name} (${target.code})`,
+          deletedByUserId: currentUser?.id || 'admin',
+          deletedByUserName: currentUser?.name || 'Platform Super Admin',
+          deletedByUserRole: 'Level 1 Platform Creator',
+          deletionReason: 'Deleted client organization via Platform Site Admin Control Panel',
+        });
+      } catch {}
+
+      if (deleteClientCleanupLinked) {
+        const linkedCampuses = campuses.filter((c: any) => c.clientId === target.id);
+        for (const c of linkedCampuses) {
+          deleteCampus?.(c.id);
+          deleteCampusFromCloud(c.id).catch(() => {});
+          deleteCampusCredentialFromCloud(c.id).catch(() => {});
+        }
+
+        const linkedUsers = deduplicatedUsers.filter(
+          (u: any) =>
+            u.clientId === target.id &&
+            u.id !== 'user-platform-owner' &&
+            u.id !== 'usr-admin' &&
+            u.username?.toLowerCase() !== 'admin'
+        );
+        for (const u of linkedUsers) {
+          deleteUser?.(u.id);
+          await deleteGlobalUserFromCloud(u).catch(() => {});
+        }
+      }
+
+      recordSiteAdminSecurityEvent({
+        actorName: currentUser?.name || 'Platform Site Admin',
+        actorRole: 'Level 1 Platform Creator',
+        severity: 'high',
+        category: 'CLIENT_MANAGEMENT',
+        action: 'DELETE_CLIENT_ORGANIZATION',
+        targetEntity: 'SchoolClientOrganization',
+        targetId: target.id,
+        details: `Deleted client organization '${target.name}' (${target.code}).`,
+      });
+
+      triggerToast('success', `Client organization '${target.name}' deleted and synced to cloud.`);
+    } catch (err: any) {
+      triggerToast('error', `Failed to delete client: ${err?.message || 'Unknown error'}`);
+    }
+  };
+
+  const isProtectedRootOwner = (u: any): boolean => {
+    if (!u) return false;
+    return (
+      u.id === 'user-platform-owner' ||
+      u.id === 'usr-admin' ||
+      String(u.username || '').toLowerCase() === 'admin'
+    );
   };
 
   const handleDeleteGlobalUser = (user: any) => {
-    if (user.username === 'admin' || user.id === 'usr-admin' || user.role === 'level_1_platform_super_admin') {
+    if (isProtectedRootOwner(user)) {
       triggerToast('error', 'The primary Platform Site Admin root user cannot be deleted.');
       return;
     }
+    setDeletingUser(user);
+  };
 
-    if (!window.confirm(`Are you sure you want to delete user account '${user.name || user.username}' (@${user.username})?`)) {
-      return;
-    }
+  const handleConfirmDeleteGlobalUser = async () => {
+    if (!deletingUser) return;
+    const targetUser = deletingUser;
+    setIsDeletingUser(true);
 
     try {
+      // 1. Delete from engine state
+      if (deleteUser && targetUser.id) {
+        deleteUser(targetUser.id);
+      }
+
+      // 2. Delete from Firestore global_users, login_directory, memberships, and Auth (if Admin SDK)
+      await deleteGlobalUserFromCloud({
+        id: targetUser.id,
+        uid: targetUser.uid,
+        username: targetUser.username,
+        clientId: targetUser.clientId,
+      });
+
+      // 3. Soft delete to Global Recycle Bin
+      try {
+        softDeleteRecord({
+          recordType: 'USER',
+          originalPayload: targetUser,
+          organizationId: targetUser.clientId || undefined,
+          campusId: targetUser.campusId || 'all',
+          campusName: targetUser.campusName || 'Global Directory',
+          campusCode: 'USR',
+          identifier: targetUser.username,
+          title: `User: ${targetUser.name || targetUser.username} (@${targetUser.username})`,
+          deletedByUserId: currentUser?.id || 'admin',
+          deletedByUserName: currentUser?.name || 'Platform Site Admin',
+          deletedByUserRole: 'Level 1 Platform Creator',
+          deletionReason: 'Deleted user account from Global User Directory',
+        });
+      } catch {}
+
+      // 4. Clean local storage user caches
       const userKeys = ['ams_users_v5_clean', 'aplus_users', 'users'];
       userKeys.forEach((key) => {
         const raw = localStorage.getItem(key);
         if (raw) {
           const list = JSON.parse(raw);
           if (Array.isArray(list)) {
-            const clean = list.filter((u: any) => u.id !== user.id && u.username?.toLowerCase() !== user.username?.toLowerCase());
+            const clean = list.filter(
+              (u: any) =>
+                u.id !== targetUser.id &&
+                u.username?.toLowerCase() !== targetUser.username?.toLowerCase()
+            );
             localStorage.setItem(key, JSON.stringify(clean));
           }
         }
@@ -570,15 +766,17 @@ export const PlatformSiteAdminHub: React.FC<{
         category: 'AUTHENTICATION',
         action: 'DELETE_USER_ACCOUNT',
         targetEntity: 'User',
-        targetId: user.id || user.username,
-        details: `Deleted user account '${user.name || user.username}' (@${user.username}) from global directory.`,
+        targetId: targetUser.id || targetUser.username,
+        details: `Deleted user account '${targetUser.name || targetUser.username}' (@${targetUser.username}) from global DB directory.`,
       });
 
-      triggerToast('success', `User account '@${user.username}' deleted.`);
-      // Dispatch storage update so consumers re-read
+      setDeletingUser(null);
+      triggerToast('success', `User account '@${targetUser.username}' deleted from Global DB.`);
       window.dispatchEvent(new Event('storage'));
     } catch (err: any) {
-      triggerToast('error', `Failed to delete user: ${err.message}`);
+      triggerToast('error', `Failed to delete user: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -706,7 +904,7 @@ export const PlatformSiteAdminHub: React.FC<{
     setIsCampusModalOpen(true);
   };
 
-  const handleCreateCampusOrSubCampus = (e: React.FormEvent) => {
+  const handleCreateCampusOrSubCampus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCampusName.trim() || !newCampusCode.trim()) {
       triggerToast('error', 'Branch name and branch code are required.');
@@ -748,6 +946,7 @@ export const PlatformSiteAdminHub: React.FC<{
     };
 
     addCampus(newCampus);
+    window.__APLUS_CLOUD_SYNC__?.syncCampus?.(newCampus).catch(() => {});
 
     // If registered as Main Campus and assigned to a client without a designated main campus, link it
     if (!parentId && resolvedClientId) {
@@ -763,27 +962,58 @@ export const PlatformSiteAdminHub: React.FC<{
     // Generate dynamic credentials and save to database
     const pass = newCampusPassword.trim() || generateDynamicPassword(cleanCode);
     const cred = createDynamicCampusCredential(newCampus, undefined, pass);
-    saveCampusCredentialToCloud(cred);
+    saveCampusCredentialToCloud(cred).catch(() => {});
 
-    // Create user login account so this branch can be operated immediately
+    // Create user login account and provision globally in Firebase Auth & Firestore DB
     const assignedClient = clients.find((cl) => cl.id === resolvedClientId);
     const clientPrefix = assignedClient?.code ? assignedClient.code.toLowerCase() : 'campus';
     const autoUsername = `${clientPrefix}.${cleanCode.toLowerCase()}`;
-    if (addUser) {
-      addUser({
+    const autoEmail = `${autoUsername}@institution.edu.pk`;
+    const assignedLevel = parentId ? 'level_4_sub_campus_admin' : 'level_3_main_campus_admin';
+
+    try {
+      const provisioned = await provisionGlobalUserAccount({
         id: `user-${newId}`,
         username: autoUsername,
         name: newCampusAccountant.trim() || `${newCampusName.trim()} Accountant`,
-        email: `${autoUsername}@institution.edu.pk`,
-        role: parentId ? 'level_3_sub_campus_admin' : 'level_2_client_super_admin',
-        status: 'active',
+        email: autoEmail,
         password: pass,
+        role: parentId ? 'level_3_sub_campus_admin' : 'level_3_main_campus_admin',
+        permissionLevel: assignedLevel,
+        isSuperAdmin: false,
         clientId: resolvedClientId || null,
         campusId: newId,
+        campusName: newCampus.name,
         permittedCampusIds: [newId],
         allowedModules: newCampus.allowedModules,
         designation: parentId ? `Sub-Campus Accountant (${cleanCode})` : `Main Campus Administrator (${cleanCode})`,
+        status: 'active',
       });
+
+      if (addUser) {
+        addUser({
+          ...provisioned.userRecord,
+          password: pass,
+        });
+      }
+    } catch {
+      if (addUser) {
+        addUser({
+          id: `user-${newId}`,
+          username: autoUsername,
+          name: newCampusAccountant.trim() || `${newCampusName.trim()} Accountant`,
+          email: autoEmail,
+          role: parentId ? 'level_3_sub_campus_admin' : 'level_3_main_campus_admin',
+          permissionLevel: assignedLevel,
+          status: 'active',
+          password: pass,
+          clientId: resolvedClientId || null,
+          campusId: newId,
+          permittedCampusIds: [newId],
+          allowedModules: newCampus.allowedModules,
+          designation: parentId ? `Sub-Campus Accountant (${cleanCode})` : `Main Campus Administrator (${cleanCode})`,
+        });
+      }
     }
 
     recordSiteAdminSecurityEvent({
@@ -795,15 +1025,15 @@ export const PlatformSiteAdminHub: React.FC<{
       targetEntity: 'Campus',
       targetId: newId,
       details: parentId
-        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}'. Initial Float: PKR ${newCampus.pettyCashFloat.toLocaleString()}.`
-        : `Created Main Campus '${newCampus.name}' (${newCampus.code}).`,
+        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}' and synced global login @${autoUsername}.`
+        : `Created Main Campus '${newCampus.name}' (${newCampus.code}) and synced global login @${autoUsername}.`,
     });
 
     triggerToast(
       'success',
       parentId
-        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}'!`
-        : `Created Main Campus '${newCampus.name}' (${newCampus.code})!`
+        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) & synced login @${autoUsername} globally!`
+        : `Created Main Campus '${newCampus.name}' (${newCampus.code}) & synced login @${autoUsername} globally!`
     );
 
     setIsCampusModalOpen(false);
@@ -889,7 +1119,7 @@ export const PlatformSiteAdminHub: React.FC<{
     setDeletingCampus(campus);
   };
 
-  const handleConfirmDeleteCampus = () => {
+  const handleConfirmDeleteCampus = async () => {
     if (!deletingCampus) return;
     const campusId = deletingCampus.id;
     const campusName = deletingCampus.name;
@@ -923,10 +1153,12 @@ export const PlatformSiteAdminHub: React.FC<{
       console.warn('Recycle bin record creation deferred:', err);
     }
 
-    // Call engine deleteCampus
+    // Call engine deleteCampus + delete from Firestore campuses & credentials
     if (deleteCampus) {
       deleteCampus(campusId);
     }
+    deleteCampusFromCloud(campusId).catch(() => {});
+    deleteCampusCredentialFromCloud(campusId).catch(() => {});
 
     // Update localStorage
     try {
@@ -946,12 +1178,12 @@ export const PlatformSiteAdminHub: React.FC<{
       action: 'DELETE_CAMPUS',
       targetEntity: 'Campus',
       targetId: campusId,
-      details: `Deleted campus '${campusName}' (${campusCode}). Detached ${childCampuses.length} child branches. Preserved in Recycle Bin.`,
+      details: `Deleted campus '${campusName}' (${campusCode}). Detached ${childCampuses.length} child branches. Preserved in Recycle Bin & removed from cloud.`,
     });
 
     triggerToast(
       'warning',
-      `Campus '${campusName}' deleted and moved to the Global Recycle Bin.`
+      `Campus '${campusName}' deleted from cloud DB and moved to the Global Recycle Bin.`
     );
     setDeletingCampus(null);
   };
@@ -1020,6 +1252,8 @@ export const PlatformSiteAdminHub: React.FC<{
       setUserFormEmail(userToEdit.email || '');
       setUserFormPassword('');
       setUserFormRole(userToEdit.role || 'Accountant');
+      const camp = campuses.find((c) => c.id === userToEdit.campusId);
+      setUserFormClientId(userToEdit.clientId || (camp as any)?.clientId || clients[0]?.id || '');
       setUserFormCampusId(userToEdit.campusId || campuses[0]?.id || '');
       setUserFormLevel(userToEdit.permissionLevel || 'level_4_sub_campus_admin');
       setUserFormDelegatedSubCampuses(userToEdit.delegatedSubCampusIds || []);
@@ -1030,86 +1264,146 @@ export const PlatformSiteAdminHub: React.FC<{
       setUserFormEmail('');
       setUserFormPassword(generateDynamicPassword('USER'));
       setUserFormRole('Accountant');
-      setUserFormCampusId(preselectedCampusId || campuses[0]?.id || '');
+      const targetCampusId = preselectedCampusId || campuses[0]?.id || '';
+      const camp = campuses.find((c) => c.id === targetCampusId);
+      setUserFormClientId((camp as any)?.clientId || clients[0]?.id || '');
+      setUserFormCampusId(targetCampusId);
       setUserFormLevel(preselectedCampusId ? 'level_4_sub_campus_admin' : 'level_4_sub_campus_admin');
       setUserFormDelegatedSubCampuses([]);
     }
     setIsUserModalOpen(true);
   };
 
-  const handleSaveUserAccount = (e: React.FormEvent) => {
+  const handleSaveUserAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userFormUsername.trim() || !userFormName.trim()) {
       triggerToast('error', 'Username and user full name are required.');
       return;
     }
 
-    const cleanUsername = userFormUsername.trim().toLowerCase();
+    const cleanUsername = userFormUsername.trim().toLowerCase().replace(/\s+/g, '');
+    const assignedCampus = campuses.find((c) => c.id === userFormCampusId) || campuses[0];
+    const isLevel1 = userFormLevel === 'level_1_platform_super_admin';
+    const resolvedClientId = isLevel1
+      ? null
+      : (userFormClientId || (assignedCampus as any)?.clientId || clients[0]?.id || null);
+    const resolvedEmail = (userFormEmail.trim() || `${cleanUsername}@institution.edu.pk`).toLowerCase();
 
     if (!selectedUserToEdit) {
-      if (users.some((u) => u.username?.toLowerCase() === cleanUsername)) {
+      if (deduplicatedUsers.some((u) => u.username?.toLowerCase() === cleanUsername)) {
         triggerToast('error', `Username '${cleanUsername}' already exists.`);
         return;
       }
-      if (!userFormPassword.trim()) {
-        triggerToast('error', 'A secure password is required for this user.');
+      if (deduplicatedUsers.some((u) => u.email?.toLowerCase() === resolvedEmail)) {
+        triggerToast('error', `Email '${resolvedEmail}' is already assigned to another user.`);
         return;
       }
-
-      const assignedCampus = campuses.find((c) => c.id === userFormCampusId) || campuses[0];
-      const isLevel1 = userFormLevel === 'level_1_platform_super_admin';
-
-      const newUser = {
-        id: `usr-${cleanUsername.replace(/[^a-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`,
-        username: cleanUsername,
-        name: userFormName.trim(),
-        email: userFormEmail.trim() || `${cleanUsername}@school.edu.pk`,
-        password: userFormPassword.trim(),
-        role: isLevel1 ? 'admin' : userFormRole,
-        isSuperAdmin: isLevel1,
-        campusId: isLevel1 ? 'all' : (userFormCampusId || assignedCampus?.id),
-        campusName: isLevel1 ? 'All Campuses (Central Platform)' : assignedCampus?.name,
-        permissionLevel: userFormLevel,
-        delegatedSubCampusIds:
-          userFormLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
-        createdAt: new Date().toISOString(),
-      };
-
-      addUser(newUser);
-
-      recordSiteAdminSecurityEvent({
-        actorName: currentUser?.name || 'Platform Site Admin',
-        actorRole: 'Level 1 Platform Creator',
-        severity: isLevel1 ? 'high' : 'medium',
-        category: 'AUTHENTICATION',
-        action: 'CREATE_USER_ACCOUNT',
-        targetEntity: 'User',
-        targetId: newUser.id,
-        details: `Created user account '${newUser.name}' (@${newUser.username}) with ${userFormLevel} for campus '${newUser.campusName}'.`,
-      });
-
-      triggerToast('success', `Created user account '${newUser.name}' (@${cleanUsername})!`);
-    } else {
-      const updates: any = {
-        name: userFormName.trim(),
-        email: userFormEmail.trim(),
-        role: userFormLevel === 'level_1_platform_super_admin' ? 'admin' : userFormRole,
-        isSuperAdmin: userFormLevel === 'level_1_platform_super_admin',
-        campusId: userFormCampusId,
-        permissionLevel: userFormLevel,
-        delegatedSubCampusIds:
-          userFormLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
-      };
-      if (userFormPassword.trim()) {
-        updates.password = userFormPassword.trim();
+      if (!userFormPassword.trim() || userFormPassword.trim().length < 6) {
+        triggerToast('error', 'A secure password of at least 6 characters is required for global Firebase authentication.');
+        return;
       }
-
-      updateUser(selectedUserToEdit.id, updates);
-      triggerToast('success', `Updated user account '${userFormName}'!`);
     }
 
-    setIsUserModalOpen(false);
-    setSelectedUserToEdit(null);
+    setIsSavingUser(true);
+    try {
+      const normalizedLevel =
+        userFormLevel === ('level_2_client_admin' as any)
+          ? 'level_2_client_super_admin'
+          : userFormLevel === ('level_5_departmental_user' as any)
+          ? 'level_5_departmental_staff'
+          : userFormLevel;
+
+      const resolvedRole = isLevel1
+        ? 'level_1_platform_super_admin'
+        : normalizedLevel === 'level_2_client_super_admin'
+        ? 'level_2_client_super_admin'
+        : normalizedLevel === 'level_3_main_campus_admin'
+        ? 'level_3_main_campus_admin'
+        : normalizedLevel === 'level_4_sub_campus_admin'
+        ? 'level_3_sub_campus_admin'
+        : userFormRole;
+
+      const provisioned = await provisionGlobalUserAccount({
+        id: selectedUserToEdit?.id,
+        uid: selectedUserToEdit?.uid || null,
+        username: cleanUsername,
+        name: userFormName.trim(),
+        email: resolvedEmail,
+        password: userFormPassword.trim() || undefined,
+        role: resolvedRole,
+        permissionLevel: normalizedLevel,
+        isSuperAdmin: isLevel1,
+        clientId: resolvedClientId,
+        campusId: isLevel1 ? null : (userFormCampusId || assignedCampus?.id || null),
+        campusName: isLevel1 ? 'All Campuses (Central Platform)' : (assignedCampus?.name || 'All Campuses'),
+        permittedCampusIds: isLevel1
+          ? ['all']
+          : normalizedLevel === 'level_2_client_super_admin'
+          ? ['all']
+          : [userFormCampusId || assignedCampus?.id || 'all'],
+        delegatedSubCampusIds:
+          normalizedLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
+        allowedModules: ['all'],
+        status: selectedUserToEdit?.status || 'active',
+        designation: resolvedRole,
+      });
+
+      if (!selectedUserToEdit) {
+        addUser({
+          ...provisioned.userRecord,
+          password: userFormPassword.trim(),
+        });
+
+        recordSiteAdminSecurityEvent({
+          actorName: currentUser?.name || 'Platform Site Admin',
+          actorRole: 'Level 1 Platform Creator',
+          severity: isLevel1 ? 'high' : 'medium',
+          category: 'AUTHENTICATION',
+          action: 'CREATE_USER_ACCOUNT',
+          targetEntity: 'User',
+          targetId: provisioned.userRecord.id,
+          details: `Created global user '${provisioned.userRecord.name}' (@${cleanUsername}, ${resolvedEmail}) with ${normalizedLevel} & synced to Firebase Auth + Firestore.`,
+        });
+
+        triggerToast(
+          provisioned.warning ? 'warning' : 'success',
+          provisioned.warning
+            ? `User '@${cleanUsername}' saved globally in Firestore DB. Note: ${provisioned.warning}`
+            : `Created '@${cleanUsername}' (${resolvedEmail}) — Synced globally to Cloud DB & Firebase Auth!`
+        );
+      } else {
+        const updates: any = {
+          ...provisioned.userRecord,
+          ...(userFormPassword.trim() ? { password: userFormPassword.trim() } : {}),
+        };
+        updateUser(selectedUserToEdit.id, updates);
+
+        recordSiteAdminSecurityEvent({
+          actorName: currentUser?.name || 'Platform Site Admin',
+          actorRole: 'Level 1 Platform Creator',
+          severity: 'medium',
+          category: 'AUTHENTICATION',
+          action: 'UPDATE_USER_ACCOUNT',
+          targetEntity: 'User',
+          targetId: selectedUserToEdit.id,
+          details: `Updated user account '@${cleanUsername}' & synchronized changes globally in Firestore.`,
+        });
+
+        triggerToast(
+          provisioned.warning ? 'warning' : 'success',
+          provisioned.warning
+            ? `Updated '@${cleanUsername}' in global DB. Note: ${provisioned.warning}`
+            : `Updated user '@${cleanUsername}' & synced globally to Firestore DB!`
+        );
+      }
+
+      setIsUserModalOpen(false);
+      setSelectedUserToEdit(null);
+    } catch (err: any) {
+      triggerToast('error', `Failed to provision global account: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   // --------------------------------------------------------------------------
@@ -1882,22 +2176,36 @@ export const PlatformSiteAdminHub: React.FC<{
                   <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
                     <Building2 className="w-5 h-5 text-indigo-400" />
                     <span>School Clients & Organizations Registry</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800">
+                      {filteredClients.length} / {clients.length} Shown
+                    </span>
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Central authority over all school clients, contractual quotas, authorized campuses, and status flags.
+                    Central authority over all school clients, contractual quotas, authorized campuses, and global cloud status flags.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
                       value={clientSearchQuery}
                       onChange={(e) => setClientSearchQuery(e.target.value)}
-                      placeholder="Search school client..."
-                      className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-48 sm:w-60 focus:border-indigo-500"
+                      placeholder="Filter by client name or code..."
+                      aria-label="Filter school clients by name or code"
+                      className="pl-8 pr-7 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 outline-none w-52 sm:w-64 focus:border-indigo-500"
                     />
+                    {clientSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setClientSearchQuery('')}
+                        aria-label="Clear school client filter"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   <button
@@ -1913,9 +2221,15 @@ export const PlatformSiteAdminHub: React.FC<{
                       setClientFormMaxCampuses('10');
                       setClientFormMaxUsers('40');
                       setClientFormLogoUrl('');
+                      setClientFormRegisterMainCampus(true);
+                      setClientFormMainCampusName('');
+                      setClientFormMainCampusCode('');
+                      setClientFormMainCampusCity('');
+                      setClientFormMainCampusFloat('50000');
+                      setClientFormMainCampusPassword(generateDynamicPassword('ADMIN'));
                       setIsClientModalOpen(true);
                     }}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm shrink-0"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>Register New Client</span>
@@ -1924,8 +2238,8 @@ export const PlatformSiteAdminHub: React.FC<{
               </div>
 
               {/* Clients Table */}
-              <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/70">
-                <table className="w-full text-left text-xs border-collapse">
+              <div className="border border-slate-800 rounded-2xl overflow-x-auto bg-slate-950/70">
+                <table className="w-full text-left text-xs border-collapse min-w-[760px]">
                   <thead>
                     <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                       <th className="py-3 px-4">Client Organization</th>
@@ -1933,7 +2247,7 @@ export const PlatformSiteAdminHub: React.FC<{
                       <th className="py-3 px-4">Authorized Quota</th>
                       <th className="py-3 px-4">Primary Contact</th>
                       <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
+                      <th className="py-3 px-4 text-right">Actions (Edit · Modules · Delete)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/80">
@@ -1943,7 +2257,7 @@ export const PlatformSiteAdminHub: React.FC<{
                           <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
                             <Building2 className="w-10 h-10 text-slate-600" />
                             <span className="font-bold text-white text-sm">No Client Organizations Registered</span>
-                            <span className="text-xs text-slate-400">All demo client organizations, campuses, and entries have been completely deleted. Database is in a fresh, clean production state.</span>
+                            <span className="text-xs text-slate-400">No school clients are currently registered in the cloud registry. Register your first organization to begin.</span>
                             <button
                               type="button"
                               onClick={() => {
@@ -1956,6 +2270,8 @@ export const PlatformSiteAdminHub: React.FC<{
                                 setClientFormPhone('');
                                 setClientFormMaxCampuses('10');
                                 setClientFormMaxUsers('40');
+                                setClientFormRegisterMainCampus(true);
+                                setClientFormMainCampusPassword(generateDynamicPassword('ADMIN'));
                                 setIsClientModalOpen(true);
                               }}
                               className="mt-2 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer shadow-sm"
@@ -1965,15 +2281,30 @@ export const PlatformSiteAdminHub: React.FC<{
                           </div>
                         </td>
                       </tr>
+                    ) : filteredClients.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-10 px-4 text-center text-slate-400">
+                          <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
+                            <Search className="w-8 h-8 text-slate-600" />
+                            <span className="font-bold text-white text-sm">
+                              No School Clients Match &ldquo;{clientSearchQuery}&rdquo;
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              Try searching by another organization name, school code, contact person, or email.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setClientSearchQuery('')}
+                              className="mt-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer border border-slate-700"
+                            >
+                              Clear Search Filter
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     ) : (
-                      clients
-                        .filter(
-                          (c) =>
-                            c.name.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
-                            c.code.toLowerCase().includes(clientSearchQuery.toLowerCase())
-                        )
-                        .map((c) => (
-                          <tr key={c.id} className="hover:bg-slate-900/60 transition-colors">
+                      filteredClients.map((c) => (
+                        <tr key={c.id} className="hover:bg-slate-900/60 transition-colors">
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2.5">
                               {c.logoUrl ? (
@@ -1989,7 +2320,9 @@ export const PlatformSiteAdminHub: React.FC<{
                               )}
                               <div>
                                 <div className="font-bold text-white text-xs">{c.name}</div>
-                                <div className="text-[10px] text-slate-400">{c.address || 'Pakistan'}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  Code: {c.code} · {c.address || 'Pakistan'}
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -2028,12 +2361,12 @@ export const PlatformSiteAdminHub: React.FC<{
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
                               {c.status === 'active' ? (
                                 <button
                                   type="button"
                                   onClick={() => handleToggleClientStatus(c.id, 'suspended')}
-                                  className="px-2 py-1 rounded bg-rose-950 hover:bg-rose-900 text-rose-300 font-bold text-[10px] border border-rose-800 transition-colors cursor-pointer"
+                                  className="px-2 py-1 rounded bg-amber-950/70 hover:bg-amber-900 text-amber-300 font-bold text-[10px] border border-amber-800/80 transition-colors cursor-pointer"
                                   title="Suspend client organization"
                                 >
                                   Suspend
@@ -2082,16 +2415,17 @@ export const PlatformSiteAdminHub: React.FC<{
                               <button
                                 type="button"
                                 onClick={() => handleDeleteClient(c)}
-                                className="px-2 py-1 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold text-[10px] border border-rose-800/80 transition-colors cursor-pointer flex items-center gap-1"
+                                className="px-2.5 py-1 rounded bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white font-bold text-[10px] border border-rose-500/60 transition-colors cursor-pointer flex items-center gap-1"
                                 title={`Delete client organization '${c.name}'`}
                               >
-                                <Trash2 className="w-3 h-3 text-rose-400" />
+                                <Trash2 className="w-3 h-3" />
                                 <span>Delete</span>
                               </button>
                             </div>
                           </td>
                         </tr>
-                      )))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -2347,14 +2681,14 @@ export const PlatformSiteAdminHub: React.FC<{
               </div>
 
               {/* Users Table */}
-              <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/70">
-                <table className="w-full text-left text-xs border-collapse">
+              <div className="border border-slate-800 rounded-2xl overflow-x-auto bg-slate-950/70">
+                <table className="w-full text-left text-xs border-collapse min-w-[780px]">
                   <thead>
                     <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                       <th className="py-3 px-4">User Account</th>
                       <th className="py-3 px-4">Permission Level</th>
-                      <th className="py-3 px-4">Assigned Campus</th>
-                      <th className="py-3 px-4">Role Type</th>
+                      <th className="py-3 px-4">Organization & Campus</th>
+                      <th className="py-3 px-4">Cloud DB Sync</th>
                       <th className="py-3 px-4 text-right">Actions & Security</th>
                     </tr>
                   </thead>
@@ -2364,66 +2698,84 @@ export const PlatformSiteAdminHub: React.FC<{
                         (u) =>
                           u.username?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
                           u.name?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+                          u.email?.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
                           u.role?.toLowerCase().includes(userSearchQuery.toLowerCase())
                       )
                       .map((u, idx) => {
                         const targetCampus = campuses.find((c) => c.id === u.campusId);
-                        const isCreator = u.role === 'admin' || u.isSuperAdmin;
+                        const targetClient = clients.find((cl) => cl.id === u.clientId);
+                        const isRootOwner = isProtectedRootOwner(u);
+                        const pLevel = u.permissionLevel || u.role || '';
+                        const levelBadge =
+                          pLevel === 'level_1_platform_super_admin' || u.isSuperAdmin
+                            ? { text: 'Level 1 Platform Super Admin', cls: 'bg-amber-950 text-amber-300 border border-amber-800' }
+                            : pLevel === 'level_2_client_super_admin' || pLevel === 'level_2_client_admin'
+                            ? { text: 'Level 2 Client Owner', cls: 'bg-purple-950 text-purple-300 border border-purple-800' }
+                            : pLevel === 'level_3_main_campus_admin'
+                            ? { text: 'Level 3 Main Campus Admin', cls: 'bg-emerald-950 text-emerald-300 border border-emerald-800' }
+                            : pLevel === 'level_4_sub_campus_admin' || pLevel === 'level_3_sub_campus_admin'
+                            ? { text: 'Level 4 Sub-Campus Admin', cls: 'bg-sky-950 text-sky-300 border border-sky-800' }
+                            : { text: 'Level 5 Branch Staff', cls: 'bg-indigo-950 text-indigo-300 border border-indigo-800' };
 
                         return (
                           <tr key={`${u.id || u.username || 'user'}-${idx}`} className="hover:bg-slate-900/60 transition-colors">
                             <td className="py-3 px-4">
                               <div className="flex items-center gap-2">
-                                <span className="w-7 h-7 rounded-lg bg-indigo-950 text-indigo-300 font-bold flex items-center justify-center font-mono text-xs border border-indigo-800">
+                                <span className="w-7 h-7 rounded-lg bg-indigo-950 text-indigo-300 font-bold flex items-center justify-center font-mono text-xs border border-indigo-800 shrink-0">
                                   {u.username?.[0]?.toUpperCase() || 'U'}
                                 </span>
                                 <div>
                                   <div className="font-bold text-white text-xs">{u.name || u.username}</div>
-                                  <div className="text-[10px] text-slate-400 font-mono">@{u.username}</div>
+                                  <div className="text-[10px] text-slate-400 font-mono">
+                                    @{u.username}{u.email ? ` · ${u.email}` : ''}
+                                  </div>
                                 </div>
                               </div>
                             </td>
                             <td className="py-3 px-4">
-                              <span
-                                className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
-                                  isCreator
-                                    ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                                    : 'bg-indigo-950 text-indigo-300 border border-indigo-800'
-                                }`}
-                              >
-                                {isCreator ? 'Level 1 Platform Super Admin' : 'Level 4/5 Branch Staff'}
+                              <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${levelBadge.cls}`}>
+                                {levelBadge.text}
                               </span>
                             </td>
                             <td className="py-3 px-4 font-mono text-slate-300">
-                              {targetCampus ? `${targetCampus.name} (${targetCampus.code})` : 'All Campuses'}
+                              <div>{targetCampus ? `${targetCampus.name} (${targetCampus.code})` : 'All Campuses'}</div>
+                              {targetClient && (
+                                <div className="text-[10px] text-indigo-300">
+                                  Org: {targetClient.name} ({targetClient.code})
+                                </div>
+                              )}
                             </td>
-                            <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
-                              {u.role || 'campus_accountant'}
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+                                  Global DB ✓
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {u.role || 'Accountant'}
+                                </span>
+                              </div>
                             </td>
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => handleOpenAddUserModal(u.campusId, u)}
-                                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer border border-slate-700"
+                                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] transition-colors cursor-pointer border border-slate-700"
                                   title="Edit user role, scope, or password"
                                 >
                                   Edit
                                 </button>
-                                {!isCreator && (
+                                {!isRootOwner && (
                                   <button
                                     type="button"
                                     onClick={() => handleDeleteGlobalUser(u)}
-                                    className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold text-[10px] transition-colors cursor-pointer border border-rose-800/80 flex items-center gap-1"
+                                    className="px-2.5 py-1 rounded bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white font-bold text-[10px] transition-colors cursor-pointer border border-rose-500/60 flex items-center gap-1"
                                     title={`Delete user account @${u.username}`}
                                   >
-                                    <Trash2 className="w-2.5 h-2.5 text-rose-400" />
+                                    <Trash2 className="w-3 h-3" />
                                     <span>Delete</span>
                                   </button>
                                 )}
-                                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800">
-                                  Active ✓
-                                </span>
                               </div>
                             </td>
                           </tr>
@@ -3232,9 +3584,10 @@ export const PlatformSiteAdminHub: React.FC<{
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-colors cursor-pointer"
+                  disabled={isSavingClient}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold transition-colors cursor-pointer"
                 >
-                  Save Client Organization
+                  {isSavingClient ? 'Syncing Organization to Cloud...' : 'Save Client Organization'}
                 </button>
               </div>
             </form>
@@ -3561,7 +3914,12 @@ export const PlatformSiteAdminHub: React.FC<{
                   <label className="block text-slate-400 mb-1 font-bold">3. Assigned Campus Branch</label>
                   <select
                     value={userFormCampusId}
-                    onChange={(e) => setUserFormCampusId(e.target.value)}
+                    onChange={(e) => {
+                      const cid = e.target.value;
+                      setUserFormCampusId(cid);
+                      const camp = campuses.find((c) => c.id === cid);
+                      if ((camp as any)?.clientId) setUserFormClientId((camp as any).clientId);
+                    }}
                     disabled={userFormLevel === 'level_1_platform_super_admin'}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 disabled:opacity-50"
                   >
@@ -3577,6 +3935,26 @@ export const PlatformSiteAdminHub: React.FC<{
                   </select>
                 </div>
               </div>
+
+              {userFormLevel !== 'level_1_platform_super_admin' && (
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">
+                    Organization / School Client Tenant (Global Cloud Isolation)
+                  </label>
+                  <select
+                    value={userFormClientId}
+                    onChange={(e) => setUserFormClientId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                  >
+                    <option value="">Auto-detect from Selected Campus</option>
+                    {clients.map((cl) => (
+                      <option key={cl.id} value={cl.id}>
+                        {cl.name} ({cl.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Step 3: Name & Email */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -3621,7 +3999,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
                 <div>
                   <label className="block text-slate-400 mb-1 font-bold">
-                    7. Password {selectedUserToEdit ? '(Leave blank to keep existing)' : ''}
+                    7. Password {selectedUserToEdit ? '(Leave blank to keep existing)' : '(Min 6 chars for Cloud Auth)'}
                   </label>
                   <div className="flex items-center gap-1.5">
                     <input
@@ -3658,10 +4036,18 @@ export const PlatformSiteAdminHub: React.FC<{
                 </div>
               </div>
 
+              <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-800/70 text-[11px] text-emerald-200 flex items-center gap-2">
+                <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  Accounts are provisioned in <strong>Firebase Authentication</strong> &amp; synced live in <strong>Firestore Global DB</strong> (not local cache), enabling immediate sign-in from any device or browser.
+                </span>
+              </div>
+
               {/* Action Buttons */}
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
                 <button
                   type="button"
+                  disabled={isSavingUser}
                   onClick={() => setIsUserModalOpen(false)}
                   className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold"
                 >
@@ -3669,10 +4055,17 @@ export const PlatformSiteAdminHub: React.FC<{
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+                  disabled={isSavingUser}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
                 >
                   <UserCheck className="w-4 h-4" />
-                  <span>{selectedUserToEdit ? 'Save Changes' : 'Generate & Activate Account'}</span>
+                  <span>
+                    {isSavingUser
+                      ? 'Syncing to Global Cloud DB...'
+                      : selectedUserToEdit
+                      ? 'Save & Sync Changes'
+                      : 'Generate & Sync Global Account'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -3834,7 +4227,135 @@ export const PlatformSiteAdminHub: React.FC<{
       )}
 
       {/* ================================================================ */}
+      {/* DELETE CLIENT ORGANIZATION CONFIRMATION MODAL                     */}
+      {/* ================================================================ */}
+      {deletingClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-900/80 rounded-3xl shadow-2xl max-w-lg w-full p-6 text-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-white">
+                  Confirm Deletion of School Client Organization
+                </h3>
+                <p className="text-xs text-rose-300 font-bold mt-0.5">
+                  {deletingClient.name} ({deletingClient.code})
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This removes the client organization from the global cloud registry and archives it in the Global Recycle Bin.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                <span>Linked Campuses:</span>
+                <strong className="text-white font-mono">
+                  {campuses.filter((c: any) => c.clientId === deletingClient.id).length} branches
+                </strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                <span>Linked Global Users:</span>
+                <strong className="text-white font-mono">
+                  {deduplicatedUsers.filter((u: any) => u.clientId === deletingClient.id && !isProtectedRootOwner(u)).length} accounts
+                </strong>
+              </div>
+              <label className="flex items-start gap-2 pt-2 border-t border-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteClientCleanupLinked}
+                  onChange={(e) => setDeleteClientCleanupLinked(e.target.checked)}
+                  className="w-4 h-4 rounded accent-rose-600 mt-0.5 cursor-pointer"
+                />
+                <span className="text-[11px] text-slate-300 leading-relaxed">
+                  Also remove linked campuses and organization login accounts from Global Cloud DB.
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeletingClient(null)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteClient}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Confirm &amp; Delete Organization</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* DELETE GLOBAL USER CONFIRMATION MODAL                             */}
+      {/* ================================================================ */}
+      {deletingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-900/80 rounded-3xl shadow-2xl max-w-md w-full p-6 text-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <UserX className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-sm text-white">
+                  Confirm Deletion of Global User Account
+                </h3>
+                <p className="text-xs text-rose-300 font-bold mt-0.5">
+                  {deletingUser.name || deletingUser.username} (@{deletingUser.username})
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This revokes login access immediately across all browsers and removes this user from the global directory.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-1.5 text-[11px]">
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Email:</span>
+                <strong className="text-white font-mono">{deletingUser.email || '—'}</strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Role / Permission:</span>
+                <strong className="text-indigo-300 font-mono">{deletingUser.permissionLevel || deletingUser.role}</strong>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setDeletingUser(null)}
+                className="px-4 py-2 rounded-xl text-slate-400 hover:text-white font-bold text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={handleConfirmDeleteGlobalUser}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeletingUser ? 'Deleting from Cloud DB...' : 'Confirm & Delete User'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
       {/* DELETE CAMPUS CONFIRMATION MODAL                                  */}
+      {/* ================================================================ */}
       {/* ================================================================ */}
       {deletingCampus && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">

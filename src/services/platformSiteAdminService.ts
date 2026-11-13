@@ -1,6 +1,7 @@
 import { Campus, AccountHead, Transaction } from '../core/aplusEngine';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from './firestoreErrorHandler';
 
 export interface SchoolClientOrganization {
   id: string;
@@ -256,16 +257,47 @@ export function saveStoredSchoolClients(clients: SchoolClientOrganization[]): vo
   } catch {}
 }
 
+export function filterSchoolClients(
+  clients: SchoolClientOrganization[],
+  queryText: string
+): SchoolClientOrganization[] {
+  const clean = (queryText || '').trim().toLowerCase();
+  if (!clean) return clients;
+  return (clients || []).filter((c) => {
+    const name = (c.name || '').toLowerCase();
+    const code = (c.code || '').toLowerCase();
+    const contact = (c.contactPerson || '').toLowerCase();
+    const email = (c.contactEmail || '').toLowerCase();
+    const tier = (c.tier || '').toLowerCase();
+    const status = (c.status || '').toLowerCase();
+    const address = (c.address || '').toLowerCase();
+    return (
+      name.includes(clean) ||
+      code.includes(clean) ||
+      contact.includes(clean) ||
+      email.includes(clean) ||
+      tier.includes(clean) ||
+      status.includes(clean) ||
+      address.includes(clean)
+    );
+  });
+}
+
 export async function syncSchoolClientsToCloud(clients: SchoolClientOrganization[]): Promise<void> {
+  const sanitizedClients = JSON.parse(JSON.stringify(clients || []));
+  saveStoredSchoolClients(sanitizedClients);
+  const path = 'system_state/school_clients_registry';
   try {
-    saveStoredSchoolClients(clients);
     const docRef = doc(db, 'system_state', 'school_clients_registry');
     await setDoc(docRef, {
-      clients,
+      clients: sanitizedClients,
       updatedAt: new Date().toISOString(),
       updatedBy: 'Platform Site Admin',
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+    }
     console.warn('[SiteAdmin] Cloud sync of clients deferred:', err);
   }
 }
@@ -283,6 +315,24 @@ export async function fetchSchoolClientsFromCloud(): Promise<SchoolClientOrganiz
     }
   } catch {}
   return getStoredSchoolClients();
+}
+
+export function subscribeSchoolClientsFromCloud(
+  onUpdate: (clients: SchoolClientOrganization[]) => void
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'system_state', 'school_clients_registry'),
+    (snap) => {
+      if (snap.exists() && Array.isArray(snap.data()?.clients)) {
+        const cloudClients = snap.data().clients as SchoolClientOrganization[];
+        saveStoredSchoolClients(cloudClients);
+        onUpdate(cloudClients);
+      }
+    },
+    (err) => {
+      console.warn('[SiteAdmin] Clients realtime listener notice:', err?.message);
+    }
+  );
 }
 
 // ----------------------------------------------------------------------------

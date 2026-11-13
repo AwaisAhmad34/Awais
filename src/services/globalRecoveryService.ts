@@ -13,6 +13,7 @@ export type RecoverableRecordType =
   | 'PETTY_CASH'
   | 'ACCOUNT_HEAD'
   | 'CAMPUS'
+  | 'CLIENT_ORGANIZATION'
   | 'USER'
   | 'RECONCILIATION';
 

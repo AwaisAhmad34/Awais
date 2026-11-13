@@ -140,12 +140,56 @@
         "createdAt": { "type": "string" }
       },
       "required": ["email", "permissionLevel", "status"]
+    },
+    "GlobalUser": {
+      "title": "GlobalUser",
+      "description": "Globally synchronized institutional user profile without plaintext passwords",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "permissionLevel": { "type": "string" },
+        "isSuperAdmin": { "type": "boolean" },
+        "clientId": { "type": "string" },
+        "campusId": { "type": "string" },
+        "status": { "type": "string" },
+        "syncedToCloud": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "username", "email", "role", "status"]
+    },
+    "LoginDirectoryEntry": {
+      "title": "LoginDirectoryEntry",
+      "description": "Exact-key username to email lookup entry for cross-device credential authentication",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "userId": { "type": "string" },
+        "uid": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["username", "email"]
     }
   },
   "firestore": {
     "/memberships/{uid}": {
       "schema": { "$ref": "#/entities/Membership" },
       "description": "Authoritative user account and permission level memberships"
+    },
+    "/global_users/{userId}": {
+      "schema": { "$ref": "#/entities/GlobalUser" },
+      "description": "Global multi-tenant user directory synchronized in real time across devices"
+    },
+    "/login_directory/{username}": {
+      "schema": { "$ref": "#/entities/LoginDirectoryEntry" },
+      "description": "Non-listable exact username to email lookup index for credential login"
     },
     "/campuses/{campusId}": {
       "schema": { "$ref": "#/entities/Campus" },
@@ -169,7 +213,7 @@
     },
     "/system_state/{docId}": {
       "schema": { "$ref": "#/entities/SystemSnapshot" },
-      "description": "Consolidated system state, ERP suite, budgets, visibility rules, and checklists"
+      "description": "Consolidated system state, school clients registry, ERP suite, budgets, visibility rules, and checklists"
     },
     "/activity_logs/{logId}": {
       "schema": { "$ref": "#/entities/SystemSnapshot" },

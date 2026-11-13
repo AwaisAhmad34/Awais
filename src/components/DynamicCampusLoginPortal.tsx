@@ -34,7 +34,7 @@ interface DynamicCampusLoginPortalProps {
 }
 
 export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> = () => {
-  const { loginAsUser, campuses, orgSettings, users, addUser } = useAccounting();
+  const { loginAsUser, campuses, orgSettings, users, addUser, updateUser } = useAccounting();
 
   // Form states
   const [username, setUsername] = useState('');
@@ -198,15 +198,29 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       if (!targetUser && addUser) {
         targetUser = addUser({
           id: profile.id,
+          uid: profile.uid,
           username: profile.username || profile.email?.split('@')[0] || 'user',
           name: profile.name || 'Campus Administrator',
           email: profile.email || `${profile.username}@institution.edu.pk`,
           role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+          permissionLevel: profile.permissionLevel,
           status: 'active',
           clientId: profile.clientId || null,
           campusId: profile.campusId || null,
           permittedCampusIds: profile.permittedCampusIds || ['all'],
+          delegatedSubCampusIds: profile.delegatedCampusIds || [],
           allowedModules: profile.allowedModules || ['all'],
+        });
+      } else if (targetUser && updateUser) {
+        updateUser(targetUser.id, {
+          uid: profile.uid,
+          permissionLevel: profile.permissionLevel,
+          role: profile.role || targetUser.role,
+          clientId: profile.clientId ?? targetUser.clientId ?? null,
+          campusId: profile.campusId ?? targetUser.campusId ?? null,
+          permittedCampusIds: profile.permittedCampusIds || targetUser.permittedCampusIds || ['all'],
+          delegatedSubCampusIds: profile.delegatedCampusIds || targetUser.delegatedSubCampusIds || [],
+          allowedModules: profile.allowedModules || targetUser.allowedModules || ['all'],
         });
       }
 
@@ -307,14 +321,17 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   };
 
   const [isResettingScratch, setIsResettingScratch] = useState(false);
+  const [isResetScratchConfirmOpen, setIsResetScratchConfirmOpen] = useState(false);
 
-  const handleResetFromScratch = async () => {
-    if (!window.confirm('Are you sure you want to completely remove all users and the platform owner? You will be able to create your Platform Owner account from scratch.')) {
-      return;
-    }
+  const handleResetFromScratch = () => {
+    setIsResetScratchConfirmOpen(true);
+  };
+
+  const confirmResetFromScratch = async () => {
     setIsResettingScratch(true);
     try {
       await resetAllUsersAndOwner();
+      setIsResetScratchConfirmOpen(false);
       setIsOwnerAlreadyRegistered(false);
       setSuccessNotice('All users and site owner removed. You can now create your Platform Owner account from scratch.');
       setIsOwnerSetupOpen(true);
@@ -325,6 +342,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
       setBootstrapSecret('');
     } catch (err: any) {
       setErrorMessage(err?.message || 'Could not reset accounts.');
+      setIsResetScratchConfirmOpen(false);
     } finally {
       setIsResettingScratch(false);
     }
@@ -750,6 +768,38 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 </button>
               </div>
             </form>
+
+            {isResetScratchConfirmOpen && (
+              <div className="p-4 rounded-xl bg-rose-950/90 border border-rose-700/80 space-y-3 animate-in fade-in">
+                <div className="flex items-start gap-2.5 text-xs">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-bold text-rose-200">Confirm Complete Clean-Slate Reset</div>
+                    <p className="text-[11px] text-rose-200/85 leading-relaxed">
+                      This will wipe all cached users and reset the Platform Owner registration state so you can initialize a fresh owner account from scratch.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={isResettingScratch}
+                    onClick={() => setIsResetScratchConfirmOpen(false)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isResettingScratch}
+                    onClick={confirmResetFromScratch}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] cursor-pointer disabled:opacity-50"
+                  >
+                    {isResettingScratch ? 'Resetting...' : 'Yes, Remove All & Reset'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

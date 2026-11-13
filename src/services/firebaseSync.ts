@@ -13,7 +13,15 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { saveStoredSchoolClients } from './platformSiteAdminService';
+import {
+  saveStoredSchoolClients,
+  subscribeSchoolClientsFromCloud,
+} from './platformSiteAdminService';
+import {
+  fetchGlobalUsersFromCloud,
+  subscribeToGlobalUsersFromCloud,
+  type GlobalUserRecord,
+} from './globalUserSyncService';
 
 export type SyncStatus =
   | 'connecting'
@@ -761,14 +769,15 @@ async function startCrossBrowserRealtimeSync() {
       }
     } catch {}
 
-    // 2. Fetch authoritative master live snapshot AND subcollections for this client
-    const [liveSnapDoc, vouchersSnap, pettySnap, campusesSnap, coaSnap, trashSnap] = await Promise.all([
+    // 2. Fetch authoritative master live snapshot, subcollections, AND global_users for this client
+    const [liveSnapDoc, vouchersSnap, pettySnap, campusesSnap, coaSnap, trashSnap, cloudGlobalUsers] = await Promise.all([
       getDoc(doc(db, 'organizations', clientId, 'snapshots', 'live_state')),
       getDocs(collection(db, 'organizations', clientId, 'vouchers')),
       getDocs(collection(db, 'organizations', clientId, 'petty_cash')),
       getDocs(collection(db, 'organizations', clientId, 'campuses')),
       getDocs(collection(db, 'organizations', clientId, 'account_heads')),
       getDocs(collection(db, 'organizations', clientId, 'trash')),
+      fetchGlobalUsersFromCloud(),
     ]);
 
     const trashIds = new Set(trashSnap.docs.map((d) => d.id));
@@ -817,17 +826,21 @@ async function startCrossBrowserRealtimeSync() {
       ? cloudMasterData.accountHeads
       : localState.accountHeads || [];
 
+    const finalUsers = mergeUsersWithCloud(cloudGlobalUsers, localState.users || []);
+
     const finalState = {
       ...localState,
       campuses: finalCampuses,
       transactions: finalTransactions,
       pettyCashTransactions: finalPettyCash,
       accountHeads: finalCOA,
+      users: finalUsers,
       orgSettings: cloudMasterData?.orgSettings || localState.orgSettings,
       periods: cloudMasterData?.periods || localState.periods,
     };
 
     window.__APLUS_HYDRATE_FROM_CLOUD__?.(finalState);
+    syncLocalUsersCache(finalUsers);
     await saveSnapshotToIndexedDB(finalState, false);
 
     cloudHydrated = true;
@@ -838,7 +851,7 @@ async function startCrossBrowserRealtimeSync() {
       lastSyncedAt: new Date().toISOString(),
       offlinePendingCount: 0,
       indexedDbCached: true,
-      message: `Global Cloud Connected (${finalTransactions.length} vouchers · ${finalCampuses.length} campuses)`,
+      message: `Global Cloud Connected (${finalTransactions.length} vouchers · ${finalCampuses.length} campuses · ${finalUsers.length} users)`,
     });
 
     // 3. REAL-TIME ON-SNAPSHOT LISTENERS for cross-device & cross-terminal synchronization
@@ -935,6 +948,21 @@ async function startCrossBrowserRealtimeSync() {
     );
     activeUnsubscribers.push(unsubCampuses);
 
+    // 3E. Global School Clients Registry Real-Time Listener
+    const unsubClients = subscribeSchoolClientsFromCloud(() => {});
+    activeUnsubscribers.push(unsubClients);
+
+    // 3F. Global Users Real-Time Listener (syncs logins live across browsers)
+    const unsubGlobalUsers = subscribeToGlobalUsersFromCloud((cloudList) => {
+      const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+      const merged = mergeUsersWithCloud(cloudList, cur?.users || []);
+      syncLocalUsersCache(merged);
+      if (cur && cloudList.length > 0) {
+        window.__APLUS_HYDRATE_FROM_CLOUD__?.({ ...cur, users: merged });
+      }
+    });
+    activeUnsubscribers.push(unsubGlobalUsers);
+
   } catch (err: any) {
     console.error('Realtime sync initiation error:', err);
     window.__APLUS_MARK_CLOUD_READY__?.();
@@ -943,6 +971,39 @@ async function startCrossBrowserRealtimeSync() {
       message: `Synchronization failed: ${err.message || 'Cannot load tenant cloud records'}`,
     });
   }
+}
+
+function mergeUsersWithCloud(cloudUsers: GlobalUserRecord[], localUsers: any[]): any[] {
+  if (!cloudUsers || cloudUsers.length === 0) {
+    return Array.isArray(localUsers) ? localUsers : [];
+  }
+  const byId = new Map<string, any>();
+  for (const cu of cloudUsers) {
+    if (cu?.id) byId.set(cu.id, cu);
+  }
+  // Ensure currently logged-in root owner stays present if not yet uploaded
+  for (const lu of localUsers || []) {
+    if (
+      lu?.id &&
+      (lu.id === 'user-platform-owner' || lu.id === 'usr-admin' || lu.username === 'admin') &&
+      !byId.has(lu.id)
+    ) {
+      byId.set(lu.id, lu);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+function syncLocalUsersCache(usersList: any[]) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const clean = (usersList || []).map((u) => {
+      const copy = { ...u };
+      delete copy.password;
+      return copy;
+    });
+    localStorage.setItem('ams_users_v5_clean', JSON.stringify(clean));
+  } catch {}
 }
 
 // ============================================================================

@@ -99,6 +99,8 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
   const [formEntries, setFormEntries] = useState<VoucherEntry[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'warning'; msg: string } | null>(null);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [pendingNavVoucherId, setPendingNavVoucherId] = useState<string | null>(null);
 
   // Autocomplete state
   const [activeRowIndexForAcct, setActiveRowIndexForAcct] = useState<number | null>(null);
@@ -154,19 +156,14 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
   // Navigate Previous / Next with unsaved check
   const handleNavigateToVoucher = (newIndex: number) => {
     if (newIndex < 0 || newIndex >= voucherPool.length) return;
-    if (hasUnsavedChanges) {
-      if (
-        !window.confirm(
-          'You have unsaved edits in the current voucher. Do you want to discard your changes and navigate to the next voucher?'
-        )
-      ) {
-        return;
-      }
-    }
     const target = voucherPool[newIndex];
-    if (target) {
-      setCurrentVoucherId(target.id);
+    if (!target) return;
+    if (hasUnsavedChanges) {
+      setPendingNavVoucherId(target.id);
+      return;
     }
+    setIsConfirmingDelete(false);
+    setCurrentVoucherId(target.id);
   };
 
   // Keyboard navigation for whole modal
@@ -208,7 +205,10 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
 
   const handleRemoveEntry = (index: number) => {
     if (formEntries.length <= 1) {
-      alert('A voucher must contain at least one debit and one credit entry line.');
+      setFeedback({
+        type: 'warning',
+        msg: 'A voucher must contain at least one debit and one credit entry line.',
+      });
       return;
     }
     setFormEntries(formEntries.filter((_, i) => i !== index));
@@ -309,16 +309,12 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
   // Delete Active Voucher & Soft Delete to Global Recycle Bin
   const handleDeleteCurrentVoucher = () => {
     if (!activeVoucher) return;
+    setIsConfirmingDelete(true);
+  };
 
-    if (
-      !window.confirm(
-        `Are you sure you want to delete voucher #${activeVoucher.voucherNo} (${activeVoucher.voucherType} - PKR ${(
-          activeVoucher.totalDebit || 0
-        ).toLocaleString()})?\n\nThis voucher will be safely preserved in the Global Recycle Bin where it can be recovered.`
-      )
-    ) {
-      return;
-    }
+  const confirmDeleteCurrentVoucher = () => {
+    if (!activeVoucher) return;
+    setIsConfirmingDelete(false);
 
     const c = campuses.find((cmp) => cmp.id === activeVoucher.campusId);
     softDeleteRecord({
@@ -881,13 +877,8 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
                           key={v.id}
                           onClick={() => {
                             if (hasUnsavedChanges) {
-                              if (
-                                !window.confirm(
-                                  'Discard unsaved changes to open this voucher?'
-                                )
-                              ) {
-                                return;
-                              }
+                              setPendingNavVoucherId(v.id);
+                              return;
                             }
                             setCurrentVoucherId(v.id);
                             setActiveTab('editor');
@@ -998,16 +989,62 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={handleDeleteCurrentVoucher}
-              className="px-3.5 py-2 rounded-xl bg-rose-950/70 hover:bg-rose-900 border border-rose-800/80 text-rose-300 hover:text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
-              title="Delete this voucher from ledger (archived to Global Recycle Bin for safe recovery)"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-              <span>Delete Voucher</span>
-            </button>
+          <div className="flex items-center gap-2.5 flex-wrap justify-end">
+            {pendingNavVoucherId && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-950/80 border border-amber-700 text-amber-200 text-xs">
+                <span>Discard unsaved changes and switch voucher?</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextId = pendingNavVoucherId;
+                    setPendingNavVoucherId(null);
+                    setHasUnsavedChanges(false);
+                    setCurrentVoucherId(nextId);
+                    setActiveTab('editor');
+                  }}
+                  className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold cursor-pointer"
+                >
+                  Discard &amp; Switch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingNavVoucherId(null)}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold cursor-pointer"
+                >
+                  Stay
+                </button>
+              </div>
+            )}
+
+            {isConfirmingDelete ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-rose-950/90 border border-rose-700 text-rose-200 text-xs">
+                <span>Move #{activeVoucher?.voucherNo} to Recycle Bin?</span>
+                <button
+                  type="button"
+                  onClick={confirmDeleteCurrentVoucher}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold cursor-pointer"
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingDelete(false)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleDeleteCurrentVoucher}
+                className="px-3.5 py-2 rounded-xl bg-rose-950/70 hover:bg-rose-900 border border-rose-800/80 text-rose-300 hover:text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                title="Delete this voucher from ledger (archived to Global Recycle Bin for safe recovery)"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Delete Voucher</span>
+              </button>
+            )}
 
             <button
               type="button"

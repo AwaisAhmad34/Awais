@@ -167,6 +167,7 @@ function InnerApp() {
     loginAsUser,
     users,
     addUser,
+    updateUser,
   } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
@@ -225,23 +226,38 @@ function InnerApp() {
         if (!target && addUser) {
           target = addUser({
             id: profile.id,
+            uid: profile.uid,
             username: profile.username || profile.email?.split('@')[0] || 'user',
             name: profile.name || 'Campus Administrator',
             email: profile.email || `${profile.username}@institution.edu.pk`,
             role: profile.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+            permissionLevel: profile.permissionLevel,
             status: 'active',
             clientId: profile.clientId || null,
             campusId: profile.campusId || null,
             permittedCampusIds: profile.permittedCampusIds || ['all'],
+            delegatedSubCampusIds: profile.delegatedCampusIds || [],
             allowedModules: profile.allowedModules || ['all'],
+          });
+        } else if (target && updateUser) {
+          updateUser(target.id, {
+            uid: profile.uid,
+            permissionLevel: profile.permissionLevel,
+            role: profile.role || target.role,
+            clientId: profile.clientId ?? target.clientId ?? null,
+            campusId: profile.campusId ?? target.campusId ?? null,
+            permittedCampusIds: profile.permittedCampusIds || target.permittedCampusIds || ['all'],
+            delegatedSubCampusIds: profile.delegatedCampusIds || target.delegatedSubCampusIds || [],
+            allowedModules: profile.allowedModules || target.allowedModules || ['all'],
           });
         }
 
+        fetchSchoolClientsFromCloud().catch(() => {});
         const effectiveId = target?.id || profile.id;
         loginAsUser(effectiveId, isSuper);
       }
     });
-  }, [loginAsUser, users, addUser]);
+  }, [loginAsUser, users, addUser, updateUser]);
 
   useEffect(() => {
     const handleUpdated = () => setClientsVersion((v) => v + 1);

@@ -11,6 +11,11 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { SEED_MULTI_TENANT_USERS } from './multiTenantDataService';
+import {
+  lookupLoginDirectoryByUsername,
+  findGlobalUserInCloudByEmailOrUid,
+  provisionGlobalUserAccount,
+} from './globalUserSyncService';
 
 let verifiedProfile: any = null;
 let authListenerAttached = false;
@@ -64,9 +69,42 @@ export function resolveUserEmail(input: string): string {
 }
 
 /**
+ * Resolves usernames dynamically via Firestore `login_directory`, server endpoint, and fallback conventions.
+ */
+export async function resolveUserEmailAsync(input: string): Promise<string> {
+  const clean = input.trim().toLowerCase().replace(/\s+/g, '');
+  if (clean.includes('@')) return clean;
+
+  // 1. Live Firestore login_directory lookup (works on any browser before auth!)
+  try {
+    const dirEntry = await lookupLoginDirectoryByUsername(clean);
+    if (dirEntry?.email) {
+      return dirEntry.email.toLowerCase();
+    }
+  } catch {}
+
+  // 2. Server-side lookup if Admin SDK is active
+  try {
+    const res = await fetch('/api/platform/resolve-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: clean }),
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data?.found && data?.email) {
+        return String(data.email).toLowerCase();
+      }
+    }
+  } catch {}
+
+  // 3. Fallback to static/legacy conventions
+  return resolveUserEmail(input);
+}
+
+/**
  * Authenticates an account strictly through Firebase Authentication
- * and verifies that an active, server-authorized membership exists.
- * Supports on-demand provisioning for first-time institutional users.
+ * and verifies that an active, server-authorized membership or global user exists.
  */
 export async function authenticateAccount(emailOrUsername: string, password: string) {
   verifiedProfile = null;
@@ -77,7 +115,7 @@ export async function authenticateAccount(emailOrUsername: string, password: str
     throw new Error('Unable to sign in. Check your email/username and password.');
   }
 
-  const email = resolveUserEmail(cleanInput);
+  const email = await resolveUserEmailAsync(cleanInput);
 
   // Check if this input matches an official pre-seeded institutional user
   const seededUser = SEED_MULTI_TENANT_USERS.find(
@@ -86,11 +124,23 @@ export async function authenticateAccount(emailOrUsername: string, password: str
       u.username.toLowerCase() === cleanInput.toLowerCase()
   );
 
-  // 1. Strictly attempt sign-in with the exact password provided
+  // 1. Strictly attempt sign-in with the resolved email and exact password provided
   try {
     const credential = await signInWithEmailAndPassword(auth, email, cleanPassword);
     return await restoreAccount(credential.user);
   } catch (authErr: any) {
+    // Fallback domain try if username lacked '@' and defaulted to @aschoolsystem.edu.pk when user uses @institution.edu.pk
+    if (!cleanInput.includes('@')) {
+      const cleanUname = cleanInput.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9._-]/g, '');
+      const altEmail = `${cleanUname}@institution.edu.pk`;
+      if (altEmail !== email) {
+        try {
+          const altCred = await signInWithEmailAndPassword(auth, altEmail, cleanPassword);
+          return await restoreAccount(altCred.user);
+        } catch {}
+      }
+    }
+
     // 2. ONLY for recognized registered seeded users on first-time deployment with matching registered password
     if (seededUser && seededUser.password === cleanPassword) {
       try {
@@ -167,7 +217,7 @@ export async function checkPlatformOwnerStatus(): Promise<{ initialized: boolean
  * Sends a verified password recovery email
  */
 export async function sendAccountPasswordRecovery(emailOrUsername: string): Promise<string> {
-  const email = resolveUserEmail(emailOrUsername);
+  const email = await resolveUserEmailAsync(emailOrUsername);
   await sendPasswordResetEmail(auth, email);
   return `Password reset link sent to ${email}. Please check your inbox.`;
 }
@@ -310,7 +360,26 @@ export async function provisionInitialPlatformOwner(
     }, { merge: true });
   } catch {}
 
-  // 5. Update local storage marker
+  // 5. Mirror Platform Owner into global_users & login_directory so owner appears globally in DB
+  try {
+    await provisionGlobalUserAccount({
+      id: 'user-platform-owner',
+      uid: user.uid,
+      username: ownerMembership.username,
+      name: ownerMembership.name,
+      email: cleanEmail,
+      role: 'level_1_platform_super_admin',
+      permissionLevel: 'level_1_platform_super_admin',
+      isSuperAdmin: true,
+      clientId: null,
+      campusId: null,
+      permittedCampusIds: ['all'],
+      allowedModules: ['all'],
+      status: 'active',
+    });
+  } catch {}
+
+  // 6. Update local storage marker
   if (typeof window !== 'undefined' && window.localStorage) {
     localStorage.setItem('aplus_owner_registered_local', 'true');
     localStorage.setItem('aplus_owner_email_local', cleanEmail);
@@ -332,77 +401,149 @@ export async function restoreAccount(user: User) {
   const snapshot = await getDoc(mRef);
   let membership = snapshot.data();
 
-  // If user has no membership yet, strictly verify against registered directory or registry
+  const emailLower = user.email?.toLowerCase() || '';
+  const globalUser = await findGlobalUserInCloudByEmailOrUid(emailLower, user.uid).catch(() => null);
+
+  // If user has no membership yet, strictly verify against global_users, registered directory, or owner registry
   if (!snapshot.exists()) {
-    const emailLower = user.email?.toLowerCase() || '';
-
-    // Check if user is registered in platform_owner_registry
-    let isRegistryOwner = false;
-    try {
-      const regSnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry'));
-      if (regSnap.exists()) {
-        const regData = regSnap.data();
-        if (regData?.isInitialized && (regData?.ownerUid === user.uid || regData?.ownerEmail?.toLowerCase() === emailLower)) {
-          isRegistryOwner = true;
-        }
+    // 1. Check authoritative global_users created by Platform Admin or Client Owner
+    if (globalUser) {
+      if (globalUser.status && globalUser.status !== 'active') {
+        await signOut(auth).catch(() => {});
+        throw new Error('Your account is currently suspended or inactive. Contact your administrator.');
       }
-    } catch {}
 
-    let isOwner =
-      isRegistryOwner ||
-      emailLower === 'siteowner@platform.org' ||
-      emailLower === 'bajwaahmedsaad345@gmail.com' ||
-      emailLower.startsWith('admin@');
+      const globalMembership = {
+        userId: globalUser.id,
+        name: globalUser.name || user.displayName || emailLower.split('@')[0],
+        username: globalUser.username || emailLower.split('@')[0],
+        email: globalUser.email || emailLower,
+        permissionLevel: globalUser.permissionLevel || 'level_4_sub_campus_admin',
+        role: globalUser.role || globalUser.permissionLevel || 'Accountant',
+        clientId: globalUser.clientId ?? null,
+        campusId: globalUser.campusId ?? null,
+        permittedCampusIds: globalUser.permittedCampusIds || (globalUser.campusId ? [globalUser.campusId] : ['all']),
+        delegatedCampusIds:
+          globalUser.delegatedSubCampusIds && globalUser.delegatedSubCampusIds.length > 0
+            ? globalUser.delegatedSubCampusIds
+            : globalUser.permittedCampusIds || ['all'],
+        allowedModules: globalUser.allowedModules || ['all'],
+        status: globalUser.status || 'active',
+        isPlatformAdmin: Boolean(globalUser.isSuperAdmin || globalUser.permissionLevel === 'level_1_platform_super_admin'),
+        createdAt: globalUser.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-    const seeded = SEED_MULTI_TENANT_USERS.find(
-      (u) => u.email.toLowerCase() === emailLower
-    );
-
-    // Auto-bootstrap: If platform owner is uninitialized, allow first authenticated Google/institutional user to claim Site Owner
-    if (!isOwner && !seeded) {
+      await setDoc(mRef, globalMembership, { merge: true });
+      membership = globalMembership;
+    } else {
+      // Check if user is registered in platform_owner_registry
+      let isRegistryOwner = false;
       try {
         const regSnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry'));
-        if (!regSnap.exists() || !regSnap.data()?.isInitialized) {
-          isOwner = true;
-          await setDoc(doc(db, 'system_state', 'platform_owner_registry'), {
-            isInitialized: true,
-            ownerUid: user.uid,
-            ownerEmail: emailLower,
-            initializedAt: new Date().toISOString(),
-          }, { merge: true });
-          if (typeof window !== 'undefined' && window.localStorage) {
-            localStorage.setItem('aplus_owner_registered_local', 'true');
-            localStorage.setItem('aplus_owner_email_local', emailLower);
+        if (regSnap.exists()) {
+          const regData = regSnap.data();
+          if (regData?.isInitialized && (regData?.ownerUid === user.uid || regData?.ownerEmail?.toLowerCase() === emailLower)) {
+            isRegistryOwner = true;
           }
         }
       } catch {}
+
+      let isOwner =
+        isRegistryOwner ||
+        emailLower === 'siteowner@platform.org' ||
+        emailLower === 'bajwaahmedsaad345@gmail.com' ||
+        emailLower.startsWith('admin@');
+
+      const seeded = SEED_MULTI_TENANT_USERS.find(
+        (u) => u.email.toLowerCase() === emailLower
+      );
+
+      // Auto-bootstrap: If platform owner is uninitialized, allow first authenticated Google/institutional user to claim Site Owner
+      if (!isOwner && !seeded) {
+        try {
+          const regSnap = await getDoc(doc(db, 'system_state', 'platform_owner_registry'));
+          if (!regSnap.exists() || !regSnap.data()?.isInitialized) {
+            isOwner = true;
+            await setDoc(doc(db, 'system_state', 'platform_owner_registry'), {
+              isInitialized: true,
+              ownerUid: user.uid,
+              ownerEmail: emailLower,
+              initializedAt: new Date().toISOString(),
+            }, { merge: true });
+            if (typeof window !== 'undefined' && window.localStorage) {
+              localStorage.setItem('aplus_owner_registered_local', 'true');
+              localStorage.setItem('aplus_owner_email_local', emailLower);
+            }
+          }
+        } catch {}
+      }
+
+      if (!isOwner && !seeded) {
+        await signOut(auth).catch(() => {});
+        throw new Error('Access denied. No registered institutional membership found for this account.');
+      }
+
+      const permissionLevel = isOwner
+        ? 'level_1_platform_super_admin'
+        : (seeded?.role as any) || 'level_2_client_super_admin';
+
+      const defaultMembership = {
+        userId: isOwner ? 'user-platform-owner' : seeded?.id || user.uid,
+        name: user.displayName || seeded?.name || (isOwner ? 'Platform Super Admin' : 'Campus Administrator'),
+        username: seeded?.username || (isOwner ? 'admin' : emailLower.split('@')[0]),
+        email: emailLower,
+        permissionLevel,
+        role: permissionLevel,
+        clientId: isOwner ? null : seeded?.clientId || 'client-aplus',
+        campusId: isOwner ? null : seeded?.campusId || 'campus-khiali',
+        status: 'active',
+        allowedModules: seeded?.allowedModules || ['all'],
+        delegatedCampusIds: seeded?.permittedCampusIds || ['all'],
+        createdAt: new Date().toISOString(),
+        isPlatformAdmin: isOwner,
+      };
+
+      await setDoc(mRef, defaultMembership, { merge: true });
+      membership = defaultMembership;
+
+      // Ensure Platform Owner is mirrored to global_users
+      if (isOwner) {
+        await provisionGlobalUserAccount({
+          id: 'user-platform-owner',
+          uid: user.uid,
+          username: defaultMembership.username,
+          name: defaultMembership.name,
+          email: emailLower,
+          role: 'level_1_platform_super_admin',
+          permissionLevel: 'level_1_platform_super_admin',
+          isSuperAdmin: true,
+          clientId: null,
+          campusId: null,
+          permittedCampusIds: ['all'],
+          allowedModules: ['all'],
+          status: 'active',
+        }).catch(() => {});
+      }
     }
-
-    if (!isOwner && !seeded) {
-      await signOut(auth).catch(() => {});
-      throw new Error('Access denied. No registered institutional membership found for this account.');
-    }
-
-    const permissionLevel = isOwner
-      ? 'level_1_platform_super_admin'
-      : (seeded?.role as any) || 'level_2_client_super_admin';
-
-    const defaultMembership = {
-      name: user.displayName || seeded?.name || (isOwner ? 'Platform Super Admin' : 'Campus Administrator'),
-      username: seeded?.username || (isOwner ? 'admin' : emailLower.split('@')[0]),
-      email: emailLower,
-      permissionLevel,
-      clientId: isOwner ? null : seeded?.clientId || 'client-aplus',
-      campusId: isOwner ? null : seeded?.campusId || 'campus-khiali',
-      status: 'active',
-      allowedModules: seeded?.allowedModules || ['all'],
-      delegatedCampusIds: seeded?.permittedCampusIds || ['all'],
-      createdAt: new Date().toISOString(),
-      isPlatformAdmin: isOwner,
+  } else if (globalUser && (!membership?.updatedAt || (globalUser.updatedAt && globalUser.updatedAt > membership.updatedAt))) {
+    // Sync any newer updates made in Global User Directory (role/campus/status edits)
+    membership = {
+      ...membership,
+      userId: globalUser.id,
+      name: globalUser.name || membership?.name,
+      username: globalUser.username || membership?.username,
+      permissionLevel: globalUser.permissionLevel || membership?.permissionLevel,
+      role: globalUser.role || membership?.role,
+      clientId: globalUser.clientId !== undefined ? globalUser.clientId : membership?.clientId,
+      campusId: globalUser.campusId !== undefined ? globalUser.campusId : membership?.campusId,
+      delegatedCampusIds: globalUser.delegatedSubCampusIds?.length
+        ? globalUser.delegatedSubCampusIds
+        : membership?.delegatedCampusIds,
+      allowedModules: globalUser.allowedModules || membership?.allowedModules,
+      status: globalUser.status || membership?.status,
+      updatedAt: globalUser.updatedAt,
     };
-
-    await setDoc(mRef, defaultMembership, { merge: true });
-    membership = defaultMembership;
   }
 
   if (membership?.status !== 'active') {
@@ -415,39 +556,26 @@ export async function restoreAccount(user: User) {
     level_3_main_campus_admin: 'level_3_main_campus_admin',
     level_4_sub_campus_admin: 'level_4_sub_campus_admin',
     level_5_departmental_staff: 'campus_accountant',
+    level_5_departmental_user: 'campus_accountant',
   };
 
-  const emailLower = user.email?.toLowerCase() || '';
   const isOwner =
     emailLower === 'siteowner@platform.org' ||
     emailLower === 'bajwaahmedsaad345@gmail.com' ||
     emailLower.startsWith('admin@') ||
     membership?.isPlatformAdmin === true ||
     membership?.permissionLevel === 'level_1_platform_super_admin';
-  const isApex = emailLower.includes('apex') || membership?.clientId === 'client-apex';
-  const isAplusClientAdmin =
-    emailLower === 'director@aplus.edu.pk' ||
-    (!isOwner && !isApex && membership?.permissionLevel === 'level_2_client_super_admin');
 
-  let resolvedId = user.uid;
-  if (isOwner) {
+  let resolvedId = membership?.userId || user.uid;
+  if (isOwner && (emailLower === 'siteowner@platform.org' || emailLower === 'bajwaahmedsaad345@gmail.com' || emailLower.startsWith('admin@') || !membership?.userId)) {
     resolvedId = 'user-platform-owner';
-  } else if (isAplusClientAdmin) {
-    resolvedId = 'user-client-aplus-admin';
-  } else if (isApex && (membership?.permissionLevel === 'level_2_client_super_admin' || emailLower.includes('admin') || emailLower.includes('head'))) {
-    resolvedId = 'user-client-apex-admin';
-  } else if (emailLower.includes('khiali') || emailLower.includes('main@')) {
-    resolvedId = 'user-campus-khiali-accountant';
-  } else if (membership?.userId) {
-    resolvedId = membership.userId;
   }
 
   const assignedRole = isOwner
     ? 'level_1_platform_super_admin'
-    : roles[membership.permissionLevel] || 'level_2_client_super_admin';
-  const resolvedUsername = isOwner
-    ? 'admin'
-    : (membership.username || user.email?.split('@')[0] || user.email || 'user');
+    : (roles[membership.permissionLevel] || membership.role || 'level_2_client_super_admin');
+  const resolvedUsername =
+    membership.username || (isOwner ? 'admin' : user.email?.split('@')[0] || user.email || 'user');
 
   verifiedProfile = {
     id: resolvedId,
@@ -457,8 +585,9 @@ export async function restoreAccount(user: User) {
     name: membership.name || (isOwner ? 'Platform Super Admin (Site Owner)' : user.email || 'Campus Administrator'),
     role: assignedRole,
     permissionLevel: isOwner ? 'level_1_platform_super_admin' : (membership.permissionLevel || 'level_2_client_super_admin'),
-    clientId: isOwner ? null : (membership.clientId || (isApex ? 'client-apex' : 'client-aplus')),
-    campusId: isOwner ? null : (membership.campusId || (isApex ? 'campus-apex-main' : 'campus-khiali')),
+    clientId: isOwner ? null : (membership.clientId ?? null),
+    campusId: isOwner ? null : (membership.campusId ?? null),
+    permittedCampusIds: membership.permittedCampusIds || (membership.campusId ? [membership.campusId] : ['all']),
     allowedModules: membership.allowedModules || ['all'],
     delegatedCampusIds: membership.delegatedCampusIds || [],
     status: membership.status,

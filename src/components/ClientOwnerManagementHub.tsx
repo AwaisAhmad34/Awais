@@ -62,6 +62,16 @@ import {
 } from '../services/multiTenantDataService';
 import { CampusMonthlyBudgetExpenditureChart } from './CampusMonthlyBudgetExpenditureChart';
 import { DeploymentReadinessHub } from './DeploymentReadinessHub';
+import {
+  provisionGlobalUserAccount,
+  deleteGlobalUserFromCloud,
+} from '../services/globalUserSyncService';
+import {
+  createDynamicCampusCredential,
+  saveCampusCredentialToCloud,
+  deleteCampusCredentialFromCloud,
+} from '../services/campusAuthSync';
+import { deleteCampusFromCloud } from '../services/firebaseSync';
 
 interface ClientOwnerManagementHubProps {
   onSwitchToCampusOperationalView: (campusId: string) => void;
@@ -79,6 +89,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     users,
     addUser,
     updateUser,
+    deleteUser,
     resetUserPassword,
     transactions,
     pettyCashTransactions,
@@ -321,6 +332,10 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     };
 
     addCampus(newMainCampusObj);
+    window.__APLUS_CLOUD_SYNC__?.syncCampus?.(newMainCampusObj);
+    saveCampusCredentialToCloud(
+      createDynamicCampusCredential(newMainCampusObj)
+    ).catch(() => {});
 
     // Link this newly registered main campus to client organization
     const allClients = getStoredSchoolClients();
@@ -409,7 +424,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   };
 
   // Handle Sub-Campus Creation (Enforcing Subscription Limits & Main Campus Hierarchy)
-  const handleCreateSubCampus = (e: React.FormEvent) => {
+  const handleCreateSubCampus = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!mainCampus) {
@@ -460,23 +475,57 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     };
 
     addCampus(newCampusObj);
+    window.__APLUS_CLOUD_SYNC__?.syncCampus?.(newCampusObj);
 
-    // Create sub-campus administrator login
+    // Create sub-campus administrator login & sync globally to Firestore + Firebase Auth
     const autoUsername = `${clientInfo.code.toLowerCase()}.${cleanCode.toLowerCase()}`;
     const autoPassword = newBranchPassword.trim() || `${cleanCode}@2026`;
+    const autoEmail = `${autoUsername}@${clientInfo.code.toLowerCase()}.edu.pk`;
+    const branchUserId = `user-${newId}`;
+
+    saveCampusCredentialToCloud(
+      createDynamicCampusCredential(newCampusObj, { username: autoUsername }, autoPassword)
+    ).catch(() => {});
+
+    let provisionedUid: string | null = null;
+    try {
+      const provisioned = await provisionGlobalUserAccount({
+        id: branchUserId,
+        username: autoUsername,
+        name: newBranchAccountant.trim() || `${newBranchName.trim()} Accountant`,
+        email: autoEmail,
+        password: autoPassword,
+        role: 'level_3_sub_campus_admin',
+        permissionLevel: 'level_4_sub_campus_admin',
+        isSuperAdmin: false,
+        clientId: clientInfo.id,
+        campusId: newId,
+        campusName: newCampusObj.name,
+        permittedCampusIds: [newId],
+        delegatedSubCampusIds: [newId],
+        allowedModules: newBranchModules,
+        status: 'active',
+        designation: `Sub-Campus Administrator (${cleanCode})`,
+      });
+      provisionedUid = provisioned.uid;
+    } catch (err) {
+      console.warn('Global sub-campus user sync deferred:', err);
+    }
 
     if (addUser) {
       addUser({
-        id: `user-${newId}`,
+        id: branchUserId,
+        uid: provisionedUid,
         username: autoUsername,
         name: newBranchAccountant.trim() || `${newBranchName.trim()} Accountant`,
-        email: `${autoUsername}@${clientInfo.code.toLowerCase()}.edu.pk`,
+        email: autoEmail,
         role: 'level_3_sub_campus_admin',
+        permissionLevel: 'level_4_sub_campus_admin',
         status: 'active',
-        password: autoPassword,
         clientId: clientInfo.id,
         campusId: newId,
         permittedCampusIds: [newId],
+        delegatedSubCampusIds: [newId],
         allowedModules: newBranchModules,
         designation: `Sub-Campus Administrator (${cleanCode})`,
       });
@@ -490,7 +539,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       newId
     );
 
-    showToast('success', `Sub-campus '${newBranchName}' and login account (${autoUsername}) created successfully!`);
+    showToast('success', `Sub-campus '${newBranchName}' and global login account (${autoUsername}) created & synced!`);
     setIsCreateModalOpen(false);
     setNewBranchCode('');
     setNewBranchName('');
@@ -602,7 +651,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   };
 
   // Confirm Delete Branch
-  const handleConfirmDeleteBranch = () => {
+  const handleConfirmDeleteBranch = async () => {
     if (!branchToDelete) return;
     const campusId = branchToDelete.id;
     const campusName = branchToDelete.name;
@@ -638,9 +687,26 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       console.warn('Recycle bin record creation deferred:', err);
     }
 
-    // Call engine deleteCampus
+    // Call engine deleteCampus and remove cloud campus + credential + branch user
     if (deleteCampus) {
       deleteCampus(campusId);
+    }
+    deleteCampusFromCloud(campusId).catch(() => {});
+    deleteCampusCredentialFromCloud(campusId).catch(() => {});
+
+    const linkedUsers = (users || []).filter(
+      (u: any) => u.campusId === campusId && u.id !== currentUser?.id
+    );
+    for (const lu of linkedUsers) {
+      if (deleteUser) {
+        deleteUser(lu.id);
+      }
+      deleteGlobalUserFromCloud({
+        id: lu.id,
+        uid: lu.uid,
+        username: lu.username,
+        clientId: lu.clientId || clientInfo.id,
+      }).catch(() => {});
     }
 
     // Update localStorage
@@ -657,11 +723,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       'CAMPUS_DELETE',
       'Branch',
       campusCode,
-      `Deleted campus branch ${campusName} (${campusCode}). Detached ${childCampuses.length} child branches. Preserved in Global Recycle Bin.`,
+      `Deleted campus branch ${campusName} (${campusCode}). Detached ${childCampuses.length} child branches and removed ${linkedUsers.length} branch login(s). Preserved in Global Recycle Bin.`,
       campusId
     );
 
-    showToast('success', `Branch '${campusName}' deleted and moved to Global Recycle Bin.`);
+    showToast('success', `Branch '${campusName}' deleted from cloud & moved to Global Recycle Bin.`);
     setBranchToDelete(null);
   };
 

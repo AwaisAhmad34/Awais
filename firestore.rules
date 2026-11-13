@@ -7,6 +7,17 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // Globally synchronized user accounts (requires authenticated session)
+    match /global_users/{userId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Exact-key username -> email resolution for cross-device login (prevents collection listing/scraping)
+    match /login_directory/{username} {
+      allow get: if true;
+      allow list, write: if request.auth != null;
+    }
+
     // Tenant-isolated organizations hierarchy (Vouchers, Campuses, Petty Cash, COA, Audit)
     match /organizations/{clientId}/{document=**} {
       allow read, write: if request.auth != null;

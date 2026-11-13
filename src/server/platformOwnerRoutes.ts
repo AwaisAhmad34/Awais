@@ -218,3 +218,118 @@ platformRouter.post('/reset-scratch', async (req, res) => {
     return res.json({ status: 'success', message: 'Local reset recorded.', mode: 'fallback' });
   }
 });
+
+// Provision or update a Firebase Auth user account for global synchronization
+platformRouter.post('/provision-user', async (req, res) => {
+  const { email, password, displayName } = req.body || {};
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'INVALID_EMAIL', message: 'Valid email required.' });
+  }
+
+  const adminConfig = getAdminConfigStatus();
+  if (adminConfig.mode !== 'service_account_cert') {
+    return res.status(200).json({
+      status: 'client_fallback',
+      mode: 'client_delegation',
+      message: 'Server Admin SDK in delegation mode. Client provisioning authorized.',
+    });
+  }
+
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const auth = getAuth(adminApp());
+    let uid = '';
+
+    try {
+      const existing = await auth.getUserByEmail(cleanEmail);
+      uid = existing.uid;
+      const updates: Record<string, any> = {};
+      if (displayName) updates.displayName = String(displayName);
+      if (password && typeof password === 'string' && password.length >= 6) {
+        updates.password = password;
+      }
+      if (Object.keys(updates).length > 0) {
+        await auth.updateUser(uid, updates);
+      }
+    } catch (lookupErr: any) {
+      if (lookupErr.code === 'auth/user-not-found') {
+        if (!password || typeof password !== 'string' || password.length < 6) {
+          return res.status(400).json({
+            error: 'WEAK_PASSWORD',
+            message: 'Password of at least 6 characters required to create a new Firebase Auth account.',
+          });
+        }
+        const created = await auth.createUser({
+          email: cleanEmail,
+          password,
+          displayName: displayName ? String(displayName) : undefined,
+        });
+        uid = created.uid;
+      } else {
+        throw lookupErr;
+      }
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      uid,
+      email: cleanEmail,
+    });
+  } catch (err: any) {
+    return res.status(200).json({
+      status: 'client_fallback',
+      mode: 'client_delegation',
+      message: err?.message || 'Delegated to client Firebase SDK.',
+    });
+  }
+});
+
+// Delete a user from Firebase Auth when trusted service account cert is active
+platformRouter.delete('/users/:uid', async (req, res) => {
+  const { uid } = req.params;
+  const adminConfig = getAdminConfigStatus();
+  if (adminConfig.mode !== 'service_account_cert' || !uid) {
+    return res.status(200).json({
+      status: 'client_fallback',
+      mode: 'client_delegation',
+    });
+  }
+
+  try {
+    const auth = getAuth(adminApp());
+    await auth.deleteUser(uid);
+    return res.json({ status: 'success', deletedUid: uid });
+  } catch (err: any) {
+    return res.status(200).json({
+      status: 'client_fallback',
+      mode: 'client_delegation',
+      message: err?.message || 'Firebase Auth user deletion deferred.',
+    });
+  }
+});
+
+// Optional server-side login identifier resolver for global username -> email lookup
+platformRouter.post('/resolve-login', async (req, res) => {
+  const { identifier } = req.body || {};
+  const adminConfig = getAdminConfigStatus();
+  if (adminConfig.mode !== 'service_account_cert' || !identifier || typeof identifier !== 'string') {
+    return res.json({ found: false, mode: 'client_delegation' });
+  }
+
+  try {
+    const clean = identifier.trim().toLowerCase().replace(/\s+/g, '');
+    const db = adminDatabase();
+    const dirSnap = await db.collection('login_directory').doc(clean).get();
+    if (dirSnap.exists && dirSnap.data()?.email) {
+      return res.json({ found: true, email: String(dirSnap.data()?.email).toLowerCase() });
+    }
+    const qSnap = await db.collection('global_users').where('username', '==', clean).limit(1).get();
+    if (!qSnap.empty && qSnap.docs[0].data()?.email) {
+      return res.json({ found: true, email: String(qSnap.docs[0].data().email).toLowerCase() });
+    }
+    return res.json({ found: false });
+  } catch {
+    return res.json({ found: false, mode: 'client_delegation' });
+  }
+});
+
