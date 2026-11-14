@@ -19,7 +19,10 @@ import {
   AccountHead,
   Transaction,
   VoucherEntry,
+  printOrDownloadElement,
 } from '../core/aplusEngine';
+import { PrintableVoucherA4Layout } from './PrintableVoucherA4Layout';
+import { usePrintRequestTimestamp } from '../utils/voucherPrintUtils';
 
 interface ExpressVoucherModalProps {
   isOpen: boolean;
@@ -46,6 +49,7 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
     campuses,
     currentCampusId,
     currentUser,
+    orgSettings,
     accountHeads,
     getNextVoucherNumber,
     addTransaction,
@@ -81,6 +85,8 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
   const [createdVoucher, setCreatedVoucher] = useState<Transaction | null>(null);
 
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const printRef = useRef<HTMLDivElement>(null);
+  const { printTimestamp, refreshPrintTimestamp } = usePrintRequestTimestamp();
 
   // Update campus when modal opens
   useEffect(() => {
@@ -327,16 +333,32 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
 
   const currentCampusObj = campuses.find((c) => c.id === selectedCampusId);
 
+  const handlePrintCreatedVoucher = async () => {
+    refreshPrintTimestamp();
+    await new Promise((r) => setTimeout(r, 30));
+    if (printRef.current && createdVoucher) {
+      try {
+        await printOrDownloadElement(printRef.current, {
+          title: `${createdVoucher.voucherType}_${createdVoucher.voucherNo}`,
+          fallbackFileName: `Voucher_${createdVoucher.voucherNo}`,
+          orientation: 'portrait',
+        });
+        return;
+      } catch {}
+    }
+    window.print();
+  };
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="express-voucher-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150 voucher-print-modal-backdrop"
     >
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden text-slate-800">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden text-slate-800 voucher-print-modal-card">
         {/* Header */}
-        <div className="px-5 py-3.5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-indigo-900">
+        <div className="px-5 py-3.5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-indigo-900 print:hidden">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black shadow-xs">
               <Zap className="w-4 h-4 fill-current" />
@@ -366,70 +388,86 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
 
         {/* Success Screen after Posting */}
         {createdVoucher ? (
-          <div className="p-6 sm:p-8 text-center space-y-4 my-auto overflow-y-auto">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-
-            <div>
-              <h3 className="text-lg font-black text-slate-900">
-                Voucher Successfully Posted & Synced!
-              </h3>
-              <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
-                Voucher <strong className="font-mono text-indigo-700">#{createdVoucher.voucherNo}</strong> has
-                been securely posted to the general ledger and automatically persisted to the global cloud datastore.
-              </p>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 max-w-md mx-auto text-xs grid grid-cols-2 gap-2 text-left">
-              <div>
-                <span className="text-slate-500 text-[10px] uppercase font-bold">Voucher Type</span>
-                <p className="font-bold text-slate-900">{createdVoucher.voucherType}</p>
+          <div className="p-5 sm:p-6 text-center space-y-4 overflow-y-auto flex-1 print:p-0 print:overflow-visible">
+            <div className="space-y-4 print:hidden">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
+                <CheckCircle2 className="w-8 h-8" />
               </div>
+
               <div>
-                <span className="text-slate-500 text-[10px] uppercase font-bold">Amount Posted</span>
-                <p className="font-mono font-bold text-emerald-700">
-                  Rs. {Number(createdVoucher.totalDebit || 0).toLocaleString('en-PK')}
+                <h3 className="text-lg font-black text-slate-900">
+                  Voucher Successfully Posted & Synced!
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
+                  Voucher <strong className="font-mono text-indigo-700">#{createdVoucher.voucherNo}</strong> has
+                  been securely posted to the general ledger and automatically persisted to the global cloud datastore.
                 </p>
               </div>
-              <div>
-                <span className="text-slate-500 text-[10px] uppercase font-bold">Campus Branch</span>
-                <p className="font-semibold text-slate-800 truncate">
-                  {currentCampusObj?.name || createdVoucher.campusId}
-                </p>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 max-w-md mx-auto text-xs grid grid-cols-2 gap-2 text-left">
+                <div>
+                  <span className="text-slate-500 text-[10px] uppercase font-bold">Voucher Type</span>
+                  <p className="font-bold text-slate-900">{createdVoucher.voucherType}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500 text-[10px] uppercase font-bold">Amount Posted</span>
+                  <p className="font-mono font-bold text-emerald-700">
+                    Rs. {Number(createdVoucher.totalDebit || 0).toLocaleString('en-PK')}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500 text-[10px] uppercase font-bold">Campus Branch</span>
+                  <p className="font-semibold text-slate-800 truncate">
+                    {currentCampusObj?.name || createdVoucher.campusId}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500 text-[10px] uppercase font-bold">Posting Date</span>
+                  <p className="font-mono text-slate-800">{createdVoucher.date}</p>
+                </div>
               </div>
-              <div>
-                <span className="text-slate-500 text-[10px] uppercase font-bold">Posting Date</span>
-                <p className="font-mono text-slate-800">{createdVoucher.date}</p>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handlePrintCreatedVoucher}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Official Voucher</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleResetForAnother}
+                  className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Another Voucher</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  Close Overlay
+                </button>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Official Voucher</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleResetForAnother}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Create Another Voucher</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
-              >
-                Close Overlay
-              </button>
+            <div className="border border-slate-200 rounded-xl overflow-hidden text-left max-h-[340px] overflow-y-auto print:border-none print:max-h-none print:overflow-visible">
+              <div ref={printRef} id="printable-voucher-document">
+                <PrintableVoucherA4Layout
+                  voucher={createdVoucher}
+                  campus={currentCampusObj}
+                  campuses={campuses}
+                  currentCampusId={currentCampusId}
+                  orgSettings={orgSettings}
+                  printTimestamp={printTimestamp}
+                  showConfigureBar={false}
+                />
+              </div>
             </div>
           </div>
         ) : (

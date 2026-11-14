@@ -87,11 +87,13 @@ import {
   saveStoredHierarchicalRbacConfig,
   syncHierarchicalRbacToCloud,
 } from '../services/campusPermissionEngine';
+import { importAll157ChartOfAccountsToCloud } from '../services/productionResetService';
 import {
   generateDynamicPassword,
   createDynamicCampusCredential,
   saveCampusCredentialToCloud,
   deleteCampusCredentialFromCloud,
+  getLocalStoredCampusCredentials,
 } from '../services/campusAuthSync';
 import { pushMasterCloudSnapshot, deleteCampusFromCloud } from '../services/firebaseSync';
 import {
@@ -101,14 +103,17 @@ import {
   subscribeToGlobalUsersFromCloud,
   normalizeAndDeduplicateGlobalUsers,
   normalizeUsernameKey,
+  reconcileGlobalUsersLoginDirectory,
+  setGlobalUserStatusInCloud,
   type GlobalUserRecord,
 } from '../services/globalUserSyncService';
-import { getVerifiedProfile } from '../services/secureAuthentication';
+import { getVerifiedProfile, logoutAccount } from '../services/secureAuthentication';
 import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
 import { GlobalRecycleBinModule } from './GlobalRecycleBinModule';
 import { GlobalRecordSearchModule } from './GlobalRecordSearchModule';
 import { PermissionEngine } from './PermissionEngine';
 import { BulkVoucherAndAccessManager } from './BulkVoucherAndAccessManager';
+import { CampusDashboardOverview } from './CampusDashboardOverview';
 import { ExpenseCategorySuggesterWidget } from './ExpenseCategorySuggesterWidget';
 import { MultiFormatReportsHub } from './MultiFormatReportsHub';
 import { SecureAuditTrail } from './SecureAuditTrail';
@@ -188,6 +193,9 @@ export const PlatformSiteAdminHub: React.FC<{
 }) => {
   const {
     campuses,
+    currentCampusId,
+    setCurrentCampusId,
+    currentCampus,
     addCampus,
     updateCampus,
     deleteCampus,
@@ -200,11 +208,13 @@ export const PlatformSiteAdminHub: React.FC<{
     updateAccountHead,
     deleteAccountHead,
     transactions,
+    deleteTransaction,
     pettyCashTransactions,
     currentUser,
     isSuperAdmin,
     orgSettings,
     exportSystemState,
+    logActivity,
     logout,
   } = useAccounting();
 
@@ -311,6 +321,7 @@ export const PlatformSiteAdminHub: React.FC<{
   const [userFormCampusId, setUserFormCampusId] = useState<string>(campuses[0]?.id || '');
   const [userFormLevel, setUserFormLevel] = useState<PermissionLevel>('level_4_sub_campus_admin');
   const [userFormDelegatedSubCampuses, setUserFormDelegatedSubCampuses] = useState<string[]>([]);
+  const [userFormStatus, setUserFormStatus] = useState<'active' | 'suspended'>('active');
 
   // Live Firestore real-time synchronization for Clients & Global Users
   useEffect(() => {
@@ -336,6 +347,7 @@ export const PlatformSiteAdminHub: React.FC<{
     const applyCloudUsers = (rawCloudUsers: GlobalUserRecord[]) => {
       const normalized = normalizeAndDeduplicateGlobalUsers(rawCloudUsers, getVerifiedProfile());
       setCloudGlobalUsers(normalized);
+      reconcileGlobalUsersLoginDirectory(normalized).catch(() => {});
       const cur = window.__APLUS_GET_CURRENT_STATE__?.();
       if (cur && window.__APLUS_HYDRATE_FROM_CLOUD__) {
         window.__APLUS_HYDRATE_FROM_CLOUD__({ ...cur, users: normalized });
@@ -399,19 +411,39 @@ export const PlatformSiteAdminHub: React.FC<{
   }, [cloudGlobalUsers, users, currentUser]);
 
   // --------------------------------------------------------------------------
-  // STATS & AGGREGATIONS FOR DASHBOARD
+  // STATS & AGGREGATIONS FOR DASHBOARD (Scoped by Relevant Campus or Consolidated All)
   // --------------------------------------------------------------------------
+  const isConsolidatedCampusView = !currentCampusId || currentCampusId === 'all';
+
+  const scopedCampuses = useMemo(
+    () => (isConsolidatedCampusView ? campuses : campuses.filter((c: any) => c.id === currentCampusId)),
+    [campuses, currentCampusId, isConsolidatedCampusView]
+  );
+
+  const scopedTransactions = useMemo(
+    () => (isConsolidatedCampusView ? transactions : transactions.filter((t) => t.campusId === currentCampusId)),
+    [transactions, currentCampusId, isConsolidatedCampusView]
+  );
+
+  const scopedPettyCash = useMemo(
+    () =>
+      isConsolidatedCampusView
+        ? pettyCashTransactions
+        : pettyCashTransactions.filter((p) => p.campusId === currentCampusId),
+    [pettyCashTransactions, currentCampusId, isConsolidatedCampusView]
+  );
+
   const dashboardStats = useMemo(() => {
     const totalClients = clients.length;
     const activeClients = clients.filter((c) => c.status === 'active').length;
-    const totalCampuses = campuses.length;
-    const mainCampuses = campuses.filter((c: any) => c.isMainCampus || !c.parentCampusId).length;
+    const totalCampuses = scopedCampuses.length;
+    const mainCampuses = scopedCampuses.filter((c: any) => c.isMainCampus || !c.parentCampusId).length;
     const subCampuses = totalCampuses - mainCampuses;
     const totalUsers = deduplicatedUsers.length;
-    const totalTx = transactions.length;
-    const totalPetty = pettyCashTransactions.length;
-    const pendingTx = transactions.filter((t) => t.status === 'Pending').length;
-    const totalVolume = transactions.reduce((sum, t) => sum + (Number(t.totalDebit) || 0), 0);
+    const totalTx = scopedTransactions.length;
+    const totalPetty = scopedPettyCash.length;
+    const pendingTx = scopedTransactions.filter((t) => t.status === 'Pending').length;
+    const totalVolume = scopedTransactions.reduce((sum, t) => sum + (Number(t.totalDebit) || 0), 0);
     const criticalAuditCount = auditLogs.filter((a) => a.severity === 'critical' || a.severity === 'high').length;
 
     return {
@@ -427,7 +459,7 @@ export const PlatformSiteAdminHub: React.FC<{
       totalVolume,
       criticalAuditCount,
     };
-  }, [clients, campuses, users, transactions, pettyCashTransactions, auditLogs]);
+  }, [clients, scopedCampuses, deduplicatedUsers, scopedTransactions, scopedPettyCash, auditLogs]);
 
   // --------------------------------------------------------------------------
   // CLIENT HANDLERS
@@ -704,6 +736,51 @@ export const PlatformSiteAdminHub: React.FC<{
       return;
     }
     setDeletingUser(user);
+  };
+
+  const handleToggleGlobalUserStatus = async (user: any) => {
+    if (isProtectedRootOwner(user)) {
+      triggerToast('error', 'The primary Platform Site Admin root user cannot be suspended.');
+      return;
+    }
+    const currentStatus = String(user?.status || 'active').toLowerCase();
+    const nextStatus: 'active' | 'suspended' = currentStatus === 'active' ? 'suspended' : 'active';
+    try {
+      await setGlobalUserStatusInCloud(
+        {
+          id: user.id,
+          uid: user.uid,
+          username: user.username,
+          email: user.email,
+          clientId: user.clientId,
+        },
+        nextStatus
+      );
+      if (updateUser && user.id) {
+        updateUser(user.id, { status: nextStatus });
+      }
+      setCloudGlobalUsers((prev) =>
+        prev
+          ? prev.map((item) => (item.id === user.id ? { ...item, status: nextStatus } : item))
+          : prev
+      );
+      recordSiteAdminSecurityEvent({
+        actorName: currentUser?.name || 'Platform Site Admin',
+        actorRole: 'Level 1 Platform Creator',
+        severity: 'medium',
+        category: 'AUTHENTICATION',
+        action: nextStatus === 'active' ? 'ENABLE_GLOBAL_USER_LOGIN' : 'SUSPEND_GLOBAL_USER_LOGIN',
+        targetEntity: 'User',
+        targetId: user.id,
+        details: `${nextStatus === 'active' ? 'Enabled' : 'Suspended'} global login access for '@${user.username}'.`,
+      });
+      triggerToast(
+        'success',
+        `Login access ${nextStatus === 'active' ? 'enabled' : 'suspended'} globally for @${user.username}.`
+      );
+    } catch (err: any) {
+      triggerToast('error', err?.message || 'Could not update global login status.');
+    }
   };
 
   const handleConfirmDeleteGlobalUser = async () => {
@@ -1105,6 +1182,20 @@ export const PlatformSiteAdminHub: React.FC<{
 
     updateCampus(editingCampus.id, updates as any);
 
+    const existingCred = getLocalStoredCampusCredentials().find(
+      (c) => c.campusId === editingCampus.id || c.id === editingCampus.id
+    );
+    const updatedCampusObj: ExtendedCampusNode = {
+      ...(editingCampus as ExtendedCampusNode),
+      ...updates,
+    };
+    const nextCredStatus: 'active' | 'suspended' =
+      updates.loginEnabled === false || updates.status === 'inactive' ? 'suspended' : 'active';
+    saveCampusCredentialToCloud({
+      ...createDynamicCampusCredential(updatedCampusObj as Campus, existingCred),
+      status: nextCredStatus,
+    }).catch(() => {});
+
     try {
       const raw = localStorage.getItem('aplus_campuses');
       if (raw) {
@@ -1122,10 +1213,10 @@ export const PlatformSiteAdminHub: React.FC<{
       action: 'UPDATE_CAMPUS_DETAILS',
       targetEntity: 'Campus',
       targetId: editingCampus.id,
-      details: `Updated campus details for '${updates.name}' (${updates.code}). Parent: ${targetParent || 'None (Main)'}, Status: ${updates.status}.`,
+      details: `Updated campus details for '${updates.name}' (${updates.code}). Parent: ${targetParent || 'None (Main)'}, Status: ${updates.status}, Login Enabled: ${updates.loginEnabled}.`,
     });
 
-    triggerToast('success', `Campus '${updates.name}' updated successfully!`);
+    triggerToast('success', `Campus '${updates.name}' updated & cloud credentials synchronized!`);
     setEditingCampus(null);
   };
 
@@ -1271,6 +1362,7 @@ export const PlatformSiteAdminHub: React.FC<{
       setUserFormCampusId(userToEdit.campusId || campuses[0]?.id || '');
       setUserFormLevel(userToEdit.permissionLevel || 'level_4_sub_campus_admin');
       setUserFormDelegatedSubCampuses(userToEdit.delegatedSubCampusIds || []);
+      setUserFormStatus(String(userToEdit.status || 'active').toLowerCase() === 'active' ? 'active' : 'suspended');
     } else {
       setSelectedUserToEdit(null);
       setUserFormUsername('');
@@ -1284,6 +1376,7 @@ export const PlatformSiteAdminHub: React.FC<{
       setUserFormCampusId(targetCampusId);
       setUserFormLevel(preselectedCampusId ? 'level_4_sub_campus_admin' : 'level_4_sub_campus_admin');
       setUserFormDelegatedSubCampuses([]);
+      setUserFormStatus('active');
     }
     setIsUserModalOpen(true);
   };
@@ -1358,7 +1451,7 @@ export const PlatformSiteAdminHub: React.FC<{
         delegatedSubCampusIds:
           normalizedLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
         allowedModules: ['all'],
-        status: selectedUserToEdit?.status || 'active',
+        status: userFormStatus,
         designation: resolvedRole,
       });
 
@@ -1612,9 +1705,11 @@ export const PlatformSiteAdminHub: React.FC<{
     { id: '25_maintenance_release', number: '25', label: 'Maintenance & Releases', category: 'Security & Operations', icon: Settings },
   ];
 
-  // STRICT SECURITY CHECK: Show Super Admin Panel ONLY in Super Administration Account
+  // STRICT SECURITY CHECK: Show Super Admin Panel ONLY in verified Super Administration Account
+  const verifiedSessionProfile = getVerifiedProfile();
   const isSuperAdminAccountOnly = Boolean(
     currentUser &&
+    verifiedSessionProfile &&
     !currentUser.clientId &&
     (currentUser.role === 'level_1_platform_super_admin' ||
      currentUser.username?.toLowerCase() === 'admin' ||
@@ -1629,10 +1724,23 @@ export const PlatformSiteAdminHub: React.FC<{
         </div>
         <h3 className="text-xl font-bold text-white mb-2">Access Restricted: Super Administrator Only</h3>
         <p className="text-xs text-slate-400 leading-relaxed mb-6">
-          The Super Admin Panel is confidential and restricted exclusively to the Super Administration account. Your current account does not have authorization to view or modify platform-wide infrastructure, client organizations, or system security settings.
+          {!currentUser || !verifiedSessionProfile
+            ? 'An authenticated Platform Super Administrator session is required. Without login, no panel is accessible.'
+            : 'The Super Admin Panel is confidential and restricted exclusively to the Super Administration account. Your current account does not have authorization to view or modify platform-wide infrastructure, client organizations, or system security settings.'}
         </p>
         <div className="flex items-center justify-center gap-3">
-          {onSwitchToCampusView && (
+          {(!currentUser || !verifiedSessionProfile) && (
+            <button
+              type="button"
+              onClick={() => {
+                logoutAccount().catch(() => {});
+              }}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            >
+              Return to Sign In
+            </button>
+          )}
+          {verifiedSessionProfile && onSwitchToCampusView && (
             <button
               type="button"
               onClick={onSwitchToCampusView}
@@ -1752,6 +1860,68 @@ export const PlatformSiteAdminHub: React.FC<{
               <X className="w-4 h-4" />
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Site Owner Relevant Campus & Consolidated Campus Selector Bar */}
+      <div className="bg-slate-950/90 px-6 py-2.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
+            <Building2 className="w-4 h-4 text-indigo-400" />
+            <span>Active Campus Scope:</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setCurrentCampusId('all')}
+            className={`px-3 py-1 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+              isConsolidatedCampusView
+                ? 'bg-indigo-600 border-indigo-500 text-white shadow-xs'
+                : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
+            }`}
+          >
+            Consolidated (All Campuses)
+          </button>
+
+          <select
+            aria-label="Site Owner Campus Scope Selector"
+            value={currentCampusId || 'all'}
+            onChange={(e) => setCurrentCampusId(e.target.value)}
+            className="bg-slate-900 border border-slate-700 hover:border-indigo-500 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-hidden focus:border-indigo-500 cursor-pointer min-w-[240px]"
+          >
+            <option value="all">
+              Consolidated — All Registered Campuses ({campuses.length})
+            </option>
+            {campuses.map((c: any) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.code}) — {c.isMainCampus || !c.parentCampusId ? 'Main Campus' : 'Sub-Campus'}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-3 text-[11px] font-mono">
+          <span className="text-slate-400">
+            Scope:{' '}
+            <strong className="text-emerald-400">
+              {isConsolidatedCampusView
+                ? `Consolidated (${campuses.length} Campuses)`
+                : `${currentCampus?.name || currentCampusId} (${currentCampus?.code || 'Branch'})`}
+            </strong>
+          </span>
+          <span className="text-slate-600">|</span>
+          <span className="text-slate-400">
+            Vouchers: <strong className="text-white">{scopedTransactions.length}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={() => setActiveSection('16_voucher_mgmt')}
+            className="px-2.5 py-1 rounded-lg bg-rose-950/70 hover:bg-rose-900/90 border border-rose-700/70 text-rose-200 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+            title="Jump to Voucher Management & Voucher Entry Deletion"
+          >
+            <Trash2 className="w-3 h-3 text-rose-400" />
+            <span>Voucher Deletion &amp; Audit</span>
+          </button>
         </div>
       </div>
 
@@ -2019,6 +2189,11 @@ export const PlatformSiteAdminHub: React.FC<{
                   </div>
                 </div>
               </div>
+
+              {/* Campus Dashboard Overview: Combined Cash on Hand + Today's Vouchers */}
+              <CampusDashboardOverview
+                onNavigateToCampuses={() => setActiveSection('03_main_campuses')}
+              />
 
               {/* Hierarchy Architecture Diagram Box */}
               <div className="bg-slate-950/60 border border-indigo-900/60 rounded-2xl p-5 space-y-3">
@@ -2764,9 +2939,17 @@ export const PlatformSiteAdminHub: React.FC<{
                               )}
                             </td>
                             <td className="py-3 px-4">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                                  Global DB ✓
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span
+                                  className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                                    String(u.status || 'active').toLowerCase() === 'active'
+                                      ? 'text-emerald-400 bg-emerald-950/60 border-emerald-800'
+                                      : 'text-rose-300 bg-rose-950/60 border-rose-800'
+                                  }`}
+                                >
+                                  {String(u.status || 'active').toLowerCase() === 'active'
+                                    ? 'Login Enabled ✓'
+                                    : 'Suspended'}
                                 </span>
                                 <span className="text-[10px] text-slate-500 font-mono">
                                   {u.role || 'Accountant'}
@@ -2775,6 +2958,26 @@ export const PlatformSiteAdminHub: React.FC<{
                             </td>
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
+                                {!isRootOwner && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleGlobalUserStatus(u)}
+                                    className={`px-2 py-1 rounded font-bold text-[10px] transition-colors cursor-pointer border ${
+                                      String(u.status || 'active').toLowerCase() === 'active'
+                                        ? 'bg-amber-950/60 hover:bg-amber-700 text-amber-300 hover:text-white border-amber-700/60'
+                                        : 'bg-emerald-950/60 hover:bg-emerald-700 text-emerald-300 hover:text-white border-emerald-700/60'
+                                    }`}
+                                    title={
+                                      String(u.status || 'active').toLowerCase() === 'active'
+                                        ? `Suspend global login access for @${u.username}`
+                                        : `Enable global login access for @${u.username}`
+                                    }
+                                  >
+                                    {String(u.status || 'active').toLowerCase() === 'active'
+                                      ? 'Suspend'
+                                      : 'Enable'}
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => handleOpenAddUserModal(u.campusId || undefined, u)}
@@ -2921,6 +3124,26 @@ export const PlatformSiteAdminHub: React.FC<{
                     Parent-Child Code Architecture (1001 → 1001-1, 1001-2) with transaction immutability protection.
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await importAll157ChartOfAccountsToCloud({
+                        includeAllOrganizations: true,
+                      });
+                      triggerToast(
+                        'success',
+                        `Imported & synced all ${res.totalOfficial} Official Charts of Accounts (${res.headsCount} total active across ${res.syncedOrganizations || 1} orgs).`
+                      );
+                    } catch (err: any) {
+                      triggerToast('error', `Failed to import 157 COA: ${err?.message || 'Error'}`);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm shrink-0"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Import All 157 Charts of Accounts</span>
+                </button>
               </div>
 
               {/* Automatic Child Account Head Generator */}
@@ -3097,11 +3320,39 @@ export const PlatformSiteAdminHub: React.FC<{
           )}
 
           {/* ================================================================ */}
-          {/* 16: VOUCHER MANAGEMENT & AUDIT                                    */}
+          {/* 16: VOUCHER MANAGEMENT & VOUCHER ENTRY DELETION                   */}
           {/* ================================================================ */}
           {activeSection === '16_voucher_mgmt' && (
-            <div className="space-y-5">
-              <BulkVoucherAndAccessManager />
+            <div className="space-y-4">
+              <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-rose-400">
+                    Site Owner Governance • Single &amp; Batch Voucher Deletion
+                  </div>
+                  <h3 className="text-sm font-black text-white mt-0.5">
+                    Voucher Entry Register &amp; Deletion Control ({isConsolidatedCampusView ? 'Consolidated — All Campuses' : `${currentCampus?.name || 'Relevant Campus'}`})
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Select Consolidated or a specific Relevant Campus to inspect, edit, or delete individual or multiple voucher entries (archived safely to Global Recycle Bin and removed from cloud).
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    aria-label="Filter Voucher Management Campus Scope"
+                    value={currentCampusId || 'all'}
+                    onChange={(e) => setCurrentCampusId(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-hidden focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value="all">Consolidated — All Campuses ({campuses.length})</option>
+                    {campuses.map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <BulkVoucherAndAccessManager defaultStatusFilter="ALL" />
             </div>
           )}
 
@@ -3114,6 +3365,8 @@ export const PlatformSiteAdminHub: React.FC<{
               pettyCashTransactions={pettyCashTransactions}
               onUpdateCampus={updateCampus}
               triggerToast={triggerToast}
+              activeCampusScope={currentCampusId}
+              onChangeCampusScope={setCurrentCampusId}
             />
           )}
 
@@ -4051,6 +4304,19 @@ export const PlatformSiteAdminHub: React.FC<{
                       </button>
                     )}
                   </div>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-slate-400 mb-1 font-bold">
+                    8. Global Login Access Status
+                  </label>
+                  <select
+                    value={userFormStatus}
+                    onChange={(e) => setUserFormStatus(e.target.value as 'active' | 'suspended')}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs outline-none focus:border-indigo-500"
+                  >
+                    <option value="active">Active — Global Login Enabled Across Devices</option>
+                    <option value="suspended">Suspended — Block Portal Login</option>
+                  </select>
                 </div>
               </div>
 

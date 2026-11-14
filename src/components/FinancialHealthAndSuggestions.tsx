@@ -31,6 +31,7 @@ import {
   restoreAllOfficialChartOfAccounts,
   getDeletedAccountsTrashBin,
 } from '../services/chartOfAccountsRecovery';
+import { importAll157ChartOfAccountsToCloud } from '../services/productionResetService';
 
 function formatPKR(val: number): string {
   return `Rs. ${Math.round(val || 0).toLocaleString('en-PK')}`;
@@ -80,9 +81,18 @@ export const FinancialHealthAndSuggestions: React.FC<{
     showNotice(res.message);
   };
 
-  const handleRestoreAllMasterCOA = () => {
+  const handleRestoreAllMasterCOA = async () => {
     const res = restoreAllOfficialChartOfAccounts(importOfficialAccountsHeads);
-    showNotice(res.message);
+    try {
+      const cloudRes = await importAll157ChartOfAccountsToCloud({
+        includeAllOrganizations: false,
+      });
+      showNotice(
+        `All ${cloudRes.totalOfficial} Official Chart of Accounts imported & synced to Firestore (${cloudRes.headsCount} active).`
+      );
+    } catch {
+      showNotice(res.message);
+    }
   };
 
   // Header & Footer Text Editor State

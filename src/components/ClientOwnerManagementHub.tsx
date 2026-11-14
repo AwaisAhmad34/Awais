@@ -70,8 +70,10 @@ import {
   createDynamicCampusCredential,
   saveCampusCredentialToCloud,
   deleteCampusCredentialFromCloud,
+  getLocalStoredCampusCredentials,
 } from '../services/campusAuthSync';
 import { deleteCampusFromCloud } from '../services/firebaseSync';
+import { getVerifiedProfile, logoutAccount } from '../services/secureAuthentication';
 
 interface ClientOwnerManagementHubProps {
   onSwitchToCampusOperationalView: (campusId: string) => void;
@@ -299,7 +301,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     setIsRegisterMainModalOpen(true);
   };
 
-  const handleRegisterMainCampusSubmit = (e: React.FormEvent) => {
+  const handleRegisterMainCampusSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCode = mainCampusCodeInput.trim().toUpperCase();
     const cleanName = mainCampusNameInput.trim();
@@ -333,9 +335,30 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
     addCampus(newMainCampusObj);
     window.__APLUS_CLOUD_SYNC__?.syncCampus?.(newMainCampusObj);
-    saveCampusCredentialToCloud(
-      createDynamicCampusCredential(newMainCampusObj)
-    ).catch(() => {});
+    const mainCred = createDynamicCampusCredential(newMainCampusObj);
+    saveCampusCredentialToCloud(mainCred).catch(() => {});
+
+    // Provision main campus administrator login globally in Firestore + login_directory
+    const mainUsername = mainCred.username;
+    const mainEmail = `${mainUsername}@${clientInfo.code.toLowerCase()}.edu.pk`;
+    provisionGlobalUserAccount({
+      id: `user-${newMainId}`,
+      username: mainUsername,
+      name: newMainCampusObj.accountantName || cleanName,
+      email: mainEmail,
+      password: mainCred.password,
+      role: 'level_3_main_campus_admin',
+      permissionLevel: 'level_3_main_campus_admin',
+      isSuperAdmin: false,
+      clientId: clientInfo.id,
+      campusId: newMainId,
+      campusName: cleanName,
+      permittedCampusIds: ['all'],
+      delegatedSubCampusIds: [],
+      allowedModules: DEFAULT_CLIENT_MODULES,
+      status: 'active',
+      designation: `Main Campus Administrator (${cleanCode})`,
+    }).catch(() => {});
 
     // Link this newly registered main campus to client organization
     const allClients = getStoredSchoolClients();
@@ -562,27 +585,61 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     showToast('success', `Campus ${campus.name} is now ${nextStatus}.`);
   };
 
-  // Reset Sub-Campus Password
-  const handlePerformPasswordReset = (e: React.FormEvent) => {
+  // Reset Sub-Campus Password & Sync Globally
+  const handlePerformPasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCampus || !resetPasswordInput.trim()) return;
+
+    const newPassword = resetPasswordInput.trim();
+    if (newPassword.length < 6) {
+      showToast('error', 'Password must be at least 6 characters.');
+      return;
+    }
 
     setIsResetting(true);
     const targetUser = users.find((u) => u.campusId === editingCampus.id);
     if (targetUser && resetUserPassword) {
-      resetUserPassword(targetUser.id, resetPasswordInput.trim());
+      resetUserPassword(targetUser.id, newPassword);
+    }
+
+    const existingCred = getLocalStoredCampusCredentials().find(
+      (c) => c.campusId === editingCampus.id || c.id === editingCampus.id
+    );
+    const updatedCred = createDynamicCampusCredential(editingCampus, existingCred, newPassword);
+    await saveCampusCredentialToCloud(updatedCred).catch(() => {});
+
+    if (targetUser) {
+      await provisionGlobalUserAccount({
+        id: targetUser.id,
+        uid: (targetUser as any).uid || null,
+        username: targetUser.username || updatedCred.username,
+        name: targetUser.name || editingCampus.accountantName || editingCampus.name,
+        email: targetUser.email || `${updatedCred.username}@${clientInfo.code.toLowerCase()}.edu.pk`,
+        password: newPassword,
+        role: targetUser.role || 'level_3_sub_campus_admin',
+        permissionLevel: (targetUser as any).permissionLevel || 'level_4_sub_campus_admin',
+        isSuperAdmin: false,
+        clientId: (targetUser as any).clientId || clientInfo.id,
+        campusId: editingCampus.id,
+        campusName: editingCampus.name,
+        permittedCampusIds: (targetUser as any).permittedCampusIds || [editingCampus.id],
+        delegatedSubCampusIds: (targetUser as any).delegatedSubCampusIds || [],
+        allowedModules: (targetUser as any).allowedModules || DEFAULT_CLIENT_MODULES,
+        status: (targetUser as any).status === 'suspended' ? 'suspended' : 'active',
+        designation: (targetUser as any).designation,
+      }).catch(() => {});
     }
 
     logActivity(
       'CAMPUS_UPDATE',
       'Security',
       editingCampus.code,
-      `Password reset for sub-campus ${editingCampus.name} (${editingCampus.code}).`,
+      `Password reset & synced globally for sub-campus ${editingCampus.name} (${editingCampus.code}).`,
       editingCampus.id
     );
 
     setIsResetting(false);
-    showToast('success', `Password for ${editingCampus.name} reset successfully!`);
+    showToast('success', `Password for ${editingCampus.name} reset & synced globally across devices!`);
     setEditingCampus(null);
     setResetPasswordInput('');
   };
@@ -739,6 +796,43 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
   const clientPettyCash = useMemo(() => {
     return filterPettyCashForUser(pettyCashTransactions, currentUser, campuses);
   }, [pettyCashTransactions, currentUser, campuses]);
+
+  // STRICT AUTH GUARD: No panel may be accessed without an authenticated verified session
+  const verifiedProfile = getVerifiedProfile();
+  const isAuthorizedClientOwner = Boolean(
+    currentUser &&
+      verifiedProfile &&
+      (currentUser.role === 'level_1_platform_super_admin' ||
+        currentUser.role === 'level_2_client_super_admin' ||
+        currentUser.role === 'level_3_main_campus_admin' ||
+        currentUser.role === 'admin' ||
+        currentUser.role === 'superadmin')
+  );
+
+  if (!isAuthorizedClientOwner) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+        <div className="bg-slate-900 border border-rose-800/60 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="w-14 h-14 rounded-2xl bg-rose-950/80 border border-rose-700/60 text-rose-400 flex items-center justify-center mx-auto mb-4">
+            <Lock className="w-7 h-7" />
+          </div>
+          <h2 className="text-lg font-black text-white mb-2">Authentication Required</h2>
+          <p className="text-xs text-slate-400 leading-relaxed mb-6">
+            Client Organization Management is locked. Please sign in with an authorized Organization Owner or Main Campus Administrator account.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              logoutAccount().catch(() => {});
+            }}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+          >
+            Return to Sign In
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">

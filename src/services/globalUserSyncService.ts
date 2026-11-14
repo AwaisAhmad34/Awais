@@ -92,6 +92,17 @@ export function normalizeUsernameKey(username: string): string {
     .replace(/[^a-z0-9._-]/g, '_');
 }
 
+async function getAuthBearerHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const token = await auth.currentUser?.getIdToken?.();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  } catch {}
+  return headers;
+}
+
 function normalizePermissionLevel(level?: string, role?: string, isSuperAdmin?: boolean): string {
   if (level) {
     if (level === 'level_2_client_admin') return 'level_2_client_super_admin';
@@ -327,9 +338,10 @@ export async function provisionGlobalUserAccount(
       // 1A. Try trusted server Admin SDK first (handles password resets & existing emails cleanly when cert is present)
       let serverDone = false;
       try {
+        const authHeaders = await getAuthBearerHeaders();
         const res = await fetch('/api/platform/provision-user', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders,
           body: JSON.stringify({
             email: cleanEmail,
             password: cleanPassword,
@@ -520,27 +532,131 @@ export async function provisionGlobalUserAccount(
 export async function lookupLoginDirectoryByUsername(
   username: string
 ): Promise<{ email: string; userId?: string; status?: string } | null> {
+  const rawClean = (username || '').trim().toLowerCase().replace(/\s+/g, '');
   const dirKey = normalizeUsernameKey(username);
   if (!dirKey) return null;
 
-  try {
-    const snap = await getDoc(doc(db, 'login_directory', dirKey));
-    if (snap.exists()) {
-      const data = snap.data();
-      if (data?.email) {
-        return {
-          email: String(data.email).trim().toLowerCase(),
-          userId: data.userId ? String(data.userId) : undefined,
-          status: data.status ? String(data.status) : undefined,
-        };
+  const keysToTry = Array.from(new Set([dirKey, rawClean].filter(Boolean)));
+  for (const key of keysToTry) {
+    try {
+      const snap = await getDoc(doc(db, 'login_directory', key));
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data?.email) {
+          return {
+            email: String(data.email).trim().toLowerCase(),
+            userId: data.userId ? String(data.userId) : undefined,
+            status: data.status ? String(data.status) : undefined,
+          };
+        }
       }
-    }
-  } catch (err: any) {
-    if (err?.code === 'permission-denied') {
-      console.warn('Login directory lookup denied for username:', dirKey);
+    } catch (err: any) {
+      if (err?.code === 'permission-denied') {
+        console.warn('Login directory lookup denied for username:', key);
+      }
     }
   }
   return null;
+}
+
+const reconciledDirectoryKeys = new Set<string>();
+
+/**
+ * Ensures all loaded GlobalUserRecords have an up-to-date `login_directory/{usernameKey}` document
+ * so every global user can sign in cleanly by username across devices and browsers.
+ */
+export async function reconcileGlobalUsersLoginDirectory(
+  users: GlobalUserRecord[]
+): Promise<void> {
+  if (!auth.currentUser || !Array.isArray(users) || users.length === 0) return;
+  const now = new Date().toISOString();
+
+  for (const u of users) {
+    if (!u || !u.username || !u.email) continue;
+    const dirKey = normalizeUsernameKey(u.username);
+    if (!dirKey) continue;
+    const cacheSignature = `${dirKey}|${normalizeEmailKey(u.email)}|${u.status || 'active'}|${u.uid || ''}`;
+    if (reconciledDirectoryKeys.has(cacheSignature)) continue;
+
+    reconciledDirectoryKeys.add(cacheSignature);
+    try {
+      await setDoc(
+        doc(db, 'login_directory', dirKey),
+        sanitizeFirestorePayload({
+          username: u.username.trim().toLowerCase(),
+          email: normalizeEmailKey(u.email),
+          userId: u.id,
+          uid: u.uid || null,
+          status: u.status || 'active',
+          updatedAt: now,
+        }),
+        { merge: true }
+      );
+    } catch {}
+  }
+}
+
+/**
+ * Updates a Global User's login status (`active` vs `suspended`/`inactive`) atomically across
+ * `global_users`, `login_directory`, `memberships`, and tenant `organizations/{clientId}/users`.
+ */
+export async function setGlobalUserStatusInCloud(
+  user: Pick<GlobalUserRecord, 'id' | 'uid' | 'username' | 'email' | 'clientId'>,
+  status: 'active' | 'suspended' | 'inactive'
+): Promise<void> {
+  if (!user?.id || !auth.currentUser) return;
+  const now = new Date().toISOString();
+
+  try {
+    await setDoc(
+      doc(db, 'global_users', user.id),
+      { status, updatedAt: now },
+      { merge: true }
+    );
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.UPDATE, `global_users/${user.id}`);
+    }
+    throw err;
+  }
+
+  if (user.username) {
+    const dirKey = normalizeUsernameKey(user.username);
+    if (dirKey) {
+      await setDoc(
+        doc(db, 'login_directory', dirKey),
+        {
+          username: user.username.trim().toLowerCase(),
+          ...(user.email ? { email: normalizeEmailKey(user.email) } : {}),
+          userId: user.id,
+          uid: user.uid || null,
+          status,
+          updatedAt: now,
+        },
+        { merge: true }
+      ).catch(() => {});
+    }
+  }
+
+  if (user.uid) {
+    await setDoc(
+      doc(db, 'memberships', user.uid),
+      { status, updatedAt: now },
+      { merge: true }
+    ).catch(() => {});
+  }
+
+  if (user.clientId) {
+    await setDoc(
+      doc(db, 'organizations', user.clientId, 'users', user.id),
+      { status, updatedAt: now },
+      { merge: true }
+    ).catch(() => {});
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('aplus-global-users-updated'));
+  }
 }
 
 /**
@@ -684,8 +800,10 @@ export async function deleteGlobalUserFromCloud(user: {
 
       // Optional server-side Firebase Auth deletion when Admin SDK is available
       try {
+        const authHeaders = await getAuthBearerHeaders();
         await fetch(`/api/platform/users/${encodeURIComponent(targetUid)}`, {
           method: 'DELETE',
+          headers: authHeaders,
         });
       } catch {}
     }

@@ -19,6 +19,10 @@ import {
 } from '../core/aplusEngine';
 import { DynamicReportSignatureBlock } from './ReportSignatureManager';
 import { VoucherQRCodeBadge } from './VoucherQRCodeAndScanner';
+import {
+  resolveVoucherCampusInfo,
+  usePrintRequestTimestamp,
+} from '../utils/voucherPrintUtils';
 
 export type StandardVoucherType = 'BPV' | 'BRV' | 'CPV' | 'CRV' | 'JV';
 
@@ -31,6 +35,8 @@ export interface PrintableVoucherA4LayoutProps {
     approvedAt?: string;
   };
   campus?: Campus;
+  campuses?: Campus[];
+  currentCampusId?: string;
   orgSettings?: OrgSettings;
   customDateRange?: string;
   payTo?: string;
@@ -38,6 +44,7 @@ export interface PrintableVoucherA4LayoutProps {
   paddingPreset?: A4PaddingPreset;
   typographyScale?: A4TypographyScale;
   showConfigureBar?: boolean;
+  printTimestamp?: string;
   className?: string;
 }
 
@@ -206,6 +213,8 @@ const TYPOGRAPHY_CLASS_MAP: Record<A4TypographyScale, string> = {
 export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> = ({
   voucher,
   campus,
+  campuses,
+  currentCampusId,
   orgSettings,
   customDateRange,
   payTo,
@@ -213,11 +222,13 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
   paddingPreset: initialPadding = 'standard',
   typographyScale: initialTypo = '11pt',
   showConfigureBar = true,
+  printTimestamp: externalPrintTimestamp,
   className = '',
 }) => {
   const [paddingPreset, setPaddingPreset] = useState<A4PaddingPreset>(initialPadding);
   const [typographyScale, setTypographyScale] =
     useState<A4TypographyScale>(initialTypo);
+  const { printTimestamp } = usePrintRequestTimestamp(externalPrintTimestamp);
 
   const vType: StandardVoucherType =
     voucher.voucherType && VOUCHER_TYPE_META[voucher.voucherType]
@@ -228,10 +239,14 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
   const formattedDate = formatVoucherDate(voucher.date);
   const dateRangeDisplay = customDateRange || `${formattedDate} to ${formattedDate}`;
 
-  const campusDisplayName = (campus?.name || 'CVT Campus')
-    .replace(/A\+\s*School\s*System\s*\(?|\)?/gi, '')
-    .trim()
-    .toUpperCase();
+  const campusInfo = resolveVoucherCampusInfo({
+    voucher,
+    campus,
+    campuses,
+    currentCampusId,
+    orgSettings,
+  });
+  const campusDisplayName = campusInfo.campusName.toUpperCase();
 
   const resolvedPartyName =
     payTo ||
@@ -315,8 +330,39 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
 
       {/* Printable A4 Voucher Document Surface */}
       <div
+        data-voucher-campus-name={campusInfo.campusDisplayLabel}
+        data-print-timestamp={printTimestamp}
         className={`official-voucher-document a4-voucher-sheet bg-white text-black mx-auto ${PADDING_CLASS_MAP[paddingPreset]} ${TYPOGRAPHY_CLASS_MAP[typographyScale]} ${className}`}
       >
+        <table className="voucher-print-table-wrapper w-full border-collapse">
+          <thead className="voucher-print-thead">
+            <tr>
+              <td>
+                <header
+                  className="voucher-print-header flex items-center justify-between gap-3 border-b-2 border-black pb-2 mb-3 text-[10px] font-sans text-black"
+                  aria-label="Voucher Print Header"
+                >
+                  <div className="flex flex-col">
+                    <span className="font-black uppercase tracking-wider text-black">
+                      {campusInfo.schoolName}
+                    </span>
+                    <span className="font-bold text-black">
+                      School Campus: {campusInfo.campusDisplayLabel}
+                    </span>
+                  </div>
+                  <div className="text-right font-mono">
+                    <div className="font-bold uppercase">
+                      {meta.shortCode} • Voucher #{voucher.voucherNo}
+                    </div>
+                    <div>Print Timestamp: {printTimestamp}</div>
+                  </div>
+                </header>
+              </td>
+            </tr>
+          </thead>
+          <tbody className="voucher-print-tbody">
+            <tr>
+              <td>
         {/* Top Institutional Header Row */}
         <div className="flex items-start justify-between gap-4 pb-2.5">
           <div className="flex items-center gap-4">
@@ -502,7 +548,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
           campusRef={campus?.code || 'MAIN'}
         />
 
-        {/* Verification & Audit Metadata Footer */}
+        {/* Verification & Audit Metadata Bar */}
         <div className="mt-3 flex items-center justify-between text-[10px] text-black border-t border-black pt-1.5 font-mono">
           <div>
             <span>
@@ -521,6 +567,28 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <span>Audit Log ID: {voucher.id}</span>
           </div>
         </div>
+              </td>
+            </tr>
+          </tbody>
+          <tfoot className="voucher-print-tfoot">
+            <tr>
+              <td>
+                <footer
+                  className="voucher-print-footer mt-3 pt-2 border-t-2 border-black flex flex-wrap items-center justify-between gap-2 text-[9.5px] font-mono text-black"
+                  aria-label="Voucher Print Footer"
+                >
+                  <div>
+                    <span className="font-bold">Campus: {campusInfo.campusDisplayLabel}</span>
+                    <span> • Voucher #{voucher.voucherNo} ({meta.shortCode})</span>
+                  </div>
+                  <div>
+                    <span>Print Request Timestamp: {printTimestamp}</span>
+                  </div>
+                </footer>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </div>
   );
@@ -706,12 +774,13 @@ export const VoucherA4PrintStudioModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { transactions, campuses, orgSettings } = useAccounting();
+  const { transactions, campuses, currentCampusId, orgSettings } = useAccounting();
   const [selectedType, setSelectedType] = useState<'BPV' | 'BRV' | 'CPV' | 'CRV'>('BPV');
   const [selectedVoucherId, setSelectedVoucherId] = useState<string>('');
   const [paddingPreset, setPaddingPreset] = useState<A4PaddingPreset>('standard');
   const [typographyScale, setTypographyScale] = useState<A4TypographyScale>('11pt');
   const [busy, setBusy] = useState(false);
+  const { printTimestamp, refreshPrintTimestamp } = usePrintRequestTimestamp();
   const printRef = useRef<HTMLDivElement>(null);
 
   if (!isOpen) return null;
@@ -732,8 +801,10 @@ export const VoucherA4PrintStudioModal: React.FC<{
 
   const handleDownloadPdf = async () => {
     if (!printRef.current || busy || !activeVoucher) return;
+    refreshPrintTimestamp();
     setBusy(true);
     try {
+      await new Promise((r) => setTimeout(r, 30));
       await generateElementPdf(
         printRef.current,
         `A4_${activeVoucher.voucherType}_${activeVoucher.voucherNo}.pdf`,
@@ -746,6 +817,8 @@ export const VoucherA4PrintStudioModal: React.FC<{
 
   const handlePrint = async () => {
     if (!printRef.current || !activeVoucher) return;
+    refreshPrintTimestamp();
+    await new Promise((r) => setTimeout(r, 30));
     await printOrDownloadElement(printRef.current, {
       title: `${activeVoucher.voucherType} — ${activeVoucher.voucherNo}`,
       fallbackFileName: `A4_${activeVoucher.voucherType}_${activeVoucher.voucherNo}`,
@@ -754,8 +827,8 @@ export const VoucherA4PrintStudioModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto print:p-0 print:bg-white">
-      <div className="bg-slate-100 rounded-2xl max-w-5xl w-full border border-slate-300 shadow-2xl overflow-hidden my-6 flex flex-col max-h-[94vh] print:max-h-none print:border-none print:shadow-none">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto print:p-0 print:bg-white voucher-print-modal-backdrop">
+      <div className="bg-slate-100 rounded-2xl max-w-5xl w-full border border-slate-300 shadow-2xl overflow-hidden my-6 flex flex-col max-h-[94vh] print:max-h-none print:border-none print:shadow-none voucher-print-modal-card">
         {/* Top Studio Header */}
         <div className="bg-slate-900 text-white px-6 py-4 flex flex-wrap items-center justify-between gap-3 shrink-0 print:hidden">
           <div>
@@ -843,9 +916,12 @@ export const VoucherA4PrintStudioModal: React.FC<{
               <PrintableVoucherA4Layout
                 voucher={activeVoucher}
                 campus={activeCampus}
+                campuses={campuses}
+                currentCampusId={currentCampusId}
                 orgSettings={orgSettings}
                 paddingPreset={paddingPreset}
                 typographyScale={typographyScale}
+                printTimestamp={printTimestamp}
                 showConfigureBar={true}
               />
             </div>

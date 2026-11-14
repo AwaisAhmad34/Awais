@@ -48,6 +48,7 @@ import {
   isAccountHeadSensitive,
 } from '../services/campusPermissionEngine';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { getVerifiedProfile } from '../services/secureAuthentication';
 
 interface PermissionEngineProps {
   embedded?: boolean;
@@ -583,6 +584,18 @@ export const PermissionEngine: React.FC<PermissionEngineProps> = ({
       showToast('info', 'Saved locally. Check your internet connection for Cloud sync.');
     }
   };
+
+  if (!currentUser || !getVerifiedProfile()) {
+    return (
+      <div className="bg-slate-900 border border-rose-800/60 rounded-2xl p-6 text-center text-slate-200 max-w-2xl mx-auto my-6">
+        <Lock className="w-7 h-7 text-rose-400 mx-auto mb-2" />
+        <h3 className="text-sm font-black text-white">Authentication Required</h3>
+        <p className="text-xs text-slate-400 mt-1">
+          Sign in with an authorized account to access the Hierarchical Permission Engine.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div

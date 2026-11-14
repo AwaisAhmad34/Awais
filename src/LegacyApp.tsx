@@ -35,7 +35,6 @@ import { CampusMonthlyBudgetExpenditureChart } from './components/CampusMonthlyB
 import { initFirebaseCloudSync } from './services/firebaseSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-initFirebaseCloudSync();
 installGlobalVisibilityHook();
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
 window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
@@ -59,12 +58,14 @@ function InnerApp() {
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
 
-  // Login is required for everyone
-  if (!currentUser) {
+  const verifiedProfile = getVerifiedProfile();
+
+  // Strict Login Lockout: Never allow access to any panel without verified login
+  if (!currentUser || !verifiedProfile) {
     return <DynamicCampusLoginPortal />;
   }
 
-  if (getVerifiedProfile()?.permissionLevel !== 'level_1_platform_super_admin') {
+  if (verifiedProfile?.permissionLevel !== 'level_1_platform_super_admin') {
     return <div className="min-h-screen bg-slate-950 text-white p-8">
       <h1 className="text-xl font-bold">Workspace migration required</h1>
       <p className="mt-3">Your account is verified. The legacy shared ledger must be migrated to your organization before this workspace can open. Contact the site owner.</p>
@@ -72,12 +73,13 @@ function InnerApp() {
     </div>;
   }
 
-  // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly Super Administration account ONLY
+  // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly registered Level 1 account ONLY
   const isPlatformSiteAdmin = Boolean(
     currentUser &&
+    verifiedProfile &&
     !currentUser.clientId &&
     (currentUser.role === 'level_1_platform_super_admin' ||
-     currentUser.username?.toLowerCase() === 'admin' ||
+     currentUser.permissionLevel === 'level_1_platform_super_admin' ||
      (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
   );
 
@@ -174,7 +176,9 @@ function InnerApp() {
 
 export default function App() {
   useEffect(() => {
-    initFirebaseCloudSync();
+    if (getVerifiedProfile()) {
+      initFirebaseCloudSync();
+    }
     installGlobalVisibilityHook();
     window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
     window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;

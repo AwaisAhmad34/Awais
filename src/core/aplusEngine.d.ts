@@ -88,6 +88,12 @@ export interface AccountHead {
   accountType?: string;
   description?: string;
   clientId?: string;
+  openingBalance?: number;
+  openingDebit?: number;
+  openingCredit?: number;
+  campusBalances?: Record<string, number>;
+  campusDebitBalances?: Record<string, number>;
+  campusCreditBalances?: Record<string, number>;
 }
 
 export interface AppUser {
@@ -241,6 +247,8 @@ export interface AccountingContextType {
   addAccountHead: (head: any) => void;
   updateAccountHead: (id: string, updates: any) => void;
   deleteAccountHead: (id: string) => { success: boolean; message?: string };
+  getAccountBalance?: (head: AccountHead, campusId?: string) => number;
+  getAccountOpeningBalance?: (head: AccountHead, campusId?: string) => number;
   getAccountOpeningDrCr?: (head: any, campusId: string) => { debit: number; credit: number };
   updateCampusOpeningDrCr: (accountId: string, campusId: string, debit: number, credit: number) => void;
   importOfficialAccountsHeads: () => void;

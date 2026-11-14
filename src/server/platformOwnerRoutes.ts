@@ -188,6 +188,61 @@ platformRouter.post('/bootstrap-owner', async (req, res) => {
   }
 });
 
+async function verifyPlatformAdminCaller(
+  req: any,
+  requireLevel1Only: boolean = false
+): Promise<{ ok: true; uid: string; level: string } | { ok: false; status: number; error: string; message: string }> {
+  const authHeader = String(req.headers?.authorization || '');
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'UNAUTHORIZED',
+      message: 'Authentication token required for platform administration endpoint.',
+    };
+  }
+
+  try {
+    const decoded = await getAuth(adminApp()).verifyIdToken(match[1].trim());
+    const db = adminDatabase();
+    const mSnap = await db.collection('memberships').doc(decoded.uid).get();
+    const mData = mSnap.data();
+
+    let permissionLevel = String(mData?.permissionLevel || '');
+    let status = String(mData?.status || 'active');
+    let isPlatformAdmin = Boolean(mData?.isPlatformAdmin);
+
+    if (!mSnap.exists) {
+      const guSnap = await db.collection('global_users').where('uid', '==', decoded.uid).limit(1).get();
+      if (!guSnap.empty) {
+        const guData = guSnap.docs[0].data();
+        permissionLevel = String(guData?.permissionLevel || '');
+        status = String(guData?.status || 'active');
+        isPlatformAdmin = Boolean(guData?.isSuperAdmin);
+      }
+    }
+
+    if (status !== 'active') {
+      return { ok: false, status: 403, error: 'FORBIDDEN', message: 'Caller account is inactive or suspended.' };
+    }
+
+    const isLevel1 = isPlatformAdmin || permissionLevel === 'level_1_platform_super_admin';
+    const isAdminTier =
+      isLevel1 ||
+      permissionLevel === 'level_2_client_super_admin' ||
+      permissionLevel === 'level_3_main_campus_admin';
+
+    if (requireLevel1Only ? !isLevel1 : !isAdminTier) {
+      return { ok: false, status: 403, error: 'FORBIDDEN', message: 'Insufficient privilege level.' };
+    }
+
+    return { ok: true, uid: decoded.uid, level: permissionLevel || (isLevel1 ? 'level_1_platform_super_admin' : 'admin') };
+  } catch {
+    return { ok: false, status: 401, error: 'INVALID_TOKEN', message: 'Invalid or expired authentication token.' };
+  }
+}
+
 // Endpoint to reset and remove all users and site owner to allow creation from scratch
 platformRouter.post('/reset-scratch', async (req, res) => {
   const adminConfig = getAdminConfigStatus();
@@ -198,6 +253,14 @@ platformRouter.post('/reset-scratch', async (req, res) => {
   try {
     const db = adminDatabase();
     const registryRef = db.collection('system_state').doc('platform_owner_registry');
+    const regSnap = await registryRef.get();
+    if (regSnap.exists && regSnap.data()?.isInitialized) {
+      const authCheck = await verifyPlatformAdminCaller(req, true);
+      if (!authCheck.ok) {
+        return res.status(authCheck.status).json({ error: authCheck.error, message: authCheck.message });
+      }
+    }
+
     await registryRef.set({
       isInitialized: false,
       ownerUid: null,
@@ -233,6 +296,11 @@ platformRouter.post('/provision-user', async (req, res) => {
       mode: 'client_delegation',
       message: 'Server Admin SDK in delegation mode. Client provisioning authorized.',
     });
+  }
+
+  const authCheck = await verifyPlatformAdminCaller(req, false);
+  if (!authCheck.ok) {
+    return res.status(authCheck.status).json({ error: authCheck.error, message: authCheck.message });
   }
 
   try {
@@ -295,6 +363,11 @@ platformRouter.delete('/users/:uid', async (req, res) => {
     });
   }
 
+  const authCheck = await verifyPlatformAdminCaller(req, false);
+  if (!authCheck.ok) {
+    return res.status(authCheck.status).json({ error: authCheck.error, message: authCheck.message });
+  }
+
   try {
     const auth = getAuth(adminApp());
     await auth.deleteUser(uid);
@@ -317,15 +390,31 @@ platformRouter.post('/resolve-login', async (req, res) => {
   }
 
   try {
-    const clean = identifier.trim().toLowerCase().replace(/\s+/g, '');
+    const rawClean = identifier.trim().toLowerCase().replace(/\s+/g, '');
+    const normalizedKey = rawClean.replace(/[^a-z0-9._-]/g, '_');
+    const keys = Array.from(new Set([normalizedKey, rawClean].filter(Boolean)));
     const db = adminDatabase();
-    const dirSnap = await db.collection('login_directory').doc(clean).get();
-    if (dirSnap.exists && dirSnap.data()?.email) {
-      return res.json({ found: true, email: String(dirSnap.data()?.email).toLowerCase() });
+
+    for (const key of keys) {
+      const dirSnap = await db.collection('login_directory').doc(key).get();
+      if (dirSnap.exists && dirSnap.data()?.email) {
+        const dirData = dirSnap.data();
+        const dirStatus = String(dirData?.status || 'active').toLowerCase();
+        if (dirStatus === 'suspended' || dirStatus === 'inactive') {
+          return res.status(403).json({ found: false, error: 'ACCOUNT_DISABLED', message: 'Account access has been suspended.' });
+        }
+        return res.json({ found: true, email: String(dirData?.email).toLowerCase() });
+      }
     }
-    const qSnap = await db.collection('global_users').where('username', '==', clean).limit(1).get();
+
+    const qSnap = await db.collection('global_users').where('username', '==', rawClean).limit(1).get();
     if (!qSnap.empty && qSnap.docs[0].data()?.email) {
-      return res.json({ found: true, email: String(qSnap.docs[0].data().email).toLowerCase() });
+      const guData = qSnap.docs[0].data();
+      const guStatus = String(guData?.status || 'active').toLowerCase();
+      if (guStatus === 'suspended' || guStatus === 'inactive') {
+        return res.status(403).json({ found: false, error: 'ACCOUNT_DISABLED', message: 'Account access has been suspended.' });
+      }
+      return res.json({ found: true, email: String(guData.email).toLowerCase() });
     }
     return res.json({ found: false });
   } catch {

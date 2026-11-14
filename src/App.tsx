@@ -39,12 +39,12 @@ import {
   type CloudSyncStats,
 } from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
-import { initAuthListener, resetAllUsersAndOwner } from './services/secureAuthentication';
+import { initAuthListener, resetAllUsersAndOwner, getVerifiedProfile } from './services/secureAuthentication';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TenantAuthProvider } from './context/TenantAuthContext';
 import { FloatingQuickActionMenu } from './components/FloatingQuickActionMenu';
 
-import { SEED_MULTI_TENANT_USERS, filterCampusesForUser } from './services/multiTenantDataService';
+import { filterCampusesForUser } from './services/multiTenantDataService';
 
 // ----------------------------------------------------------------------------
 // DEFENSIVE DATA SANITIZATION: Clean duplicate user records from localStorage
@@ -108,38 +108,6 @@ function ensureCleanSlateBootstrap() {
   } catch {}
 }
 
-function bootstrapProductionDefaultAccounts() {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    const raw = localStorage.getItem('ams_users_v5_clean');
-    const existing: any[] = raw ? JSON.parse(raw) : [];
-    const userMap = new Map<string, any>();
-
-    if (Array.isArray(existing)) {
-      existing.forEach((u) => {
-        if (u && (u.username || u.id)) {
-          userMap.set(String(u.username || u.id).toLowerCase(), u);
-        }
-      });
-    }
-
-    let modified = false;
-    for (const seed of SEED_MULTI_TENANT_USERS) {
-      const key = seed.username.toLowerCase();
-      if (!userMap.has(key)) {
-        userMap.set(key, seed);
-        modified = true;
-      }
-    }
-
-    if (modified || !raw) {
-      localStorage.setItem('ams_users_v5_clean', JSON.stringify(Array.from(userMap.values())));
-    }
-  } catch (err) {
-    console.warn('Could not bootstrap production default accounts:', err);
-  }
-}
-
 // Clean-slate setup: ensure all legacy cached users and owner sessions are wiped
 ensureCleanSlateBootstrap();
 
@@ -147,9 +115,6 @@ ensureCleanSlateBootstrap();
 (window as any).__PURGE_PRODUCTION_DATA__ = purgeAllProductionData;
 (window as any).__RESET_ALL_USERS_AND_OWNER__ = resetAllUsersAndOwner;
 purgeDuplicateUsersFromStorage();
-bootstrapProductionDefaultAccounts();
-initFirebaseCloudSync();
-fetchSchoolClientsFromCloud().catch(() => {});
 installGlobalVisibilityHook();
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
 window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
@@ -177,6 +142,7 @@ function InnerApp() {
     currentCampusId,
     campuses,
     loginAsUser,
+    logout,
     users,
     addUser,
     updateUser,
@@ -185,10 +151,14 @@ function InnerApp() {
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
   const [clientsVersion, setClientsVersion] = useState(0);
   const [syncStats, setSyncStats] = useState<CloudSyncStats | null>(null);
+  const [isSessionVerified, setIsSessionVerified] = useState<boolean>(() => Boolean(getVerifiedProfile()));
 
   useEffect(() => {
+    if (!isSessionVerified || !currentUser) return;
+    initFirebaseCloudSync();
+    fetchSchoolClientsFromCloud().catch(() => {});
     return subscribeCloudSync(setSyncStats);
-  }, []);
+  }, [isSessionVerified, currentUser]);
 
   // Side navigation bar expanded / minimized state variable in main layout
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
@@ -229,13 +199,31 @@ function InnerApp() {
     return () => window.removeEventListener('aplus-sidebar-toggle', handleToggleEvent);
   }, []);
 
-  const authBridgeRef = useRef({ currentUser, loginAsUser, users, addUser, updateUser });
-  authBridgeRef.current = { currentUser, loginAsUser, users, addUser, updateUser };
+  const authBridgeRef = useRef({ currentUser, loginAsUser, logout, users, addUser, updateUser });
+  authBridgeRef.current = { currentUser, loginAsUser, logout, users, addUser, updateUser };
 
   useEffect(() => {
+    const handleVerified = () => setIsSessionVerified(Boolean(getVerifiedProfile()));
+    const handleLoggedOut = () => {
+      setIsSessionVerified(false);
+      setAdminViewMode('platform_control_panel');
+      setClientViewMode('client_hub');
+    };
+    window.addEventListener('aplus-verified-login', handleVerified);
+    window.addEventListener('aplus-logout', handleLoggedOut);
+
     initAuthListener((profile) => {
       const bridge = authBridgeRef.current;
-      if (!profile || !bridge.loginAsUser) return;
+      if (!profile || !bridge.loginAsUser) {
+        setIsSessionVerified(false);
+        setAdminViewMode('platform_control_panel');
+        setClientViewMode('client_hub');
+        if (bridge.currentUser && bridge.logout) {
+          bridge.logout();
+        }
+        return;
+      }
+      setIsSessionVerified(true);
       const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
       let target = bridge.users?.find(
         (u: any) =>
@@ -272,6 +260,11 @@ function InnerApp() {
         (bridge.loginAsUser as any)(effectiveId, isSuper, { ...resolvedUserObj, id: effectiveId });
       }
     });
+
+    return () => {
+      window.removeEventListener('aplus-verified-login', handleVerified);
+      window.removeEventListener('aplus-logout', handleLoggedOut);
+    };
   }, []);
 
   useEffect(() => {
@@ -280,19 +273,26 @@ function InnerApp() {
     return () => window.removeEventListener('aplus-clients-updated', handleUpdated);
   }, []);
 
-  // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly Super Administration account ONLY
+  // Strict Login Lockout check
+  const activeVerified = getVerifiedProfile();
+  const hasVerifiedSession = Boolean(currentUser && (isSessionVerified || activeVerified));
+
+  // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly verified Level 1 registered account ONLY
   const isPlatformSiteAdmin = Boolean(
+    hasVerifiedSession &&
     currentUser &&
     !currentUser.clientId &&
     (currentUser.role === 'level_1_platform_super_admin' ||
-     currentUser.username?.toLowerCase() === 'admin' ||
+     currentUser.permissionLevel === 'level_1_platform_super_admin' ||
      (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
   );
 
   // Hierarchy Level 2: Main Campus Administrator (Client Owner)
   const isClientOwnerMainAdmin = Boolean(
+    hasVerifiedSession &&
     currentUser &&
     (currentUser.role === 'level_2_client_super_admin' ||
+     currentUser.permissionLevel === 'level_2_client_super_admin' ||
      Boolean(currentUser.clientId && currentUser.role?.includes('client_super_admin')))
   );
 
@@ -315,8 +315,8 @@ function InnerApp() {
     return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS', logoUrl: undefined };
   }, [userClientId, clientsVersion]);
 
-  // Login is required for everyone (Early return placed AFTER all hooks to follow Rules of Hooks)
-  if (!currentUser) {
+  // Strict Login Lockout: No panel can be accessed unless BOTH currentUser AND a verified session exist
+  if (!hasVerifiedSession) {
     return <DynamicCampusLoginPortal />;
   }
 

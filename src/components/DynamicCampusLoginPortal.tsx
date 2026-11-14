@@ -596,12 +596,12 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
             {/* Tenant Security Notice */}
             <div className="mt-6 pt-4 border-t border-slate-800/80 text-center space-y-1 text-slate-500 text-xs">
-              <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
+              <div className="flex items-center justify-center gap-1.5 text-slate-300 text-[11px] font-bold">
                 <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Verified Multi-Tenant & Campus Hierarchy Enforcement</span>
+                <span>Compulsory Registered Login — All Levels (1 to 5)</span>
               </div>
               <p className="text-[10px] text-slate-500">
-                Staff accounts are provisioned and managed centrally by each organization&apos;s administrator.
+                Registered credentials are mandatory across all access levels. Accounts are provisioned centrally by authorized administrators.
               </p>
             </div>
           </div>
@@ -769,18 +769,20 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 </button>
               </div>
 
-              {/* Clean-Slate Scratch Action */}
-              <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="text-slate-400 text-[11px]">Need to wipe all local data & start fresh?</span>
-                <button
-                  type="button"
-                  disabled={isResettingScratch || isSettingUpOwner}
-                  onClick={handleResetFromScratch}
-                  className="text-rose-400 hover:text-rose-300 font-bold underline text-[11px] cursor-pointer disabled:opacity-50 transition-colors"
-                >
-                  {isResettingScratch ? 'Resetting...' : 'Remove All & Create from Scratch'}
-                </button>
-              </div>
+              {/* Clean-Slate Scratch Action (Only available before Platform Owner is registered) */}
+              {!isOwnerAlreadyRegistered && (
+                <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-400 text-[11px]">Need to wipe local cache &amp; initialize fresh owner?</span>
+                  <button
+                    type="button"
+                    disabled={isResettingScratch || isSettingUpOwner}
+                    onClick={handleResetFromScratch}
+                    className="text-rose-400 hover:text-rose-300 font-bold underline text-[11px] cursor-pointer disabled:opacity-50 transition-colors"
+                  >
+                    {isResettingScratch ? 'Resetting...' : 'Remove All & Create from Scratch'}
+                  </button>
+                </div>
+              )}
             </form>
 
             {isResetScratchConfirmOpen && (

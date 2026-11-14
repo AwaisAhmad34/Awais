@@ -39,11 +39,11 @@ import { useAccounting, Transaction } from '../core/aplusEngine';
 import {
   saveVisibilityConfigToCloud,
   loadVisibilityConfigFromCloud,
-  wipeAllCloudCollectionsToZero,
 } from '../services/firebaseSync';
 import { softDeleteRecord } from '../services/globalRecoveryService';
 import { VoucherEditingModal } from './VoucherEditingModal';
 import { ExpenseCategorySuggesterWidget } from './ExpenseCategorySuggesterWidget';
+import { getVerifiedProfile } from '../services/secureAuthentication';
 import { DynamicCampusAuthModal } from './DynamicCampusAuthModal';
 import { CampusAccountHeadPermissionPanel } from './CampusAccountHeadPermissionPanel';
 import {
@@ -389,7 +389,8 @@ function formatPKR(val: number): string {
 export const BulkVoucherAndAccessManager: React.FC<{
   onNavigate?: (tab: string) => void;
   mode?: 'ledger' | 'standalone';
-}> = ({ onNavigate, mode = 'ledger' }) => {
+  defaultStatusFilter?: 'Pending' | 'Approved' | 'Rejected' | 'ALL';
+}> = ({ onNavigate, mode = 'ledger', defaultStatusFilter = 'Pending' }) => {
   const {
     transactions,
     campuses,
@@ -422,7 +423,7 @@ export const BulkVoucherAndAccessManager: React.FC<{
   >(mode === 'standalone' ? 'super_admin_visibility' : 'bulk_approval');
 
   // Bulk Voucher Selection & Filter State
-  const [statusFilter, setStatusFilter] = useState<'Pending' | 'Approved' | 'Rejected' | 'ALL'>('Pending');
+  const [statusFilter, setStatusFilter] = useState<'Pending' | 'Approved' | 'Rejected' | 'ALL'>(defaultStatusFilter);
   const [voucherTypeFilter, setVoucherTypeFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
@@ -467,6 +468,7 @@ export const BulkVoucherAndAccessManager: React.FC<{
   const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
   const [isVoucherEditorOpen, setIsVoucherEditorOpen] = useState(false);
   const [voucherToDeleteSingle, setVoucherToDeleteSingle] = useState<any | null>(null);
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     installGlobalVisibilityHook();
@@ -640,8 +642,17 @@ export const BulkVoucherAndAccessManager: React.FC<{
 
   const handleBulkDeleteSelected = () => {
     if (selectedVouchers.length === 0) return;
-    const count = selectedVouchers.length;
-    selectedVouchers.forEach((v) => {
+    setIsBulkDeleteConfirmOpen(true);
+  };
+
+  const confirmBulkDeleteSelected = () => {
+    if (selectedVouchers.length === 0) {
+      setIsBulkDeleteConfirmOpen(false);
+      return;
+    }
+    const targets = [...selectedVouchers];
+    const count = targets.length;
+    targets.forEach((v) => {
       const c = campuses.find((cmp) => cmp.id === v.campusId);
       softDeleteRecord({
         recordType: 'VOUCHER',
@@ -658,9 +669,18 @@ export const BulkVoucherAndAccessManager: React.FC<{
         deletionReason: 'Deleted via Voucher Audit Ledger (Moved to Global Recycle Bin)',
       });
       deleteTransaction(v.id);
+      logActivity(
+        'DELETE_VOUCHER',
+        'Voucher',
+        v.id,
+        `Voucher #${v.voucherNo} deleted by ${currentUser?.name || 'Administrator'} and archived to Global Recycle Bin`,
+        v.campusId,
+        v.totalDebit
+      );
     });
+    setIsBulkDeleteConfirmOpen(false);
     setSelectedIds([]);
-    showToast('reject', `Moved ${count} voucher(s) to the Global Recycle Bin (recoverable).`);
+    showToast('reject', `Deleted ${count} voucher(s) and moved to Global Recycle Bin (recoverable).`);
   };
 
   const handleDeleteSingleVoucher = (v: any) => {
@@ -699,16 +719,6 @@ export const BulkVoucherAndAccessManager: React.FC<{
       v.totalDebit
     );
     showToast('reject', `Voucher #${v.voucherNo} deleted and moved to Global Recycle Bin (recoverable).`);
-  };
-
-  const handleDeleteAllPreviousEntriesAndCampuses = async () => {
-    clearAllData();
-    await wipeAllCloudCollectionsToZero();
-    setSelectedIds([]);
-    showToast(
-      'info',
-      'Deleted all previous entries, vouchers, petty cash records, and campuses (Reset to 0).'
-    );
   };
 
   const pendingVouchersInCampus = useMemo(
@@ -1113,6 +1123,20 @@ export const BulkVoucherAndAccessManager: React.FC<{
     );
   };
 
+  if (!currentUser || !getVerifiedProfile()) {
+    return (
+      <section className="max-w-3xl mx-auto px-4 sm:px-6 my-8 print:hidden">
+        <div className="bg-slate-900 border border-rose-800/60 rounded-2xl p-6 text-center text-slate-200">
+          <Lock className="w-7 h-7 text-rose-400 mx-auto mb-2" />
+          <h3 className="text-sm font-black text-white">Authentication Required</h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Sign in with a verified account to access Ledger Batch Governance &amp; Access Control.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 mb-6 print:hidden">
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -1352,16 +1376,16 @@ export const BulkVoucherAndAccessManager: React.FC<{
                   )}
                 </div>
 
-                {/* Campus Selector */}
+                {/* Campus Selector (Relevant Campus or Consolidated All Campuses) */}
                 <div className="md:col-span-3 flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-2">
                   <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                   <select
                     value={currentCampusId}
                     onChange={(e) => setCurrentCampusId(e.target.value)}
                     className="w-full bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
-                    aria-label="Filter by Campus"
+                    aria-label="Filter by Relevant Campus or Consolidated All Campuses"
                   >
-                    <option value="all">All Campuses ({campuses.length})</option>
+                    <option value="all">Consolidated — All Campuses ({campuses.length})</option>
                     {campuses.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name} ({c.code})
@@ -2563,6 +2587,44 @@ export const BulkVoucherAndAccessManager: React.FC<{
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Confirm &amp; Delete Voucher</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* IN-APP BULK VOUCHER DELETE CONFIRMATION MODAL */}
+      {isBulkDeleteConfirmOpen && selectedVouchers.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-rose-800/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white">Delete {selectedVouchers.length} Selected Voucher(s)</h4>
+                <p className="text-xs text-rose-300 font-bold mt-0.5 font-mono">
+                  Batch Debit Total: {formatPKR(selectedTotalDebit)}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                  All {selectedVouchers.length} selected voucher entries will be removed from the active ledger and safely archived to the Global Recycle Bin for recovery.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteConfirmOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmBulkDeleteSelected}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm &amp; Delete ({selectedVouchers.length})</span>
               </button>
             </div>
           </div>

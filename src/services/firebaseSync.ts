@@ -28,6 +28,16 @@ import {
   RealtimeAutoSyncScheduler,
   type SyncFingerprintInput,
 } from './realtimeSyncScheduler';
+import {
+  OFFICIAL_157_CHART_OF_ACCOUNTS,
+  mergeOfficial157ChartOfAccounts,
+} from '../data/officialChartOfAccounts157';
+import { clearAllRecentVoucherSearches } from './recentSearchesIndexedDb';
+import {
+  clearOperationalLocalStorage,
+  importAll157ChartOfAccountsToCloud,
+  wipeOperationalDataPreserveCoreStructure,
+} from './productionResetService';
 
 export type SyncStatus =
   | 'connecting'
@@ -66,6 +76,7 @@ let autoSyncEnabled = true;
 let syncScheduler: RealtimeAutoSyncScheduler | null = null;
 let lastAppliedCloudUpdatedAt = '';
 let lastOwnWriteStamp = 0;
+let lastSeenDataResetEpoch = 0;
 let activeTrashIds = new Set<string>();
 let instantBroadcastChannel: BroadcastChannel | null = null;
 
@@ -679,6 +690,14 @@ export function initFirebaseCloudSync() {
     window.addEventListener('aplus-force-cloud-sync', () => {
       void triggerInstantCloudSyncAndLoad();
     });
+    window.addEventListener('aplus-coa-imported', () => {
+      if (auth.currentUser) {
+        void importAll157ChartOfAccountsToCloud({
+          clientId: getEffectiveClientId(),
+          includeAllOrganizations: false,
+        }).catch(() => {});
+      }
+    });
   }
 
   window.addEventListener('aplus-logout', () => {
@@ -788,8 +807,8 @@ async function flushMasterSnapshotToCloud(state: any): Promise<void> {
       }
     }
 
-    for (const a of (state?.accountHeads || []).slice(0, 35)) {
-      if (a?.id && opCount < 155) {
+    for (const a of (state?.accountHeads || []).slice(0, 220)) {
+      if (a?.id && opCount < 450) {
         batch.set(
           doc(db, 'organizations', clientId, 'account_heads', String(a.id)),
           { ...sanitizeForFirestore(a), clientId, updatedAt: nowIso },
@@ -833,17 +852,29 @@ async function pullDeltaCloudUpdate(): Promise<void> {
 
     const data = snap.data();
     const remoteUpdatedAt = String(data?.updatedAt || '');
+    const remoteResetEpoch = Number(data?.dataResetEpoch || 0);
+    const hasNewResetEpoch = remoteResetEpoch > lastSeenDataResetEpoch;
     const withinOwnEchoWindow = Date.now() - lastOwnWriteStamp < 1200;
 
     if (
-      remoteUpdatedAt &&
-      remoteUpdatedAt !== lastAppliedCloudUpdatedAt &&
-      remoteUpdatedAt > lastAppliedCloudUpdatedAt &&
+      (hasNewResetEpoch ||
+        (remoteUpdatedAt &&
+          remoteUpdatedAt !== lastAppliedCloudUpdatedAt &&
+          remoteUpdatedAt > lastAppliedCloudUpdatedAt)) &&
       !withinOwnEchoWindow
     ) {
       const cur = window.__APLUS_GET_CURRENT_STATE__?.();
       if (cur) {
-        lastAppliedCloudUpdatedAt = remoteUpdatedAt;
+        lastAppliedCloudUpdatedAt = remoteUpdatedAt || nowIso;
+        if (hasNewResetEpoch) {
+          lastSeenDataResetEpoch = remoteResetEpoch;
+          clearOperationalLocalStorage();
+          void clearAllRecentVoucherSearches();
+        }
+        const rawIncomingHeads =
+          Array.isArray(data.accountHeads) && data.accountHeads.length > 0
+            ? data.accountHeads
+            : cur.accountHeads;
         const hydrated = {
           ...cur,
           transactions: Array.isArray(data.transactions) ? data.transactions : cur.transactions,
@@ -851,10 +882,15 @@ async function pullDeltaCloudUpdate(): Promise<void> {
           pettyCashTransactions: Array.isArray(data.pettyCashTransactions)
             ? data.pettyCashTransactions
             : cur.pettyCashTransactions,
-          accountHeads:
-            Array.isArray(data.accountHeads) && data.accountHeads.length > 0
-              ? data.accountHeads
-              : cur.accountHeads,
+          accountHeads: mergeOfficial157ChartOfAccounts(rawIncomingHeads).merged,
+          activityLogs: Array.isArray(data.activityLogs) ? data.activityLogs : cur.activityLogs,
+          reconciledBankTxIds:
+            data.reconciledBankTxIds && typeof data.reconciledBankTxIds === 'object'
+              ? data.reconciledBankTxIds
+              : cur.reconciledBankTxIds,
+          backupSnapshots: Array.isArray(data.backupSnapshots)
+            ? data.backupSnapshots
+            : cur.backupSnapshots,
           orgSettings: data.orgSettings || cur.orgSettings,
           periods: Array.isArray(data.periods) && data.periods.length > 0 ? data.periods : cur.periods,
         };
@@ -868,7 +904,9 @@ async function pullDeltaCloudUpdate(): Promise<void> {
           status: 'saved_to_cloud',
           lastSyncedAt: nowIso,
           lastCloudLoadAt: nowIso,
-          message: `Auto-loaded latest cloud update (${hydrated.transactions?.length || 0} vouchers)`,
+          message: hasNewResetEpoch
+            ? 'Production zero-data reset synced from cloud (Organizations, Main Campuses & Global Users preserved)'
+            : `Auto-loaded latest cloud update (${hydrated.transactions?.length || 0} vouchers)`,
         });
         return;
       }
@@ -1075,11 +1113,18 @@ async function startCrossBrowserRealtimeSync() {
       ? cloudMasterData.pettyCashTransactions
       : localState.pettyCashTransactions || [];
 
-    const finalCOA = cloudCOA.length > 0
+    const rawFinalCOA = cloudCOA.length > 0
       ? cloudCOA
       : Array.isArray(cloudMasterData?.accountHeads) && cloudMasterData.accountHeads.length > 0
       ? cloudMasterData.accountHeads
       : localState.accountHeads || [];
+
+    const coaMergeResult = mergeOfficial157ChartOfAccounts(rawFinalCOA);
+    const finalCOA = coaMergeResult.merged;
+
+    if (cloudMasterData?.dataResetEpoch) {
+      lastSeenDataResetEpoch = Number(cloudMasterData.dataResetEpoch) || 0;
+    }
 
     const finalUsers = mergeUsersWithCloud(cloudGlobalUsers, localState.users || []);
 
@@ -1090,6 +1135,16 @@ async function startCrossBrowserRealtimeSync() {
       pettyCashTransactions: finalPettyCash,
       accountHeads: finalCOA,
       users: finalUsers,
+      activityLogs: Array.isArray(cloudMasterData?.activityLogs)
+        ? cloudMasterData.activityLogs
+        : localState.activityLogs || [],
+      reconciledBankTxIds:
+        cloudMasterData?.reconciledBankTxIds && typeof cloudMasterData.reconciledBankTxIds === 'object'
+          ? cloudMasterData.reconciledBankTxIds
+          : localState.reconciledBankTxIds || {},
+      backupSnapshots: Array.isArray(cloudMasterData?.backupSnapshots)
+        ? cloudMasterData.backupSnapshots
+        : localState.backupSnapshots || [],
       orgSettings: cloudMasterData?.orgSettings || localState.orgSettings,
       periods: cloudMasterData?.periods || localState.periods,
     };
@@ -1098,6 +1153,15 @@ async function startCrossBrowserRealtimeSync() {
     syncLocalUsersCache(finalUsers);
     dispatchGlobalUsersSyncedEvent(finalUsers);
     await saveSnapshotToIndexedDB(finalState, false);
+
+    // Backfill missing official 157 Chart of Accounts heads into Firestore if cloud had fewer than 157
+    if (cloudCOA.length < OFFICIAL_157_CHART_OF_ACCOUNTS.length && auth.currentUser) {
+      void importAll157ChartOfAccountsToCloud({
+        clientId,
+        includeAllOrganizations: false,
+        existingAccountHeads: finalCOA,
+      }).catch(() => {});
+    }
 
     cloudHydrated = true;
     window.__APLUS_MARK_CLOUD_READY__?.();
@@ -1113,7 +1177,7 @@ async function startCrossBrowserRealtimeSync() {
       lastCloudLoadAt: new Date().toISOString(),
       offlinePendingCount: 0,
       indexedDbCached: true,
-      message: `Auto-Sync Active (1s) · ${finalTransactions.length} vouchers · ${finalCampuses.length} campuses · ${finalUsers.length} users`,
+      message: `Auto-Sync Active (1s) · ${finalTransactions.length} vouchers · ${finalCampuses.length} campuses · ${finalCOA.length} COA · ${finalUsers.length} users`,
     });
 
     // 3. REAL-TIME ON-SNAPSHOT LISTENERS for cross-device & cross-terminal synchronization (<1s)
@@ -1134,8 +1198,11 @@ async function startCrossBrowserRealtimeSync() {
         if (!snap.exists()) return;
         const data = snap.data();
         if (!data) return;
+        const remoteResetEpoch = Number(data.dataResetEpoch || 0);
+        const hasNewResetEpoch = remoteResetEpoch > lastSeenDataResetEpoch;
         // Skip echo of our own immediate local write
         if (
+          !hasNewResetEpoch &&
           Date.now() - lastOwnWriteStamp < 1200 &&
           data.updatedAt === lastAppliedCloudUpdatedAt
         ) {
@@ -1144,8 +1211,17 @@ async function startCrossBrowserRealtimeSync() {
         if (data.updatedAt) {
           lastAppliedCloudUpdatedAt = String(data.updatedAt);
         }
+        if (hasNewResetEpoch) {
+          lastSeenDataResetEpoch = remoteResetEpoch;
+          clearOperationalLocalStorage();
+          void clearAllRecentVoucherSearches();
+        }
         const cur = window.__APLUS_GET_CURRENT_STATE__?.();
         if (cur) {
+          const rawHeads =
+            Array.isArray(data.accountHeads) && data.accountHeads.length > 0
+              ? data.accountHeads
+              : cur.accountHeads;
           const nextState = {
             ...cur,
             transactions: Array.isArray(data.transactions) ? data.transactions : cur.transactions,
@@ -1153,10 +1229,15 @@ async function startCrossBrowserRealtimeSync() {
             pettyCashTransactions: Array.isArray(data.pettyCashTransactions)
               ? data.pettyCashTransactions
               : cur.pettyCashTransactions,
-            accountHeads:
-              Array.isArray(data.accountHeads) && data.accountHeads.length > 0
-                ? data.accountHeads
-                : cur.accountHeads,
+            accountHeads: mergeOfficial157ChartOfAccounts(rawHeads).merged,
+            activityLogs: Array.isArray(data.activityLogs) ? data.activityLogs : cur.activityLogs,
+            reconciledBankTxIds:
+              data.reconciledBankTxIds && typeof data.reconciledBankTxIds === 'object'
+                ? data.reconciledBankTxIds
+                : cur.reconciledBankTxIds,
+            backupSnapshots: Array.isArray(data.backupSnapshots)
+              ? data.backupSnapshots
+              : cur.backupSnapshots,
             orgSettings: data.orgSettings || cur.orgSettings,
             periods: Array.isArray(data.periods) && data.periods.length > 0 ? data.periods : cur.periods,
           };
@@ -1169,7 +1250,9 @@ async function startCrossBrowserRealtimeSync() {
             status: 'saved_to_cloud',
             lastSyncedAt: new Date().toISOString(),
             lastCloudLoadAt: new Date().toISOString(),
-            message: 'Realtime update loaded from cloud datastore',
+            message: hasNewResetEpoch
+              ? 'Zero-data production reset synced across browsers'
+              : 'Realtime update loaded from cloud datastore',
           });
         }
       },
@@ -1257,7 +1340,8 @@ async function startCrossBrowserRealtimeSync() {
         if (updated.length > 0 || hasRemovals) {
           const cur = window.__APLUS_GET_CURRENT_STATE__?.();
           if (cur) {
-            const next = { ...cur, accountHeads: updated };
+            const mergedHeads = mergeOfficial157ChartOfAccounts(updated as any[]).merged;
+            const next = { ...cur, accountHeads: mergedHeads };
             window.__APLUS_HYDRATE_FROM_CLOUD__?.(next);
             syncScheduler?.markHydratedFromCloud({ ...next, schoolClients: getStoredSchoolClients() });
           }
@@ -1487,8 +1571,24 @@ export async function loadVisibilityConfigFromCloud(): Promise<any | null> {
 }
 
 export async function wipeAllCloudCollectionsToZero(): Promise<void> {
-  // Non-destructive safe guard: clearing cloud records is disabled in production
-  console.warn('wipeAllCloudCollectionsToZero prevented by durable production safeguard.');
+  lastOwnWriteStamp = Date.now();
+  const report = await wipeOperationalDataPreserveCoreStructure();
+  lastSeenDataResetEpoch = report.dataResetEpoch;
+  lastAppliedCloudUpdatedAt = report.executedAt;
+  const cur = window.__APLUS_GET_CURRENT_STATE__?.();
+  if (cur && syncScheduler) {
+    syncScheduler.markHydratedFromCloud({
+      ...cur,
+      schoolClients: getStoredSchoolClients(),
+    });
+  }
+  notify({
+    status: 'saved_to_cloud',
+    lastSyncedAt: report.executedAt,
+    lastCloudLoadAt: report.executedAt,
+    offlinePendingCount: 0,
+    message: `Production zero-data reset complete (${report.organizationsPreserved} orgs, ${report.mainCampusesPreserved} main campuses, ${report.globalUsersPreserved} global users preserved, ${report.accountHeadsImported} COA active)`,
+  });
 }
 
 export async function deleteCampusFromCloud(campusId: string): Promise<void> {

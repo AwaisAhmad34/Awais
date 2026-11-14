@@ -40,8 +40,8 @@ import {
   SchoolClientOrganization,
   PlatformSystemSettings,
   validateCampusHierarchy,
-  purgeAllProductionData,
   fetchSchoolClientsFromCloud,
+  getStoredSchoolClients,
 } from '../services/platformSiteAdminService';
 import { pushMasterCloudSnapshot, pullMasterCloudSnapshot } from '../services/firebaseSync';
 import { getStoredRecycleBinRecords } from '../services/globalRecoveryService';
@@ -50,6 +50,13 @@ import {
   CampusLoginActivity,
   clearCampusLoginActivities,
 } from '../services/campusLoginActivityService';
+import { OFFICIAL_157_CHART_OF_ACCOUNTS } from '../data/officialChartOfAccounts157';
+import {
+  importAll157ChartOfAccountsToCloud,
+  wipeOperationalDataPreserveCoreStructure,
+  isPreservedMainCampus,
+  type ZeroDataResetReport,
+} from '../services/productionResetService';
 
 // ============================================================================
 // 04: SUB-CAMPUSES & HIERARCHY TREE
@@ -308,26 +315,45 @@ export const PettyCashImprestView: React.FC<{
   pettyCashTransactions: PettyCashTransaction[];
   onUpdateCampus: (id: string, updates: Partial<Campus>) => void;
   triggerToast: (type: 'success' | 'error' | 'warning' | 'info', message: string) => void;
-}> = ({ campuses, pettyCashTransactions, onUpdateCampus, triggerToast }) => {
-  const [selectedCampusId, setSelectedCampusId] = useState<string>('all');
+  activeCampusScope?: string;
+  onChangeCampusScope?: (campusId: string) => void;
+}> = ({ campuses, pettyCashTransactions, onUpdateCampus, triggerToast, activeCampusScope, onChangeCampusScope }) => {
+  const [localCampusId, setLocalCampusId] = useState<string>(activeCampusScope || 'all');
+  const selectedCampusId = activeCampusScope !== undefined ? activeCampusScope : localCampusId;
+  const setSelectedCampusId = (id: string) => {
+    setLocalCampusId(id);
+    onChangeCampusScope?.(id);
+  };
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [editingFloatCampus, setEditingFloatCampus] = useState<Campus | null>(null);
   const [newFloatAmount, setNewFloatAmount] = useState<string>('');
 
+  const scopedCampuses = useMemo(
+    () => (selectedCampusId === 'all' ? campuses : campuses.filter((c) => c.id === selectedCampusId)),
+    [campuses, selectedCampusId]
+  );
+
+  const scopedPettyList = useMemo(
+    () =>
+      selectedCampusId === 'all'
+        ? pettyCashTransactions
+        : pettyCashTransactions.filter((pc) => pc.campusId === selectedCampusId),
+    [pettyCashTransactions, selectedCampusId]
+  );
+
   const totalNetworkFloat = useMemo(
-    () => campuses.reduce((sum, c) => sum + (c.pettyCashFloat || 35000), 0),
-    [campuses]
+    () => scopedCampuses.reduce((sum, c) => sum + (c.pettyCashFloat || 35000), 0),
+    [scopedCampuses]
   );
 
   const totalDisbursed = useMemo(
-    () => pettyCashTransactions.reduce((sum, pc) => sum + (Number(pc.amount) || 0), 0),
-    [pettyCashTransactions]
+    () => scopedPettyList.reduce((sum, pc) => sum + (Number(pc.amount) || 0), 0),
+    [scopedPettyList]
   );
 
   const filteredTransactions = useMemo(() => {
-    return pettyCashTransactions.filter((pc) => {
-      if (selectedCampusId !== 'all' && pc.campusId !== selectedCampusId) return false;
+    return scopedPettyList.filter((pc) => {
       if (categoryFilter !== 'all' && pc.category !== categoryFilter) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
@@ -340,7 +366,7 @@ export const PettyCashImprestView: React.FC<{
       }
       return true;
     });
-  }, [pettyCashTransactions, selectedCampusId, categoryFilter, search]);
+  }, [scopedPettyList, categoryFilter, search]);
 
   const handleSaveFloat = () => {
     if (!editingFloatCampus) return;
@@ -377,7 +403,9 @@ export const PettyCashImprestView: React.FC<{
           <div className="text-2xl font-black text-emerald-400 font-mono">
             PKR {totalNetworkFloat.toLocaleString()}
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">Across {campuses.length} Active Campuses</span>
+          <span className="text-[10px] text-slate-500 font-mono">
+            {selectedCampusId === 'all' ? `Consolidated — ${scopedCampuses.length} Active Campuses` : `Filtered Campus Scope`}
+          </span>
         </div>
 
         <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-1">
@@ -385,13 +413,13 @@ export const PettyCashImprestView: React.FC<{
           <div className="text-2xl font-black text-amber-400 font-mono">
             PKR {totalDisbursed.toLocaleString()}
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">{pettyCashTransactions.length} Total Receipts</span>
+          <span className="text-[10px] text-slate-500 font-mono">{scopedPettyList.length} Scoped Receipts</span>
         </div>
 
         <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-1">
           <span className="text-xs text-slate-400 font-bold uppercase">Estimated In-Drawer Float</span>
           <div className="text-2xl font-black text-white font-mono">
-            PKR {Math.max(0, totalNetworkFloat - (totalDisbursed % totalNetworkFloat)).toLocaleString()}
+            PKR {totalNetworkFloat > 0 ? Math.max(0, totalNetworkFloat - (totalDisbursed % totalNetworkFloat)).toLocaleString() : '0'}
           </div>
           <span className="text-[10px] text-emerald-400 font-mono">Safe Operational Threshold</span>
         </div>
@@ -415,7 +443,7 @@ export const PettyCashImprestView: React.FC<{
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60 text-[11px]">
-            {campuses.map((c) => (
+            {scopedCampuses.map((c) => (
               <tr key={c.id} className="hover:bg-slate-900/40 transition-colors">
                 <td className="py-2.5 px-4 font-mono font-bold text-indigo-300">{c.code}</td>
                 <td className="py-2.5 px-4 font-bold text-white">{c.name}</td>
@@ -497,10 +525,10 @@ export const PettyCashImprestView: React.FC<{
               onChange={(e) => setSelectedCampusId(e.target.value)}
               className="px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white outline-none"
             >
-              <option value="all">All Campuses</option>
+              <option value="all">Consolidated — All Campuses</option>
               {campuses.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.code}
+                  {c.name} ({c.code})
                 </option>
               ))}
             </select>
@@ -550,16 +578,58 @@ export const DatabaseHubView: React.FC<{
   triggerToast: (type: 'success' | 'error' | 'warning' | 'info', message: string) => void;
 }> = ({ campuses, transactions, pettyCashTransactions, accountHeads, users, triggerToast }) => {
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isImportingCoa, setIsImportingCoa] = useState(false);
+  const [isResettingZeroData, setIsResettingZeroData] = useState(false);
+  const [confirmZeroResetModalOpen, setConfirmZeroResetModalOpen] = useState(false);
+  const [lastResetReport, setLastResetReport] = useState<ZeroDataResetReport | null>(null);
   const recycleCount = getStoredRecycleBinRecords().length;
+  const schoolClients = getStoredSchoolClients();
+  const mainCampusesCount = campuses.filter((c) => isPreservedMainCampus(c as any, schoolClients)).length;
+  const subCampusesCount = Math.max(0, campuses.length - mainCampusesCount);
 
   const collections = [
-    { name: 'campuses', count: campuses.length, description: 'Campus branches & parent-child hierarchy nodes' },
+    { name: 'organizations', count: schoolClients.length, description: 'Registered School Client Organizations (Preserved on Reset)' },
+    { name: 'campuses (main / total)', count: campuses.length, description: `${mainCampusesCount} Main Campus(es) preserved · ${subCampusesCount} Sub-Campus(es)` },
     { name: 'vouchers', count: transactions.length, description: 'General ledger transactions (BPV, BRV, CPV, CRV, JV)' },
     { name: 'petty_cash', count: pettyCashTransactions.length, description: 'Imprest petty cash disbursements and float slips' },
-    { name: 'account_heads', count: accountHeads.length, description: 'Chart of Accounts master heads and codes' },
-    { name: 'users', count: users.length, description: 'Multi-tenant credential records and role clearances' },
+    { name: 'account_heads', count: accountHeads.length, description: `Chart of Accounts master heads (${OFFICIAL_157_CHART_OF_ACCOUNTS.length} Official Standard)` },
+    { name: 'global_users', count: users.length, description: 'Multi-tenant credential records & global logins (Preserved on Reset)' },
     { name: 'global_recycle_bin', count: recycleCount, description: 'Soft-deleted records available for forensic restoration' },
   ];
+
+  const handleImportAll157Coa = async () => {
+    setIsImportingCoa(true);
+    try {
+      const res = await importAll157ChartOfAccountsToCloud({
+        includeAllOrganizations: true,
+      });
+      triggerToast(
+        'success',
+        `Imported all ${res.totalOfficial} Official Chart of Accounts (${res.headsCount} total active, synced across ${res.syncedOrganizations || 1} org(s)).`
+      );
+    } catch (err: any) {
+      triggerToast('error', `COA import failed: ${err?.message || 'Unexpected error'}`);
+    } finally {
+      setIsImportingCoa(false);
+    }
+  };
+
+  const handleExecuteSelectiveZeroDataReset = async () => {
+    setIsResettingZeroData(true);
+    try {
+      const report = await wipeOperationalDataPreserveCoreStructure();
+      setLastResetReport(report);
+      setConfirmZeroResetModalOpen(false);
+      triggerToast(
+        'success',
+        `Production Zero-Data Reset complete! Kept ${report.organizationsPreserved} Organization(s), ${report.mainCampusesPreserved} Main Campus(es), ${report.globalUsersPreserved} Global User(s), and ${report.accountHeadsImported} Official COA heads.`
+      );
+    } catch (err: any) {
+      triggerToast('error', `Production zero-data reset failed: ${err?.message || 'Unexpected error'}`);
+    } finally {
+      setIsResettingZeroData(false);
+    }
+  };
 
   const handleTriggerCloudPush = async () => {
     setIsSyncing(true);
@@ -630,11 +700,21 @@ export const DatabaseHubView: React.FC<{
             <span>Database Management Hub & Firestore Engine</span>
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Cloud Firestore document statistics, indexed collections, and dynamic cross-browser synchronization utilities.
+            Cloud Firestore document statistics, 157 Chart of Accounts synchronization, and production zero-data preparation.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleImportAll157Coa}
+            disabled={isImportingCoa}
+            className="px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+            title="Import & sync all 157 Official Chart of Accounts heads to Cloud Firestore"
+          >
+            <Layers className={`w-4 h-4 ${isImportingCoa ? 'animate-spin' : ''}`} />
+            <span>{isImportingCoa ? 'Importing 157 COA...' : 'Import All 157 COA'}</span>
+          </button>
           <button
             type="button"
             onClick={handleReloadCloudData}
@@ -683,6 +763,101 @@ export const DatabaseHubView: React.FC<{
           </div>
         ))}
       </div>
+
+      {/* Selective Production Zero-Data Reset Card */}
+      <div className="p-5 rounded-2xl bg-rose-950/20 border border-rose-800/60 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-black text-rose-200 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
+              <span>Production Zero-Data Selective Reset</span>
+            </h4>
+            <p className="text-xs text-slate-300 mt-1">
+              Prepares the platform at 0 operational data for production launch. Deletes all vouchers, petty cash, sub-campuses, trash, audit logs, reconciliations, and search history while strictly preserving Organizations, Main Campuses, Global Users, and all 157 Official Chart of Accounts (Rs. 0 balances).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfirmZeroResetModalOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-2 shrink-0 cursor-pointer shadow-sm"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Reset Operational Data to 0</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/50 space-y-1">
+            <div className="font-bold text-emerald-300 uppercase tracking-wider text-[10px]">
+              Ignored / Strictly Preserved
+            </div>
+            <ul className="text-slate-300 space-y-1 text-[11px]">
+              <li>• Organizations: {schoolClients.length} registered client(s)</li>
+              <li>• Main Campuses: {mainCampusesCount} primary campus(es) (float restored)</li>
+              <li>• Global Users: {users.length} synchronized user account(s)</li>
+              <li>• Official Chart of Accounts: {OFFICIAL_157_CHART_OF_ACCOUNTS.length} heads (Rs. 0 balance)</li>
+            </ul>
+          </div>
+          <div className="p-3.5 rounded-xl bg-rose-950/30 border border-rose-800/50 space-y-1">
+            <div className="font-bold text-rose-300 uppercase tracking-wider text-[10px]">
+              Cleared to 0 Data (Cloud + Local + All Browsers)
+            </div>
+            <ul className="text-slate-300 space-y-1 text-[11px]">
+              <li>• Vouchers ({transactions.length}) & Petty Cash entries ({pettyCashTransactions.length})</li>
+              <li>• Sub-Campuses ({subCampusesCount}) & sub-campus credentials</li>
+              <li>• Global Recycle Bin ({recycleCount}), Audit Logs & Reconciliations</li>
+              <li>• IndexedDB Offline Queue & Recent Voucher Searches</li>
+            </ul>
+          </div>
+        </div>
+
+        {lastResetReport && (
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-emerald-700/60 text-xs text-emerald-300 font-mono">
+            Last Selective Reset ({new Date(lastResetReport.executedAt).toLocaleString()}): Preserved{' '}
+            {lastResetReport.organizationsPreserved} orgs, {lastResetReport.mainCampusesPreserved} main campuses,{' '}
+            {lastResetReport.globalUsersPreserved} global users, {lastResetReport.accountHeadsImported} COA. Cleared{' '}
+            {lastResetReport.vouchersDeleted} vouchers, {lastResetReport.pettyCashDeleted} petty cash,{' '}
+            {lastResetReport.subCampusesDeleted} sub-campuses.
+          </div>
+        )}
+      </div>
+
+      {/* Inline Confirmation Modal for Selective Zero-Data Reset */}
+      {confirmZeroResetModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-rose-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-2 text-rose-400 font-black text-base">
+              <AlertTriangle className="w-5 h-5" />
+              <span>Confirm Production Zero-Data Reset</span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              This will permanently wipe all vouchers, petty cash entries, sub-campuses, recycle bin records, reconciliations, and search history across Cloud Firestore and all connected browsers.
+            </p>
+            <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-800 text-xs text-emerald-200">
+              Organizations, Main Campuses, Global Users, and all 157 Chart of Accounts heads will remain intact.
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isResettingZeroData}
+                onClick={() => setConfirmZeroResetModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isResettingZeroData}
+                onClick={handleExecuteSelectiveZeroDataReset}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isResettingZeroData ? 'Wiping Operational Data...' : 'Confirm Wipe to 0 Data'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Persistence Architecture Info */}
       <div className="p-5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
@@ -787,11 +962,21 @@ export const OfflineQueueView: React.FC<{
 }> = ({ triggerToast }) => {
   const [isSimulatingOffline, setIsSimulatingOffline] = useState(false);
 
+  const formatStorageSize = (keyName: string): string => {
+    if (typeof window === 'undefined' || !window.localStorage) return '0.0 KB';
+    try {
+      const val = localStorage.getItem(keyName) || '';
+      return `${(new Blob([val]).size / 1024).toFixed(1)} KB`;
+    } catch {
+      return '0.0 KB';
+    }
+  };
+
   const keys = [
-    { name: 'aplus_global_recycle_bin_v2', desc: 'Global soft-deleted vouchers & items', size: '14.2 KB' },
-    { name: 'aplus_recovery_audit_trail_v2', desc: 'Audit events for restorations & purges', size: '6.8 KB' },
-    { name: 'aplus_campus_credentials_v1', desc: 'Dynamic authentication hashes', size: '3.1 KB' },
-    { name: 'aplus_approval_matrix_v1', desc: 'Campus voucher authorization limits', size: '4.5 KB' },
+    { name: 'aplus_global_recycle_bin_v2', desc: 'Global soft-deleted vouchers & items', size: formatStorageSize('aplus_global_recycle_bin_v2') },
+    { name: 'aplus_recovery_audit_trail_v2', desc: 'Audit events for restorations & purges', size: formatStorageSize('aplus_recovery_audit_trail_v2') },
+    { name: 'aplus_dynamic_campus_credentials_v1', desc: 'Dynamic campus credentials cache', size: formatStorageSize('aplus_dynamic_campus_credentials_v1') },
+    { name: 'ams_account_heads_v8_157_grouped_coa', desc: 'Official 157 Chart of Accounts library', size: formatStorageSize('ams_account_heads_v8_157_grouped_coa') },
   ];
 
   return (
@@ -918,12 +1103,13 @@ export const SecuritySessionsView: React.FC<{
     });
   }, [loginLogs, campusFilter, statusFilter, searchLog]);
 
+  const [confirmClearLogs, setConfirmClearLogs] = useState(false);
+
   const handleClearActivities = () => {
-    if (window.confirm('Clear all stored campus login activity history?')) {
-      clearCampusLoginActivities();
-      setLoginLogs([]);
-      triggerToast('info', 'Campus login activity history cleared.');
-    }
+    clearCampusLoginActivities();
+    setLoginLogs([]);
+    setConfirmClearLogs(false);
+    triggerToast('info', 'Campus login activity history cleared.');
   };
 
   const handleRefreshActivities = () => {
@@ -1089,14 +1275,32 @@ export const SecuritySessionsView: React.FC<{
               <option value="locked">Locked Out</option>
             </select>
 
-            {loginLogs.length > 0 && (
+            {loginLogs.length > 0 && !confirmClearLogs && (
               <button
                 type="button"
-                onClick={handleClearActivities}
+                onClick={() => setConfirmClearLogs(true)}
                 className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-rose-950 text-slate-400 hover:text-rose-300 text-xs font-semibold border border-slate-800 hover:border-rose-800 transition-colors cursor-pointer"
               >
                 Clear Log
               </button>
+            )}
+            {loginLogs.length > 0 && confirmClearLogs && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleClearActivities}
+                  className="px-2.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer"
+                >
+                  Confirm Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearLogs(false)}
+                  className="px-2 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
           </div>
         </div>

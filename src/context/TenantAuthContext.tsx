@@ -16,6 +16,17 @@ export const TenantAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const { currentUser, isSuperAdmin, currentCampusId, campuses } = useAccounting();
 
   const value = useMemo<TenantAuthContextType>(() => {
+    if (!currentUser) {
+      return {
+        platformRole: 'accountant',
+        activeCampusId: null,
+        activeCampusNode: null,
+        isSuperAdmin: false,
+        isCampusAdmin: false,
+        campusName: 'Authentication Required',
+      };
+    }
+
     const isSuper = Boolean(isSuperAdmin || currentUser?.isSuperAdmin || currentUser?.role === 'super_admin');
     const role: TenantAuthContextType['platformRole'] = isSuper
       ? 'super_admin'
@@ -60,12 +71,12 @@ export function useTenantAuth(): TenantAuthContextType {
   const context = useContext(TenantAuthContext);
   if (!context) {
     return {
-      platformRole: 'super_admin',
+      platformRole: 'accountant',
       activeCampusId: null,
       activeCampusNode: null,
-      isSuperAdmin: true,
+      isSuperAdmin: false,
       isCampusAdmin: false,
-      campusName: 'All Campuses (Consolidated)',
+      campusName: 'Authentication Required',
     };
   }
   return context;

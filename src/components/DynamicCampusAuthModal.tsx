@@ -43,6 +43,7 @@ import {
 } from '../services/campusAuthSync';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
+import { getVerifiedProfile } from '../services/secureAuthentication';
 
 interface DynamicCampusAuthModalProps {
   isOpen: boolean;
@@ -545,7 +546,7 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
     showToast('success', 'Authentication slips generated & copied to clipboard!');
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !currentUser || !getVerifiedProfile()) return null;
 
   if (!isCampusSuperAdmin) {
     return (

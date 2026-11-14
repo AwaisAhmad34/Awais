@@ -27,6 +27,7 @@ import {
   pushMasterCloudSnapshot,
   pullMasterCloudSnapshot,
 } from '../services/firebaseSync';
+import { importAll157ChartOfAccountsToCloud } from '../services/productionResetService';
 
 interface SuperAdminImportModalProps {
   isOpen: boolean;
@@ -716,17 +717,28 @@ export const SuperAdminImportModal: React.FC<SuperAdminImportModalProps> = ({
                     </p>
                   </div>
                   <button
-                    onClick={() => {
-                      importOfficialAccountsHeads();
-                      showStatus(
-                        'success',
-                        '157 Official Institutional PDF Account Heads synchronized successfully!'
-                      );
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        importOfficialAccountsHeads();
+                        const res = await importAll157ChartOfAccountsToCloud({
+                          includeAllOrganizations: false,
+                        });
+                        showStatus(
+                          'success',
+                          `All ${res.totalOfficial} Official Chart of Accounts imported & synchronized to Firestore (${res.headsCount} active heads)!`
+                        );
+                      } catch (err: any) {
+                        showStatus('error', err?.message || 'Could not sync 157 Chart of Accounts to cloud.');
+                      } finally {
+                        setBusy(false);
+                      }
                     }}
-                    className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                    className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Sync 157 Official Heads Now</span>
+                    <span>{busy ? 'Importing 157 Heads...' : 'Sync 157 Official Heads Now'}</span>
                   </button>
                 </div>
 

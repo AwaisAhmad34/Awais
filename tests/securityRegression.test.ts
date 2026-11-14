@@ -77,9 +77,42 @@ test('financial record filters honor a specific campus', () => {
   assert.throws(() => repo.updateFinancialRecord(client, 'r1', { campusId: 'b-main' }));
 });
 
+function createSyntheticDeletedVoucher(): any {
+  return {
+    id: 'trash-test-voucher-1',
+    recordType: 'VOUCHER',
+    campusId: 'a-main',
+    campusName: 'Alpha Main Campus',
+    campusCode: 'A',
+    identifier: 'BPV-TEST-001',
+    title: 'BPV - Test Supplier Payment',
+    date: '2026-10-21',
+    amount: 5000,
+    deletedAt: '2026-10-22T10:00:00.000Z',
+    deletedByUserId: 'user-1',
+    deletedByUserName: 'Campus Accountant',
+    deletedByUserRole: 'Accountant',
+    deletionReason: 'Mistaken duplicate entry',
+    originalPayload: {
+      id: 'v-test-1',
+      voucherNo: 'BPV-TEST-001',
+      voucherType: 'BPV',
+      campusId: 'a-main',
+      date: '2026-10-21',
+      totalDebit: 5000,
+      totalCredit: 5000,
+      status: 'Pending',
+      entries: [
+        { accountCode: '500-1-01', accountName: 'Staff Salaries', debit: 5000, credit: 0 },
+        { accountCode: '100-4-03', accountName: 'Bank Account', debit: 0, credit: 5000 },
+      ],
+    },
+  };
+}
+
 test('recovery blocks missing account dependencies, non-finite totals and same-campus duplicates', async () => {
-  const { validateRestorePreconditions, INITIAL_SOFT_DELETED_RECORDS } = await import('../src/services/globalRecoveryService');
-  const record = structuredClone(INITIAL_SOFT_DELETED_RECORDS[0]);
+  const { validateRestorePreconditions } = await import('../src/services/globalRecoveryService');
+  const record = createSyntheticDeletedVoucher();
   const context: any = {
     activeTransactions: [], activePettyCash: [],
     activeAccountHeads: [], activeCampuses: [{ id: record.campusId }],
@@ -97,10 +130,10 @@ test('recovery blocks missing account dependencies, non-finite totals and same-c
 });
 
 test('recovery override cannot bypass missing account dependencies', async () => {
-  const { executeRecordRestore, INITIAL_SOFT_DELETED_RECORDS, RECYCLE_BIN_STORAGE_KEY } = await import('../src/services/globalRecoveryService');
+  const { executeRecordRestore, RECYCLE_BIN_STORAGE_KEY } = await import('../src/services/globalRecoveryService');
   const previousWindow = (globalThis as any).window;
   const previousStorage = (globalThis as any).localStorage;
-  const record = structuredClone(INITIAL_SOFT_DELETED_RECORDS[0]);
+  const record = createSyntheticDeletedVoucher();
   (globalThis as any).window = {};
   (globalThis as any).localStorage = { getItem: (key: string) => key === RECYCLE_BIN_STORAGE_KEY ? JSON.stringify([record]) : null };
   try {
@@ -118,8 +151,8 @@ test('recovery override cannot bypass missing account dependencies', async () =>
 });
 
 test('a deleted campus can be restored once its parent exists', async () => {
-  const { validateRestorePreconditions, INITIAL_SOFT_DELETED_RECORDS } = await import('../src/services/globalRecoveryService');
-  const record: any = { ...structuredClone(INITIAL_SOFT_DELETED_RECORDS[0]), recordType: 'CAMPUS', campusId: 'deleted-campus', originalPayload: { id: 'deleted-campus', code: 'RESTORE', parentCampusId: 'parent' } };
+  const { validateRestorePreconditions } = await import('../src/services/globalRecoveryService');
+  const record: any = { ...createSyntheticDeletedVoucher(), recordType: 'CAMPUS', campusId: 'deleted-campus', originalPayload: { id: 'deleted-campus', code: 'RESTORE', parentCampusId: 'parent' } };
   const context: any = { activeTransactions: [], activePettyCash: [], activeAccountHeads: [], activeCampuses: [] };
   assert.equal(validateRestorePreconditions(record, context).canRestoreSafely, false);
   context.activeCampuses = [{ id: 'parent', code: 'PARENT' }];
