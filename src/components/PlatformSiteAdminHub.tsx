@@ -363,7 +363,11 @@ export const PlatformSiteAdminHub: React.FC<{
     window.addEventListener('aplus-global-users-synced', handleGlobalUsersSyncedEvent);
 
     fetchGlobalUsersFromCloud()
-      .then((cloudUsers) => applyCloudUsers(cloudUsers))
+      .then((cloudUsers) => {
+        if (Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+          applyCloudUsers(cloudUsers);
+        }
+      })
       .catch(() => {});
 
     const unsubUsers = subscribeToGlobalUsersFromCloud((cloudUsers) => {

@@ -1,3 +1,4 @@
+import { onAuthStateChanged } from 'firebase/auth';
 import { Campus } from '../core/aplusEngine';
 import { auth, db } from '../firebase';
 import { provisionGlobalUserAccount } from './globalUserSyncService';
@@ -36,6 +37,7 @@ const LOCAL_STORAGE_KEY = 'aplus_dynamic_campus_credentials_v1';
 const SYNC_SUBSCRIBERS = new Set<(creds: CampusCredential[]) => void>();
 let cachedCredentials: CampusCredential[] = [];
 let firestoreListenerActive = false;
+let unsubCampusCredSnapshot: (() => void) | null = null;
 
 // Helpers to generate dynamic alphanumeric passwords
 export function generateDynamicPassword(campusCode: string = 'AP'): string {
@@ -290,17 +292,42 @@ export function subscribeToCloudCampusCredentials(
 
   if (!firestoreListenerActive) {
     firestoreListenerActive = true;
+    const attachCredsListener = () => {
+      if (unsubCampusCredSnapshot || !auth.currentUser) return;
+      try {
+        unsubCampusCredSnapshot = onSnapshot(
+          collection(db, 'campus_credentials'),
+          (snap) => {
+            const list = snap.docs.map((d) => d.data() as CampusCredential);
+            saveLocalStoredCampusCredentials(list);
+          },
+          (error) => {
+            if (!auth.currentUser) {
+              if (unsubCampusCredSnapshot) {
+                unsubCampusCredSnapshot();
+                unsubCampusCredSnapshot = null;
+              }
+              return;
+            }
+            console.warn('Firestore campus_credentials onSnapshot listener error:', error);
+          }
+        );
+      } catch {}
+    };
+
+    if (auth.currentUser) {
+      attachCredsListener();
+    }
+
     try {
-      onSnapshot(
-        collection(db, 'campus_credentials'),
-        (snap) => {
-          const list = snap.docs.map((d) => d.data() as CampusCredential);
-          saveLocalStoredCampusCredentials(list);
-        },
-        (error) => {
-          console.warn('Firestore campus_credentials onSnapshot listener error:', error);
+      onAuthStateChanged(auth, (firebaseUser) => {
+        if (firebaseUser) {
+          attachCredsListener();
+        } else if (unsubCampusCredSnapshot) {
+          unsubCampusCredSnapshot();
+          unsubCampusCredSnapshot = null;
         }
-      );
+      });
     } catch {}
   }
 

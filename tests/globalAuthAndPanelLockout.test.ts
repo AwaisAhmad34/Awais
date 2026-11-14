@@ -110,3 +110,30 @@ test('Site Owner panel exposes Relevant Campus & Consolidated Campus switcher an
   assert.ok(engine.includes('window.__APLUS_FIRESTORE_API__?.deleteVoucher?.(e)'));
 });
 
+test('protected Firestore listeners and global_users queries strictly gate on auth state and detach on sign-out', () => {
+  const globalSync = readSource('src/services/globalUserSyncService.ts');
+  assert.ok(globalSync.includes('onAuthStateChanged(auth,'));
+  const findFn = globalSync.slice(globalSync.indexOf('export async function findGlobalUserInCloudByEmailOrUid'));
+  assert.ok(findFn.startsWith('export async function findGlobalUserInCloudByEmailOrUid'));
+  assert.ok(findFn.slice(0, 220).includes('if (!auth.currentUser) return null;'));
+
+  const subFn = globalSync.slice(
+    globalSync.indexOf('export function subscribeToGlobalUsersFromCloud'),
+    globalSync.indexOf('export async function deleteGlobalUserFromCloud')
+  );
+  assert.ok(subFn.includes('if (disposed || unsubSnapshot || !auth.currentUser) return;'));
+  assert.ok(subFn.includes('if (disposed || !auth.currentUser) {'));
+
+  const firebaseSync = readSource('src/services/firebaseSync.ts');
+  assert.ok(firebaseSync.includes('onAuthStateChanged(auth, (firebaseUser) => {'));
+  assert.ok(firebaseSync.includes('cleanupSubscriptions();'));
+
+  const campusAuthSync = readSource('src/services/campusAuthSync.ts');
+  assert.ok(campusAuthSync.includes('onAuthStateChanged(auth, (firebaseUser) => {'));
+  assert.ok(campusAuthSync.includes('if (unsubCampusCredSnapshot || !auth.currentUser) return;'));
+
+  const approvalMatrix = readSource('src/services/approvalMatrixService.ts');
+  assert.ok(approvalMatrix.includes('onAuthStateChanged(auth, (firebaseUser) => {'));
+  assert.ok(approvalMatrix.includes('if (disposed || unsubscribeFirestore || !auth.currentUser) return;'));
+});
+

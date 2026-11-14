@@ -1,5 +1,6 @@
+import { onAuthStateChanged } from 'firebase/auth';
 import { collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 
 export type CampusHierarchyTier =
   | 'level_1_platform_admin'
@@ -213,30 +214,72 @@ export function subscribeApprovalMatrixConfig(
   SUBSCRIBERS.add(callback);
   callback(getStoredApprovalMatrixConfig());
 
-  // Listen to Firestore updates in real-time
+  // Listen to Firestore updates in real-time strictly when authenticated
+  let disposed = false;
   let unsubscribeFirestore: (() => void) | null = null;
-  try {
-    const ref = doc(db, 'system_configs', 'approval_matrix');
-    unsubscribeFirestore = onSnapshot(
-      ref,
-      (snap) => {
-        if (snap.exists()) {
-          const remote = snap.data() as ApprovalMatrixConfig;
-          if (remote && Array.isArray(remote.roleThresholds)) {
-            saveStoredApprovalMatrixConfig(remote, false);
-            callback(remote);
+  let unsubscribeAuth: (() => void) | null = null;
+
+  const detachFirestore = () => {
+    if (unsubscribeFirestore) {
+      try {
+        unsubscribeFirestore();
+      } catch {}
+      unsubscribeFirestore = null;
+    }
+  };
+
+  const attachFirestore = () => {
+    if (disposed || unsubscribeFirestore || !auth.currentUser) return;
+    try {
+      const ref = doc(db, 'system_configs', 'approval_matrix');
+      unsubscribeFirestore = onSnapshot(
+        ref,
+        (snap) => {
+          if (disposed) return;
+          if (snap.exists()) {
+            const remote = snap.data() as ApprovalMatrixConfig;
+            if (remote && Array.isArray(remote.roleThresholds)) {
+              saveStoredApprovalMatrixConfig(remote, false);
+              callback(remote);
+            }
           }
+        },
+        (err) => {
+          if (!auth.currentUser) {
+            detachFirestore();
+            return;
+          }
+          console.warn('Approval matrix Firestore subscription warning:', err);
         }
-      },
-      (err) => {
-        console.warn('Approval matrix Firestore subscription warning:', err);
+      );
+    } catch {}
+  };
+
+  if (auth.currentUser) {
+    attachFirestore();
+  }
+
+  try {
+    unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (disposed) return;
+      if (firebaseUser) {
+        attachFirestore();
+      } else {
+        detachFirestore();
       }
-    );
+    });
   } catch {}
 
   return () => {
+    disposed = true;
     SUBSCRIBERS.delete(callback);
-    if (unsubscribeFirestore) unsubscribeFirestore();
+    if (unsubscribeAuth) {
+      try {
+        unsubscribeAuth();
+      } catch {}
+      unsubscribeAuth = null;
+    }
+    detachFirestore();
   };
 }
 

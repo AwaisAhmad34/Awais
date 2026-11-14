@@ -5,6 +5,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  onAuthStateChanged,
   type Auth,
 } from 'firebase/auth';
 import {
@@ -666,6 +667,7 @@ export async function findGlobalUserInCloudByEmailOrUid(
   email: string,
   uid?: string
 ): Promise<GlobalUserRecord | null> {
+  if (!auth.currentUser) return null;
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail && !uid) return null;
 
@@ -721,22 +723,72 @@ export async function fetchGlobalUsersFromCloud(): Promise<GlobalUserRecord[]> {
 export function subscribeToGlobalUsersFromCloud(
   onUpdate: (users: GlobalUserRecord[]) => void
 ): Unsubscribe {
-  return onSnapshot(
-    collection(db, 'global_users'),
-    (snap) => {
-      const list = snap.docs.map((d) => ({
-        ...(d.data() as GlobalUserRecord),
-        id: d.id,
-        syncedToCloud: true,
-      }));
-      onUpdate(normalizeAndDeduplicateGlobalUsers(list));
-    },
-    (err) => {
-      if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {
-        handleFirestoreError(err, OperationType.LIST, 'global_users');
-      }
+  let disposed = false;
+  let unsubSnapshot: Unsubscribe | null = null;
+
+  const detachSnapshot = () => {
+    if (unsubSnapshot) {
+      try {
+        unsubSnapshot();
+      } catch {}
+      unsubSnapshot = null;
     }
-  );
+  };
+
+  const attachSnapshot = () => {
+    if (disposed || unsubSnapshot || !auth.currentUser) return;
+    unsubSnapshot = onSnapshot(
+      collection(db, 'global_users'),
+      (snap) => {
+        if (disposed) return;
+        const list = snap.docs.map((d) => ({
+          ...(d.data() as GlobalUserRecord),
+          id: d.id,
+          syncedToCloud: true,
+        }));
+        onUpdate(normalizeAndDeduplicateGlobalUsers(list));
+      },
+      (err) => {
+        if (disposed || !auth.currentUser) {
+          detachSnapshot();
+          return;
+        }
+        if (
+          err?.code === 'permission-denied' ||
+          String(err?.message).includes('Missing or insufficient permissions')
+        ) {
+          handleFirestoreError(err, OperationType.LIST, 'global_users');
+        }
+      }
+    );
+  };
+
+  if (auth.currentUser) {
+    attachSnapshot();
+  }
+
+  let unsubAuth: Unsubscribe | null = null;
+  try {
+    unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (disposed) return;
+      if (firebaseUser) {
+        attachSnapshot();
+      } else {
+        detachSnapshot();
+      }
+    });
+  } catch {}
+
+  return () => {
+    disposed = true;
+    if (unsubAuth) {
+      try {
+        unsubAuth();
+      } catch {}
+      unsubAuth = null;
+    }
+    detachSnapshot();
+  };
 }
 
 /**

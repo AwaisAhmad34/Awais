@@ -12,6 +12,7 @@ import {
   where,
   type Unsubscribe,
 } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import {
   saveStoredSchoolClients,
@@ -705,6 +706,13 @@ export function initFirebaseCloudSync() {
     cleanupSubscriptions();
   });
 
+  onAuthStateChanged(auth, (firebaseUser) => {
+    if (!firebaseUser) {
+      syncScheduler?.stop();
+      cleanupSubscriptions();
+    }
+  });
+
   window.addEventListener('aplus-verified-login', () => {
     void startCrossBrowserRealtimeSync();
     ensureAutoSyncScheduler().start();
@@ -1179,6 +1187,10 @@ async function startCrossBrowserRealtimeSync() {
       indexedDbCached: true,
       message: `Auto-Sync Active (1s) · ${finalTransactions.length} vouchers · ${finalCampuses.length} campuses · ${finalCOA.length} COA · ${finalUsers.length} users`,
     });
+
+    if (!auth.currentUser) {
+      return;
+    }
 
     // 3. REAL-TIME ON-SNAPSHOT LISTENERS for cross-device & cross-terminal synchronization (<1s)
     // 3A. Live Trash Listener so deleted records stay deleted across all sessions
