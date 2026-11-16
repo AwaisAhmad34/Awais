@@ -39,7 +39,16 @@ import {
   type CloudSyncStats,
 } from './services/firebaseSync';
 import { purgeAllProductionData, getStoredSchoolClients, fetchSchoolClientsFromCloud, SchoolClientOrganization } from './services/platformSiteAdminService';
-import { initAuthListener, resetAllUsersAndOwner, getVerifiedProfile } from './services/secureAuthentication';
+import {
+  initAuthListener,
+  resetAllUsersAndOwner,
+  getVerifiedProfile,
+  getAuthResolutionState,
+} from './services/secureAuthentication';
+import {
+  provisionGlobalUserAccount,
+  setGlobalUserStatusInCloud,
+} from './services/globalUserSyncService';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TenantAuthProvider } from './context/TenantAuthContext';
 import { FloatingQuickActionMenu } from './components/FloatingQuickActionMenu';
@@ -152,6 +161,7 @@ function InnerApp() {
   const [clientsVersion, setClientsVersion] = useState(0);
   const [syncStats, setSyncStats] = useState<CloudSyncStats | null>(null);
   const [isSessionVerified, setIsSessionVerified] = useState<boolean>(() => Boolean(getVerifiedProfile()));
+  const [isAuthResolving, setIsAuthResolving] = useState<boolean>(() => !getAuthResolutionState().resolved);
 
   useEffect(() => {
     if (!isSessionVerified || !currentUser) return;
@@ -199,69 +209,92 @@ function InnerApp() {
     return () => window.removeEventListener('aplus-sidebar-toggle', handleToggleEvent);
   }, []);
 
-  const authBridgeRef = useRef({ currentUser, loginAsUser, logout, users, addUser, updateUser });
-  authBridgeRef.current = { currentUser, loginAsUser, logout, users, addUser, updateUser };
+  const authBridgeRef = useRef({ currentUser, loginAsUser, logout, users, addUser, updateUser, setCurrentCampusId });
+  authBridgeRef.current = { currentUser, loginAsUser, logout, users, addUser, updateUser, setCurrentCampusId };
 
   useEffect(() => {
-    const handleVerified = () => setIsSessionVerified(Boolean(getVerifiedProfile()));
+    const handleVerified = () => {
+      setIsSessionVerified(Boolean(getVerifiedProfile()));
+      setIsAuthResolving(false);
+    };
     const handleLoggedOut = () => {
       setIsSessionVerified(false);
+      setIsAuthResolving(false);
       setAdminViewMode('platform_control_panel');
       setClientViewMode('client_hub');
     };
     window.addEventListener('aplus-verified-login', handleVerified);
     window.addEventListener('aplus-logout', handleLoggedOut);
 
-    initAuthListener((profile) => {
-      const bridge = authBridgeRef.current;
-      if (!profile || !bridge.loginAsUser) {
-        setIsSessionVerified(false);
-        setAdminViewMode('platform_control_panel');
-        setClientViewMode('client_hub');
-        if (bridge.currentUser && bridge.logout) {
-          bridge.logout();
+    const unsubscribeAuthState = initAuthListener(
+      (profile) => {
+        const bridge = authBridgeRef.current;
+        if (!profile || !bridge.loginAsUser) {
+          setIsSessionVerified(false);
+          setIsAuthResolving(false);
+          setAdminViewMode('platform_control_panel');
+          setClientViewMode('client_hub');
+          if (bridge.currentUser && bridge.logout) {
+            bridge.logout();
+          }
+          return;
         }
-        return;
-      }
-      setIsSessionVerified(true);
-      const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
-      let target = bridge.users?.find(
-        (u: any) =>
-          u.id === profile.id ||
-          (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
-          (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
-      );
 
-      const resolvedUserObj = {
-        id: target?.id || profile.id,
-        uid: profile.uid,
-        username: profile.username || target?.username || profile.email?.split('@')[0] || 'user',
-        name: profile.name || target?.name || 'Campus Administrator',
-        email: profile.email || target?.email || `${profile.username}@institution.edu.pk`,
-        role: profile.role || target?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
-        permissionLevel: profile.permissionLevel,
-        status: 'active',
-        clientId: profile.clientId ?? target?.clientId ?? null,
-        campusId: profile.campusId ?? target?.campusId ?? null,
-        permittedCampusIds: profile.permittedCampusIds || target?.permittedCampusIds || ['all'],
-        delegatedSubCampusIds: profile.delegatedCampusIds || target?.delegatedSubCampusIds || [],
-        allowedModules: profile.allowedModules || target?.allowedModules || ['all'],
-      };
+        const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
+        let target = bridge.users?.find(
+          (u: any) =>
+            u.id === profile.id ||
+            (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
+            (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
+        );
 
-      if (!target && bridge.addUser) {
-        target = bridge.addUser(resolvedUserObj);
-      } else if (target && bridge.updateUser) {
-        bridge.updateUser(target.id, resolvedUserObj);
-      }
+        const resolvedUserObj = {
+          id: target?.id || profile.id,
+          uid: profile.uid,
+          username: profile.username || target?.username || profile.email?.split('@')[0] || 'user',
+          name: profile.name || target?.name || 'Campus Administrator',
+          email: profile.email || target?.email || `${profile.username}@institution.edu.pk`,
+          role: profile.role || target?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+          permissionLevel: profile.permissionLevel,
+          status: 'active',
+          clientId: profile.clientId ?? target?.clientId ?? null,
+          campusId: profile.campusId ?? target?.campusId ?? null,
+          permittedCampusIds: profile.permittedCampusIds || target?.permittedCampusIds || ['all'],
+          delegatedSubCampusIds: profile.delegatedCampusIds || profile.delegatedSubCampusIds || target?.delegatedSubCampusIds || [],
+          allowedModules: profile.allowedModules || target?.allowedModules || ['all'],
+        };
 
-      fetchSchoolClientsFromCloud().catch(() => {});
-      const effectiveId = target?.id || resolvedUserObj.id;
-      if (bridge.currentUser?.id !== effectiveId) {
-        (bridge.loginAsUser as any)(effectiveId, isSuper, { ...resolvedUserObj, id: effectiveId });
+        if (!target && bridge.addUser) {
+          target = bridge.addUser(resolvedUserObj);
+        } else if (target && bridge.updateUser) {
+          bridge.updateUser(target.id, resolvedUserObj);
+        }
+
+        if (
+          !isSuper &&
+          resolvedUserObj.permissionLevel !== 'level_2_client_super_admin' &&
+          resolvedUserObj.campusId &&
+          resolvedUserObj.campusId !== 'all' &&
+          bridge.setCurrentCampusId
+        ) {
+          bridge.setCurrentCampusId(resolvedUserObj.campusId);
+        }
+
+        fetchSchoolClientsFromCloud().catch(() => {});
+        const effectiveId = target?.id || resolvedUserObj.id;
+        if (bridge.currentUser?.id !== effectiveId || bridge.currentUser?.permissionLevel !== resolvedUserObj.permissionLevel) {
+          (bridge.loginAsUser as any)(effectiveId, isSuper, { ...resolvedUserObj, id: effectiveId });
+        }
+        setIsSessionVerified(true);
+        setIsAuthResolving(false);
+      },
+      (authState) => {
+        setIsAuthResolving(!authState.resolved || authState.resolving);
       }
-    });
+    );
 
     return () => {
+      unsubscribeAuthState?.();
       window.removeEventListener('aplus-verified-login', handleVerified);
       window.removeEventListener('aplus-logout', handleLoggedOut);
     };
@@ -314,6 +347,20 @@ function InnerApp() {
     }
     return { id: 'client-aplus', name: 'Aplus School System', code: 'APLUS', logoUrl: undefined };
   }, [userClientId, clientsVersion]);
+
+  if (isAuthResolving && !hasVerifiedSession) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+        <div className="max-w-sm w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center space-y-3 shadow-2xl">
+          <div className="w-8 h-8 mx-auto rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+          <div className="text-sm font-bold text-white">Verifying Session &amp; Campus Permissions</div>
+          <p className="text-xs text-slate-400">
+            Resolving institutional user profile and campus access mappings...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Strict Login Lockout: No panel can be accessed unless BOTH currentUser AND a verified session exist
   if (!hasVerifiedSession) {
@@ -527,6 +574,45 @@ export default function App() {
     window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;
     window.__APLUS_TOP_BAR__ = AplusTopBar;
     (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
+    (window as any).__APLUS_PROVISION_CLOUD_USER__ = async (evt: { action: 'upsert' | 'status'; user: any }) => {
+      try {
+        const u = evt?.user;
+        if (!u) return;
+        if (evt.action === 'status') {
+          await setGlobalUserStatusInCloud(
+            {
+              id: u.id,
+              uid: u.uid || null,
+              username: u.username,
+              email: u.email,
+              clientId: u.clientId || null,
+            },
+            u.status === 'suspended' ? 'suspended' : 'active'
+          );
+          return;
+        }
+        await provisionGlobalUserAccount({
+          id: u.id,
+          uid: u.uid || null,
+          username: u.username,
+          name: u.name,
+          email: u.email,
+          password: u.password,
+          role: u.role,
+          permissionLevel: u.permissionLevel,
+          isSuperAdmin: u.role === 'super_admin' || u.permissionLevel === 'level_1_platform_super_admin',
+          clientId: u.clientId ?? null,
+          campusId: u.campusId === 'all' ? null : (u.campusId ?? null),
+          campusName: u.campusName,
+          permittedCampusIds: u.campusId && u.campusId !== 'all' ? [u.campusId] : ['all'],
+          allowedModules: u.allowedModules || ['all'],
+          status: u.status || 'active',
+          designation: u.designation,
+        });
+      } catch (err) {
+        console.warn('Cloud user provisioning bridge notice:', err);
+      }
+    };
   }, []);
 
   return (

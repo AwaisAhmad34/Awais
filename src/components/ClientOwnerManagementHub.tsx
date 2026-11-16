@@ -511,6 +511,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     ).catch(() => {});
 
     let provisionedUid: string | null = null;
+    let provisioningWarning: string | undefined;
     try {
       const provisioned = await provisionGlobalUserAccount({
         id: branchUserId,
@@ -531,8 +532,12 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
         designation: `Sub-Campus Administrator (${cleanCode})`,
       });
       provisionedUid = provisioned.uid;
-    } catch (err) {
-      console.warn('Global sub-campus user sync deferred:', err);
+      if (!provisioned.authProvisioned) {
+        provisioningWarning =
+          provisioned.warning || 'Sub-campus profile created, but Firebase Authentication provisioning returned a notice.';
+      }
+    } catch (err: any) {
+      provisioningWarning = err?.message || 'Global Firebase Auth provisioning failed.';
     }
 
     if (addUser) {
@@ -562,7 +567,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       newId
     );
 
-    showToast('success', `Sub-campus '${newBranchName}' and global login account (${autoUsername}) created & synced!`);
+    if (provisioningWarning) {
+      showToast('error', `Sub-campus '${newBranchName}' created, notice: ${provisioningWarning}`);
+    } else {
+      showToast('success', `Sub-campus '${newBranchName}' and global login account (${autoUsername}) created & synced!`);
+    }
     setIsCreateModalOpen(false);
     setNewBranchCode('');
     setNewBranchName('');

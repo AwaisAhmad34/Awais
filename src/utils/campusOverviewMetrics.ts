@@ -1,4 +1,8 @@
 import type { AccountHead, Campus, Transaction } from '../core/aplusEngine';
+import {
+  resolveCashInHandAccountHeadFromList,
+  resolveEffectiveAccountOpeningDrCr,
+} from './campusOpeningBalance';
 
 export interface CampusOverviewMetric {
   campusId: string;
@@ -33,23 +37,7 @@ export function getLocalTodayIso(now: Date = new Date()): string {
 export function resolveCashInHandAccountHead(
   accountHeads: AccountHead[] = []
 ): AccountHead | undefined {
-  return accountHeads.find((head) => {
-    const code = String(head.code || '').trim();
-    const ledgerCode = String(head.ledgerCode || '').trim();
-    const accountId = String(head.accountId || '').trim();
-    const name = String(head.name || '').trim().toLowerCase();
-
-    return (
-      head.id === 'acc-100-4-01' ||
-      code === '100-4-01' ||
-      ledgerCode === '100-4-01' ||
-      accountId === '1031' ||
-      accountId === '1018' ||
-      code === '1031' ||
-      code === '1018' ||
-      name === 'cash in hand'
-    );
-  });
+  return resolveCashInHandAccountHeadFromList(accountHeads);
 }
 
 function isCashInHandEntry(entry: any, cashInHandHead?: AccountHead): boolean {
@@ -80,7 +68,9 @@ export function computeCampusCashLedgerBalance(
   campusId: string,
   cashInHandHead: AccountHead | undefined,
   transactions: Transaction[] = [],
-  getAccountBalance?: (head: AccountHead, campusId?: string) => number
+  getAccountBalance?: (head: AccountHead, campusId?: string) => number,
+  campuses: Campus[] = [],
+  accountHeads: AccountHead[] = []
 ): number {
   if (cashInHandHead && typeof getAccountBalance === 'function') {
     const engineBalance = Number(getAccountBalance(cashInHandHead, campusId));
@@ -91,17 +81,15 @@ export function computeCampusCashLedgerBalance(
 
   let openingBalance = 0;
   if (cashInHandHead) {
-    const campusBal = cashInHandHead.campusBalances?.[campusId];
-    if (campusBal !== undefined && campusBal !== null) {
-      openingBalance = Number(campusBal) || 0;
-    } else if (
-      cashInHandHead.campusDebitBalances?.[campusId] !== undefined ||
-      cashInHandHead.campusCreditBalances?.[campusId] !== undefined
-    ) {
-      const dr = Number(cashInHandHead.campusDebitBalances?.[campusId] || 0);
-      const cr = Number(cashInHandHead.campusCreditBalances?.[campusId] || 0);
-      openingBalance = dr - cr;
-    }
+    openingBalance = resolveEffectiveAccountOpeningDrCr(
+      cashInHandHead,
+      campusId,
+      campuses,
+      accountHeads.length > 0 ? accountHeads : [cashInHandHead]
+    ).net;
+  } else {
+    const matchingCampus = campuses.find((c) => c.id === campusId);
+    openingBalance = Number(matchingCampus?.openingBalance) || 0;
   }
 
   let ledgerNet = 0;
@@ -143,7 +131,9 @@ export function computeCampusOverviewMetrics({
       campus.id,
       cashInHandHead,
       transactions,
-      getAccountBalance
+      getAccountBalance,
+      campuses,
+      accountHeads
     );
 
     const rawPetty =

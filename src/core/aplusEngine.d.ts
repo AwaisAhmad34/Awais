@@ -11,6 +11,8 @@ export interface Campus {
   accountantName?: string;
   pettyCashFloat: number;
   currentPettyCash: number;
+  openingBalance?: number;
+  openingBalanceFiscalYear?: string;
   loginEnabled?: boolean;
   status: 'active' | 'inactive';
   allowedModules?: string[];

@@ -15,13 +15,114 @@ import {
   findGlobalUserInCloudByEmailOrUid,
   provisionGlobalUserAccount,
   normalizeUsernameKey,
+  syncUserRecordToLocalStorageCache,
 } from './globalUserSyncService';
+
+export interface AuthResolutionState {
+  resolved: boolean;
+  resolving: boolean;
+  profile: any;
+}
 
 let verifiedProfile: any = null;
 let authListenerAttached = false;
+let authResolvedOnce = false;
+let authResolving = false;
+const pendingRestoreByUid = new Map<string, Promise<any>>();
+const authStateSubscribers = new Set<(state: AuthResolutionState) => void>();
 
 export function getVerifiedProfile() {
   return verifiedProfile;
+}
+
+export function getAuthResolutionState(): AuthResolutionState {
+  return {
+    resolved: authResolvedOnce,
+    resolving: authResolving,
+    profile: verifiedProfile,
+  };
+}
+
+function notifyAuthStateSubscribers() {
+  const snapshot: AuthResolutionState = {
+    resolved: authResolvedOnce,
+    resolving: authResolving,
+    profile: verifiedProfile,
+  };
+  authStateSubscribers.forEach((cb) => {
+    try {
+      cb(snapshot);
+    } catch {}
+  });
+}
+
+function normalizeResolvedPermissionLevel(level?: string, role?: string): string {
+  const raw = String(level || '').trim();
+  if (raw === 'level_2_client_admin') return 'level_2_client_super_admin';
+  if (raw === 'level_3_sub_campus_admin') return 'level_4_sub_campus_admin';
+  if (raw === 'level_5_departmental_user') return 'level_5_departmental_staff';
+  if (raw) return raw;
+  if (role === 'level_1_platform_super_admin' || role === 'admin' || role === 'super_admin') {
+    return 'level_1_platform_super_admin';
+  }
+  if (role === 'level_2_client_super_admin') return 'level_2_client_super_admin';
+  if (role === 'level_3_main_campus_admin') return 'level_3_main_campus_admin';
+  if (role === 'level_3_sub_campus_admin' || role === 'level_4_sub_campus_admin') {
+    return 'level_4_sub_campus_admin';
+  }
+  return 'level_5_departmental_staff';
+}
+
+/**
+ * Translates Firebase Auth error codes and institutional suspension errors into
+ * clear, actionable user-facing messages.
+ */
+export function mapFirebaseAuthErrorMessage(err: any): string {
+  const code = String(err?.code || '').trim();
+  const rawMessage = String(err?.message || '').trim();
+  const lowerMessage = rawMessage.toLowerCase();
+
+  if (
+    lowerMessage.includes('suspended') ||
+    lowerMessage.includes('locked') ||
+    lowerMessage.includes('removed or disabled') ||
+    lowerMessage.includes('not active') ||
+    lowerMessage.includes('not registered for institutional access')
+  ) {
+    return rawMessage;
+  }
+
+  switch (code) {
+    case 'auth/user-disabled':
+      return 'Account locked or disabled. Contact your administrator.';
+    case 'auth/too-many-requests':
+      return 'Account temporarily locked due to too many failed attempts. Try again later or reset your password.';
+    case 'auth/operation-not-allowed':
+      return 'Email/password sign-in is not enabled in Firebase Authentication. Contact your administrator.';
+    case 'auth/network-request-failed':
+      return 'Network error while contacting the authentication server. Check your connection and try again.';
+    case 'auth/popup-closed-by-user':
+      return 'Google sign-in popup was closed before completing authentication.';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-email':
+      return 'Invalid email or password.';
+    default:
+      if (lowerMessage.includes('invalid-credential') || lowerMessage.includes('wrong-password') || lowerMessage.includes('user-not-found')) {
+        return 'Invalid email or password.';
+      }
+      if (lowerMessage.includes('user-disabled')) {
+        return 'Account locked or disabled. Contact your administrator.';
+      }
+      if (lowerMessage.includes('too-many-requests')) {
+        return 'Account temporarily locked due to too many failed attempts. Try again later or reset your password.';
+      }
+      if (lowerMessage.includes('network-request-failed')) {
+        return 'Network error while contacting the authentication server. Check your connection and try again.';
+      }
+      return rawMessage || 'Invalid email or password.';
+  }
 }
 
 /**
@@ -34,7 +135,40 @@ export function resolveUserEmail(input: string): string {
 }
 
 /**
- * Resolves usernames dynamically via Firestore `login_directory` and server endpoint.
+ * Checks synced localStorage user directory (`ams_users_v5_clean`) and dynamic campus credentials
+ * to resolve a freshly created user's email from their username.
+ */
+export function resolveLocalUserEmailByUsername(username: string): string | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  const clean = (username || '').trim().toLowerCase().replace(/\s+/g, '');
+  const normKey = normalizeUsernameKey(clean);
+  if (!clean) return null;
+
+  const keysToInspect = ['ams_users_v5_clean', 'ams_current_user_v5_clean'];
+  for (const storageKey of keysToInspect) {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      for (const u of list) {
+        if (!u || typeof u !== 'object') continue;
+        const uName = String(u.username || '').trim().toLowerCase().replace(/\s+/g, '');
+        const uNorm = normalizeUsernameKey(uName);
+        if ((uName && uName === clean) || (uNorm && normKey && uNorm === normKey)) {
+          const candidate = String(u.email || '').trim().toLowerCase();
+          if (candidate && candidate.includes('@')) {
+            return candidate;
+          }
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Resolves usernames dynamically via Firestore `login_directory`, server endpoint, and local user cache.
  */
 export async function resolveUserEmailAsync(input: string): Promise<string> {
   const clean = input.trim().toLowerCase().replace(/\s+/g, '');
@@ -63,8 +197,77 @@ export async function resolveUserEmailAsync(input: string): Promise<string> {
     }
   } catch {}
 
-  // 3. Standard institutional domain normalization
+  // 3. Synchronized localStorage user cache lookup (handles newly created users in same session)
+  const localMatch = resolveLocalUserEmailByUsername(clean);
+  if (localMatch) {
+    return localMatch;
+  }
+
+  // 4. Standard institutional domain normalization
   return resolveUserEmail(input);
+}
+
+/**
+ * Collects ordered candidate emails to try when authenticating via username.
+ */
+export async function collectCandidateEmailsForUsername(emailOrUsername: string): Promise<string[]> {
+  const cleanInput = (emailOrUsername || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (!cleanInput) return [];
+  if (cleanInput.includes('@')) return [cleanInput];
+
+  const candidates: string[] = [];
+  const pushUnique = (email?: string | null) => {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (normalized && normalized.includes('@') && !candidates.includes(normalized)) {
+      candidates.push(normalized);
+    }
+  };
+
+  try {
+    const dirEntry = await lookupLoginDirectoryByUsername(cleanInput);
+    if (dirEntry?.status === 'suspended' || dirEntry?.status === 'inactive') {
+      throw new Error('Account locked or suspended. Contact your administrator.');
+    }
+    pushUnique(dirEntry?.email);
+  } catch (dirErr: any) {
+    if (String(dirErr?.message || '').toLowerCase().includes('suspended') || String(dirErr?.message || '').toLowerCase().includes('locked')) {
+      throw dirErr;
+    }
+  }
+
+  try {
+    const res = await fetch('/api/platform/resolve-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: cleanInput }),
+    });
+    if (res.status === 403) {
+      const errData = await res.json().catch(() => ({}));
+      if (errData?.error === 'ACCOUNT_DISABLED') {
+        throw new Error('Account locked or suspended. Contact your administrator.');
+      }
+    }
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data?.found && data?.email) {
+        pushUnique(data.email);
+      }
+    }
+  } catch (srvErr: any) {
+    if (String(srvErr?.message || '').toLowerCase().includes('suspended') || String(srvErr?.message || '').toLowerCase().includes('locked')) {
+      throw srvErr;
+    }
+  }
+
+  pushUnique(resolveLocalUserEmailByUsername(cleanInput));
+
+  const cleanUname = cleanInput.replace(/[^a-z0-9._-]/g, '');
+  if (cleanUname) {
+    pushUnique(`${cleanUname}@institution.edu.pk`);
+    pushUnique(`${cleanUname}@aschoolsystem.edu.pk`);
+  }
+
+  return candidates;
 }
 
 /**
@@ -78,30 +281,45 @@ export async function authenticateAccount(emailOrUsername: string, password: str
   const cleanPassword = (password || '').trim();
 
   if (!cleanInput || !cleanPassword) {
-    throw new Error('Unable to sign in. Check your email/username and password.');
+    throw new Error('Please enter both your email or username and password.');
   }
 
-  const email = await resolveUserEmailAsync(cleanInput);
+  const candidateEmails = await collectCandidateEmailsForUsername(cleanInput);
+  if (candidateEmails.length === 0) {
+    throw new Error('Invalid email or password.');
+  }
+
+  let authenticatedUser: User | null = null;
+  let lastAuthErr: any = null;
 
   // Strictly attempt sign-in against Firebase Auth with registered credentials only
-  try {
-    const credential = await signInWithEmailAndPassword(auth, email, cleanPassword);
-    return await restoreAccount(credential.user);
-  } catch {
-    if (!cleanInput.includes('@')) {
-      const cleanUname = cleanInput.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9._-]/g, '');
-      const altEmail = `${cleanUname}@institution.edu.pk`;
-      if (altEmail !== email) {
-        try {
-          const altCred = await signInWithEmailAndPassword(auth, altEmail, cleanPassword);
-          return await restoreAccount(altCred.user);
-        } catch {}
+  for (const emailCandidate of candidateEmails) {
+    try {
+      const credential = await signInWithEmailAndPassword(auth, emailCandidate, cleanPassword);
+      authenticatedUser = credential.user;
+      break;
+    } catch (authErr: any) {
+      lastAuthErr = authErr;
+      const code = String(authErr?.code || '');
+      const isRetryableLookupFailure =
+        code === 'auth/invalid-credential' ||
+        code === 'auth/user-not-found' ||
+        code === 'auth/wrong-password' ||
+        code === 'auth/invalid-email';
+      if (!isRetryableLookupFailure) {
+        await signOut(auth).catch(() => {});
+        throw new Error(mapFirebaseAuthErrorMessage(authErr));
       }
     }
-
-    await signOut(auth).catch(() => {});
-    throw new Error('Unable to sign in. Check your email/username and password.');
   }
+
+  if (!authenticatedUser) {
+    await signOut(auth).catch(() => {});
+    throw new Error(mapFirebaseAuthErrorMessage(lastAuthErr));
+  }
+
+  // Resolve authoritative user profile & campus mappings outside retry loop so domain errors surface directly
+  return await restoreAccount(authenticatedUser);
 }
 
 /**
@@ -379,18 +597,42 @@ export async function logoutAccount() {
 }
 
 export async function restoreAccount(user: User) {
+  const uid = String(user?.uid || '').trim();
+  if (!uid) {
+    throw new Error('Invalid authentication session.');
+  }
+  const existingPromise = pendingRestoreByUid.get(uid);
+  if (existingPromise) {
+    return await existingPromise;
+  }
+
+  const promise = restoreAccountInternal(user).finally(() => {
+    if (pendingRestoreByUid.get(uid) === promise) {
+      pendingRestoreByUid.delete(uid);
+    }
+  });
+  pendingRestoreByUid.set(uid, promise);
+  return await promise;
+}
+
+async function restoreAccountInternal(user: User) {
   const mRef = doc(db, 'memberships', user.uid);
   const snapshot = await getDoc(mRef);
   let membership = snapshot.data();
 
   const emailLower = user.email?.toLowerCase() || '';
-  const globalUser = await findGlobalUserInCloudByEmailOrUid(emailLower, user.uid).catch(() => null);
+  const membershipUserIdHint = membership?.userId ? String(membership.userId) : undefined;
+  const globalUser = await findGlobalUserInCloudByEmailOrUid(
+    emailLower,
+    user.uid,
+    membershipUserIdHint
+  ).catch(() => null);
 
   // Enforce authoritative status from Global User Directory when present
   if (globalUser && globalUser.status && globalUser.status !== 'active') {
     verifiedProfile = null;
     await signOut(auth).catch(() => {});
-    throw new Error('Your account is currently suspended or inactive. Contact your administrator.');
+    throw new Error('Account locked or suspended. Contact your administrator.');
   }
 
   // Check registered Platform Owner registry status strictly (no hardcoded emails or admin@ bypass)
@@ -412,8 +654,9 @@ export async function restoreAccount(user: User) {
   // If user has no membership yet, strictly require registered global_users or initialized platform_owner_registry
   if (!snapshot.exists()) {
     if (globalUser) {
+      const normalizedGlobalLevel = normalizeResolvedPermissionLevel(globalUser.permissionLevel, globalUser.role);
       const isGlobalOwner =
-        Boolean(globalUser.isSuperAdmin || globalUser.permissionLevel === 'level_1_platform_super_admin') &&
+        Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin') &&
         (!regData?.isInitialized || isRegistryOwner);
 
       const globalMembership = {
@@ -423,10 +666,10 @@ export async function restoreAccount(user: User) {
         email: globalUser.email || emailLower,
         permissionLevel: isGlobalOwner
           ? 'level_1_platform_super_admin'
-          : globalUser.permissionLevel || 'level_4_sub_campus_admin',
+          : normalizedGlobalLevel || 'level_4_sub_campus_admin',
         role: isGlobalOwner
           ? 'level_1_platform_super_admin'
-          : globalUser.role || globalUser.permissionLevel || 'Accountant',
+          : globalUser.role || normalizedGlobalLevel || 'Accountant',
         clientId: isGlobalOwner ? null : (globalUser.clientId ?? null),
         campusId: isGlobalOwner ? null : (globalUser.campusId ?? null),
         permittedCampusIds: globalUser.permittedCampusIds || (globalUser.campusId ? [globalUser.campusId] : ['all']),
@@ -467,8 +710,9 @@ export async function restoreAccount(user: User) {
       throw new Error('Access denied. Account is not registered for institutional access.');
     }
   } else if (globalUser) {
+    const normalizedGlobalLevel = normalizeResolvedPermissionLevel(globalUser.permissionLevel, globalUser.role);
     const isGlobalOwner =
-      Boolean(globalUser.isSuperAdmin || globalUser.permissionLevel === 'level_1_platform_super_admin') &&
+      Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin') &&
       (!regData?.isInitialized || isRegistryOwner);
 
     membership = {
@@ -478,12 +722,16 @@ export async function restoreAccount(user: User) {
       username: globalUser.username || membership?.username,
       permissionLevel: isGlobalOwner
         ? 'level_1_platform_super_admin'
-        : globalUser.permissionLevel || membership?.permissionLevel,
+        : normalizedGlobalLevel || normalizeResolvedPermissionLevel(membership?.permissionLevel, membership?.role),
       role: isGlobalOwner
         ? 'level_1_platform_super_admin'
         : globalUser.role || membership?.role,
       clientId: isGlobalOwner ? null : (globalUser.clientId !== undefined ? globalUser.clientId : membership?.clientId),
       campusId: isGlobalOwner ? null : (globalUser.campusId !== undefined ? globalUser.campusId : membership?.campusId),
+      permittedCampusIds:
+        globalUser.permittedCampusIds && globalUser.permittedCampusIds.length > 0
+          ? globalUser.permittedCampusIds
+          : membership?.permittedCampusIds,
       delegatedCampusIds: globalUser.delegatedSubCampusIds?.length
         ? globalUser.delegatedSubCampusIds
         : membership?.delegatedCampusIds,
@@ -564,7 +812,7 @@ export async function restoreAccount(user: User) {
   if (membership?.status !== 'active') {
     verifiedProfile = null;
     await signOut(auth).catch(() => {});
-    throw new Error('Your account is not active. Contact the platform site owner.');
+    throw new Error('Account locked or suspended. Contact your administrator.');
   }
 
   const roles: Record<string, string> = {
@@ -576,10 +824,10 @@ export async function restoreAccount(user: User) {
     level_5_departmental_user: 'campus_accountant',
   };
 
+  const normalizedLevel = normalizeResolvedPermissionLevel(membership?.permissionLevel, membership?.role);
   const isOwner = Boolean(
     isRegistryOwner ||
-    ((membership?.isPlatformAdmin === true ||
-      membership?.permissionLevel === 'level_1_platform_super_admin') &&
+    ((membership?.isPlatformAdmin === true || normalizedLevel === 'level_1_platform_super_admin') &&
       (!regData?.isInitialized || regData?.ownerUid === user.uid || regData?.ownerEmail?.toLowerCase() === emailLower))
   );
 
@@ -590,60 +838,134 @@ export async function restoreAccount(user: User) {
 
   const assignedRole = isOwner
     ? 'level_1_platform_super_admin'
-    : (roles[membership.permissionLevel] || membership.role || 'level_2_client_super_admin');
+    : (roles[normalizedLevel] || membership.role || 'level_2_client_super_admin');
   const resolvedUsername =
     membership.username || (user.email?.split('@')[0] || user.email || 'user');
+  const effectivePermissionLevel = isOwner ? 'level_1_platform_super_admin' : normalizedLevel;
+  const resolvedCampusId = isOwner ? null : (membership.campusId ?? null);
+  const resolvedPermittedCampuses =
+    Array.isArray(membership.permittedCampusIds) && membership.permittedCampusIds.length > 0
+      ? membership.permittedCampusIds
+      : resolvedCampusId
+      ? [resolvedCampusId]
+      : ['all'];
 
   verifiedProfile = {
     id: resolvedId,
     uid: user.uid,
     username: resolvedUsername,
-    email: user.email,
+    email: user.email || emailLower,
     name: membership.name || (isOwner ? 'Platform Super Admin (Site Owner)' : user.email || 'Campus Administrator'),
     role: assignedRole,
-    permissionLevel: isOwner ? 'level_1_platform_super_admin' : (membership.permissionLevel || 'level_2_client_super_admin'),
+    permissionLevel: effectivePermissionLevel,
+    isSuperAdmin: isOwner,
     clientId: isOwner ? null : (membership.clientId ?? null),
-    campusId: isOwner ? null : (membership.campusId ?? null),
-    permittedCampusIds: membership.permittedCampusIds || (membership.campusId ? [membership.campusId] : ['all']),
+    campusId: resolvedCampusId,
+    permittedCampusIds: resolvedPermittedCampuses,
     allowedModules: membership.allowedModules || ['all'],
     delegatedCampusIds: membership.delegatedCampusIds || [],
+    delegatedSubCampusIds: membership.delegatedCampusIds || [],
     status: membership.status,
   };
 
-  if (typeof window !== 'undefined') {
+  // Synchronize verified session profile to both session & directory localStorage keys before signaling ready
+  if (typeof window !== 'undefined' && window.localStorage) {
     try {
       localStorage.setItem('ams_current_user_v5_clean', JSON.stringify(verifiedProfile));
     } catch {}
+    syncUserRecordToLocalStorageCache({
+      id: verifiedProfile.id,
+      uid: verifiedProfile.uid,
+      username: verifiedProfile.username,
+      name: verifiedProfile.name,
+      email: verifiedProfile.email,
+      role: verifiedProfile.role,
+      permissionLevel: verifiedProfile.permissionLevel,
+      isSuperAdmin: verifiedProfile.isSuperAdmin,
+      clientId: verifiedProfile.clientId,
+      campusId: verifiedProfile.campusId,
+      permittedCampusIds: verifiedProfile.permittedCampusIds,
+      delegatedSubCampusIds: verifiedProfile.delegatedSubCampusIds,
+      allowedModules: verifiedProfile.allowedModules,
+      status: 'active',
+      syncedToCloud: true,
+      createdAt: membership?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     window.dispatchEvent(new Event('aplus-verified-login'));
   }
   return verifiedProfile;
 }
 
 /**
- * Initializes automatic background session recovery on page reload
+ * Initializes automatic background session recovery and ensures full profile, permission level,
+ * and campus mapping resolution completes cleanly before InnerApp finishes rendering.
  */
 let latestProfileCallback: ((profile: any) => void) | undefined;
 
-export function initAuthListener(onProfileReady?: (profile: any) => void) {
+export function initAuthListener(
+  onProfileReady?: (profile: any) => void,
+  onResolutionStateChange?: (state: AuthResolutionState) => void
+) {
   if (onProfileReady) {
     latestProfileCallback = onProfileReady;
   }
-  if (authListenerAttached) return;
+  if (onResolutionStateChange) {
+    authStateSubscribers.add(onResolutionStateChange);
+  }
+
+  // If Firebase auth state has already resolved once on a prior mount, emit synchronized snapshot immediately
+  if (authResolvedOnce) {
+    if (onProfileReady) {
+      onProfileReady(verifiedProfile);
+    }
+    if (onResolutionStateChange) {
+      onResolutionStateChange(getAuthResolutionState());
+    }
+  }
+
+  if (authListenerAttached) {
+    return () => {
+      if (onResolutionStateChange) {
+        authStateSubscribers.delete(onResolutionStateChange);
+      }
+    };
+  }
   authListenerAttached = true;
+  authResolving = true;
+  notifyAuthStateSubscribers();
 
   onAuthStateChanged(auth, async (user) => {
+    authResolving = true;
+    notifyAuthStateSubscribers();
+
     if (user) {
       try {
         const profile = await restoreAccount(user);
+        authResolvedOnce = true;
+        authResolving = false;
         if (latestProfileCallback) latestProfileCallback(profile);
+        notifyAuthStateSubscribers();
       } catch (err) {
         console.warn('Membership verification pending or failed for signed-in Firebase user:', err);
         verifiedProfile = null;
+        authResolvedOnce = true;
+        authResolving = false;
         if (latestProfileCallback) latestProfileCallback(null);
+        notifyAuthStateSubscribers();
       }
     } else {
       verifiedProfile = null;
+      authResolvedOnce = true;
+      authResolving = false;
       if (latestProfileCallback) latestProfileCallback(null);
+      notifyAuthStateSubscribers();
     }
   });
+
+  return () => {
+    if (onResolutionStateChange) {
+      authStateSubscribers.delete(onResolutionStateChange);
+    }
+  };
 }

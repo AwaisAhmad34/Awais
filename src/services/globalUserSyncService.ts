@@ -70,7 +70,40 @@ export interface ProvisionGlobalUserResult {
   userRecord: GlobalUserRecord;
   uid: string | null;
   authProvisioned: boolean;
+  authErrorCode?: string;
   warning?: string;
+}
+
+/**
+ * Synchronizes a canonical GlobalUserRecord synchronously into localStorage (`ams_users_v5_clean`)
+ * so session resolution and username lookup reflect newly created/updated accounts immediately.
+ */
+export function syncUserRecordToLocalStorageCache(userRecord: GlobalUserRecord): void {
+  if (typeof window === 'undefined' || !window.localStorage || !userRecord) return;
+  try {
+    if (isLegacyPlaceholderAdmin(userRecord)) return;
+    const raw = window.localStorage.getItem('ams_users_v5_clean');
+    const parsed = raw ? JSON.parse(raw) : [];
+    const existingList = Array.isArray(parsed) ? parsed : [];
+    const targetId = String(userRecord.id || '').trim();
+    const targetUsername = normalizeUsernameKey(userRecord.username || '');
+    const targetEmail = normalizeEmailKey(userRecord.email || '');
+
+    const filtered = existingList.filter((u: any) => {
+      if (!u || typeof u !== 'object') return false;
+      if (isLegacyPlaceholderAdmin(u)) return false;
+      const uId = String(u.id || '').trim();
+      const uName = normalizeUsernameKey(u.username || '');
+      const uEmail = normalizeEmailKey(u.email || '');
+      if (targetId && uId === targetId) return false;
+      if (targetUsername && uName === targetUsername) return false;
+      if (targetEmail && uEmail === targetEmail) return false;
+      return true;
+    });
+
+    const sanitizedCopy = { ...userRecord };
+    window.localStorage.setItem('ams_users_v5_clean', JSON.stringify([sanitizedCopy, ...filtered]));
+  } catch {}
 }
 
 const PROVISIONING_APP_NAME = 'UserProvisioningApp';
@@ -329,12 +362,14 @@ export async function provisionGlobalUserAccount(
 
   let resolvedUid: string | null = input.uid || existingUser?.uid || null;
   let authProvisioned = false;
+  let authErrorCode: string | undefined;
   let warning: string | undefined;
 
   // 1. If password provided, ensure Firebase Auth user exists cleanly
   if (cleanPassword) {
     if (cleanPassword.length < 6) {
-      warning = 'Password was under 6 characters; Firebase Auth requires at least 6 characters for remote login.';
+      authErrorCode = 'auth/weak-password';
+      warning = 'Password must be at least 6 characters for Firebase Authentication login.';
     } else {
       // 1A. Try trusted server Admin SDK first (handles password resets & existing emails cleanly when cert is present)
       let serverDone = false;
@@ -363,6 +398,7 @@ export async function provisionGlobalUserAccount(
       // 1B. Client delegation via isolated secondary Firebase Auth app (never signs out current admin!)
       if (!serverDone) {
         const secondaryAuth = getProvisioningAuth();
+        await signOut(secondaryAuth).catch(() => {});
         try {
           const cred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPassword);
           resolvedUid = cred.user.uid;
@@ -371,15 +407,28 @@ export async function provisionGlobalUserAccount(
             await updateProfile(cred.user, { displayName: cleanName });
           } catch {}
         } catch (authErr: any) {
-          if (authErr?.code === 'auth/email-already-in-use') {
+          const code = String(authErr?.code || '');
+          authErrorCode = code || undefined;
+          if (code === 'auth/email-already-in-use') {
             try {
               const existingCred = await signInWithEmailAndPassword(secondaryAuth, cleanEmail, cleanPassword);
               resolvedUid = existingCred.user.uid;
               authProvisioned = true;
-            } catch {
+              authErrorCode = undefined;
+            } catch (signErr: any) {
+              authErrorCode = String(signErr?.code || 'auth/email-already-in-use');
               warning =
-                'Email already exists in Firebase Authentication with a different password. User profile updated in database.';
+                'This email already exists in Firebase Authentication with a different password. Use the original password or send a password recovery email.';
             }
+          } else if (code === 'auth/operation-not-allowed') {
+            warning =
+              'Email/Password sign-in is not enabled in Firebase Authentication. Enable the Email/Password provider in Firebase Console.';
+          } else if (code === 'auth/weak-password') {
+            warning = 'Password rejected by Firebase Authentication. Use at least 6 characters.';
+          } else if (code === 'auth/invalid-email') {
+            warning = 'Invalid email address format for Firebase Authentication.';
+          } else if (code === 'auth/network-request-failed') {
+            warning = 'Network error while provisioning Firebase Authentication credentials.';
           } else {
             warning = authErr?.message || 'Firebase Auth provisioning returned an advisory notice.';
           }
@@ -442,23 +491,26 @@ export async function provisionGlobalUserAccount(
 
     // 3. Write username -> email mapping to `login_directory/{usernameKey}` so fresh browsers can log in by username
     const dirKey = normalizeUsernameKey(cleanUsername);
-    const loginDirPath = `login_directory/${dirKey}`;
-    try {
-      await setDoc(
-        doc(db, 'login_directory', dirKey),
-        sanitizeFirestorePayload({
-          username: cleanUsername,
-          email: cleanEmail,
-          userId,
-          uid: resolvedUid,
-          status: userRecord.status,
-          updatedAt: now,
-        }),
-        { merge: true }
-      );
-    } catch (err: any) {
-      if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {
-        handleFirestoreError(err, OperationType.WRITE, loginDirPath);
+    const loginDirKeys = Array.from(new Set([dirKey, cleanUsername].filter(Boolean)));
+    for (const key of loginDirKeys) {
+      const loginDirPath = `login_directory/${key}`;
+      try {
+        await setDoc(
+          doc(db, 'login_directory', key),
+          sanitizeFirestorePayload({
+            username: cleanUsername,
+            email: cleanEmail,
+            userId,
+            uid: resolvedUid,
+            status: userRecord.status,
+            updatedAt: now,
+          }),
+          { merge: true }
+        );
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || String(err?.message).includes('Missing or insufficient permissions')) {
+          handleFirestoreError(err, OperationType.WRITE, loginDirPath);
+        }
       }
     }
 
@@ -514,6 +566,9 @@ export async function provisionGlobalUserAccount(
     }
   }
 
+  // Synchronously persist user record into localStorage cache so local session & username resolution stay aligned
+  syncUserRecordToLocalStorageCache(userRecord);
+
   // Notify in-tab listeners immediately
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('aplus-global-users-updated'));
@@ -523,6 +578,7 @@ export async function provisionGlobalUserAccount(
     userRecord,
     uid: resolvedUid,
     authProvisioned,
+    authErrorCode,
     warning,
   };
 }
@@ -661,17 +717,24 @@ export async function setGlobalUserStatusInCloud(
 }
 
 /**
- * Finds an authoritative GlobalUserRecord in Firestore by email or uid.
+ * Finds an authoritative GlobalUserRecord in Firestore by userIdHint, email, or uid.
  */
 export async function findGlobalUserInCloudByEmailOrUid(
   email: string,
-  uid?: string
+  uid?: string,
+  userIdHint?: string
 ): Promise<GlobalUserRecord | null> {
   if (!auth.currentUser) return null;
   const cleanEmail = (email || '').trim().toLowerCase();
-  if (!cleanEmail && !uid) return null;
+  if (!cleanEmail && !uid && !userIdHint) return null;
 
   try {
+    if (userIdHint) {
+      const directSnap = await getDoc(doc(db, 'global_users', String(userIdHint)));
+      if (directSnap.exists()) {
+        return { ...(directSnap.data() as GlobalUserRecord), id: directSnap.id };
+      }
+    }
     if (cleanEmail) {
       const q = query(collection(db, 'global_users'), where('email', '==', cleanEmail));
       const snap = await getDocs(q);
@@ -686,6 +749,16 @@ export async function findGlobalUserInCloudByEmailOrUid(
       if (!snapUid.empty) {
         const d = snapUid.docs[0];
         return { ...(d.data() as GlobalUserRecord), id: d.id };
+      }
+    }
+    if (cleanEmail && cleanEmail.includes('@')) {
+      const localPart = cleanEmail.split('@')[0];
+      const dirMatch = await lookupLoginDirectoryByUsername(localPart).catch(() => null);
+      if (dirMatch?.userId && normalizeEmailKey(dirMatch.email) === cleanEmail) {
+        const dirUserSnap = await getDoc(doc(db, 'global_users', dirMatch.userId));
+        if (dirUserSnap.exists()) {
+          return { ...(dirUserSnap.data() as GlobalUserRecord), id: dirUserSnap.id };
+        }
       }
     }
   } catch (err: any) {

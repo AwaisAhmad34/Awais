@@ -211,11 +211,19 @@ export const SubCampusHierarchyView: React.FC<{
                   </p>
                 </div>
 
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-500 font-mono block">Imprest Float</span>
-                  <span className="text-xs font-black text-emerald-400 font-mono">
-                    PKR {(sub.pettyCashFloat || 35000).toLocaleString()}
-                  </span>
+                <div className="text-right space-y-1">
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-mono block">Opening Balance</span>
+                    <span className="text-xs font-black text-indigo-300 font-mono">
+                      PKR {(Number(sub.openingBalance) || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-mono block">Imprest Float</span>
+                    <span className="text-xs font-black text-emerald-400 font-mono">
+                      PKR {(sub.pettyCashFloat || 35000).toLocaleString()}
+                    </span>
+                  </div>
                 </div>
               </div>
 

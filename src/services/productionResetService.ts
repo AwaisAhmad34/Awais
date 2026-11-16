@@ -142,6 +142,7 @@ export function filterPreservedMainCampuses(
       isMainCampus: true,
       parentCampusId: null,
       currentPettyCash: Number((c as any).pettyCashFloat) || 0,
+      openingBalance: 0,
     }));
 }
 

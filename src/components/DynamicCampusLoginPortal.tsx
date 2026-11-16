@@ -27,6 +27,7 @@ import {
   checkPlatformOwnerStatus,
   sendAccountPasswordRecovery,
   resetAllUsersAndOwner,
+  mapFirebaseAuthErrorMessage,
 } from '../services/secureAuthentication';
 
 interface DynamicCampusLoginPortalProps {
@@ -34,7 +35,7 @@ interface DynamicCampusLoginPortalProps {
 }
 
 export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> = () => {
-  const { loginAsUser, campuses, orgSettings, users, addUser, updateUser } = useAccounting();
+  const { loginAsUser, campuses, orgSettings, users, addUser, updateUser, setCurrentCampusId } = useAccounting();
 
   // Form states
   const [username, setUsername] = useState('');
@@ -54,6 +55,9 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   const [ownerPassword, setOwnerPassword] = useState('');
   const [confirmOwnerPassword, setConfirmOwnerPassword] = useState('');
   const [bootstrapSecret, setBootstrapSecret] = useState('');
+  const [showOwnerPassword, setShowOwnerPassword] = useState(false);
+  const [showConfirmOwnerPassword, setShowConfirmOwnerPassword] = useState(false);
+  const [showOwnerSecret, setShowOwnerSecret] = useState(false);
   const [ownerSetupStatus, setOwnerSetupStatus] = useState<string | null>(null);
   const [isSettingUpOwner, setIsSettingUpOwner] = useState(false);
 
@@ -159,7 +163,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     if (successNotice) setSuccessNotice(null);
   };
 
-  // Task 2: Correct invalid-login messaging (Generic message for nonexistent or wrong passwords)
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -169,11 +172,11 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     const cleanPass = password;
 
     if (!cleanInput) {
-      setErrorMessage('Unable to sign in. Check your email/username and password.');
+      setErrorMessage('Please enter your institutional email or username.');
       return;
     }
     if (!cleanPass) {
-      setErrorMessage('Unable to sign in. Check your email/username and password.');
+      setErrorMessage('Please enter your account password.');
       return;
     }
 
@@ -207,7 +210,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
         clientId: profile.clientId ?? targetUser?.clientId ?? null,
         campusId: profile.campusId ?? targetUser?.campusId ?? null,
         permittedCampusIds: profile.permittedCampusIds || targetUser?.permittedCampusIds || ['all'],
-        delegatedSubCampusIds: profile.delegatedCampusIds || targetUser?.delegatedSubCampusIds || [],
+        delegatedSubCampusIds: profile.delegatedCampusIds || profile.delegatedSubCampusIds || targetUser?.delegatedSubCampusIds || [],
         allowedModules: profile.allowedModules || targetUser?.allowedModules || ['all'],
       };
 
@@ -215,6 +218,16 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
         targetUser = addUser(resolvedUserObj);
       } else if (targetUser && updateUser) {
         updateUser(targetUser.id, resolvedUserObj);
+      }
+
+      if (
+        !isSuper &&
+        resolvedUserObj.permissionLevel !== 'level_2_client_super_admin' &&
+        resolvedUserObj.campusId &&
+        resolvedUserObj.campusId !== 'all' &&
+        setCurrentCampusId
+      ) {
+        setCurrentCampusId(resolvedUserObj.campusId);
       }
 
       const effectiveId = targetUser?.id || resolvedUserObj.id;
@@ -242,9 +255,25 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
         });
       } catch {}
     } catch (err: any) {
-      console.warn('Sign-in failure (diagnostic):', err?.message);
-      // Strictly generic public message prevents account enumeration and avoids recommending setup
-      setErrorMessage('Unable to sign in. Check your email/username and password.');
+      const friendlyError =
+        err?.message || mapFirebaseAuthErrorMessage(err) || 'Invalid email or password.';
+      console.warn('Sign-in failure:', friendlyError);
+      setErrorMessage(friendlyError);
+      try {
+        recordCampusLoginActivity({
+          campusId: campuses[0]?.id || 'campus-khiali',
+          campusName: campuses[0]?.name || 'Portal Gateway',
+          campusCode: campuses[0]?.code || 'HQ',
+          userName: cleanInput,
+          userRole: 'Unverified Attempt',
+          userEmail: cleanInput,
+          ipAddress: '127.0.0.1',
+          device: navigator.userAgent.slice(0, 45),
+          status: 'failed',
+          method: 'portal_login',
+          remarks: friendlyError,
+        });
+      } catch {}
     } finally {
       setIsAuthenticating(false);
     }
@@ -701,50 +730,80 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 <label htmlFor="owner-secret" className="font-bold text-slate-300 block mb-1">
                   Installation / Bootstrap Secret {isOwnerAlreadyRegistered && <span className="text-amber-400">(Required for existing setup)</span>}
                 </label>
-                <input
-                  id="owner-secret"
-                  name="bootstrapSecret"
-                  type="password"
-                  value={bootstrapSecret}
-                  onChange={(e) => setBootstrapSecret(e.target.value)}
-                  placeholder="Optional for fresh setup, or server installation key"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono"
-                  autoComplete="off"
-                />
+                <div className="relative">
+                  <input
+                    id="owner-secret"
+                    name="bootstrapSecret"
+                    type={showOwnerSecret ? 'text' : 'password'}
+                    value={bootstrapSecret}
+                    onChange={(e) => setBootstrapSecret(e.target.value)}
+                    placeholder="Optional for fresh setup, or server installation key"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-11 py-2.5 text-white font-mono"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOwnerSecret(!showOwnerSecret)}
+                    className="absolute right-1 top-0.5 bottom-0.5 w-10 h-10 flex items-center justify-center text-slate-400 hover:text-slate-200 cursor-pointer rounded-lg"
+                    aria-label={showOwnerSecret ? 'Hide bootstrap secret' : 'Show bootstrap secret'}
+                  >
+                    {showOwnerSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label htmlFor="owner-password" className="font-bold text-slate-300 block mb-1">
                   Master Password (min 8 characters)
                 </label>
-                <input
-                  id="owner-password"
-                  name="ownerPassword"
-                  type="password"
-                  value={ownerPassword}
-                  onChange={(e) => setOwnerPassword(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono"
-                  placeholder="At least 8 characters..."
-                  autoComplete="new-password"
-                  required
-                />
+                <div className="relative">
+                  <input
+                    id="owner-password"
+                    name="ownerPassword"
+                    type={showOwnerPassword ? 'text' : 'password'}
+                    value={ownerPassword}
+                    onChange={(e) => setOwnerPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-11 py-2.5 text-white font-mono"
+                    placeholder="At least 8 characters..."
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOwnerPassword(!showOwnerPassword)}
+                    className="absolute right-1 top-0.5 bottom-0.5 w-10 h-10 flex items-center justify-center text-slate-400 hover:text-slate-200 cursor-pointer rounded-lg"
+                    aria-label={showOwnerPassword ? 'Hide master password' : 'Show master password'}
+                  >
+                    {showOwnerPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label htmlFor="owner-confirm-password" className="font-bold text-slate-300 block mb-1">
                   Confirm Master Password
                 </label>
-                <input
-                  id="owner-confirm-password"
-                  name="confirmOwnerPassword"
-                  type="password"
-                  value={confirmOwnerPassword}
-                  onChange={(e) => setConfirmOwnerPassword(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono"
-                  placeholder="Repeat password..."
-                  autoComplete="new-password"
-                  required
-                />
+                <div className="relative">
+                  <input
+                    id="owner-confirm-password"
+                    name="confirmOwnerPassword"
+                    type={showConfirmOwnerPassword ? 'text' : 'password'}
+                    value={confirmOwnerPassword}
+                    onChange={(e) => setConfirmOwnerPassword(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-3 pr-11 py-2.5 text-white font-mono"
+                    placeholder="Repeat password..."
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmOwnerPassword(!showConfirmOwnerPassword)}
+                    className="absolute right-1 top-0.5 bottom-0.5 w-10 h-10 flex items-center justify-center text-slate-400 hover:text-slate-200 cursor-pointer rounded-lg"
+                    aria-label={showConfirmOwnerPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showConfirmOwnerPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2">

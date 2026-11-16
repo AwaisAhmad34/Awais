@@ -133,6 +133,10 @@ import {
 } from './PlatformAdminExtendedModules';
 import { ClientFinancialReportsPermissionsManager } from './ClientFinancialReportsPermissionsManager';
 import { SystemUserActivityWidget } from './SystemUserActivityWidget';
+import {
+  getConfiguredCampusOpeningBalance,
+  resolveCashInHandAccountHeadFromList,
+} from '../utils/campusOpeningBalance';
 import { DeploymentReadinessHub } from './DeploymentReadinessHub';
 
 export type PlatformAdminNavSection =
@@ -213,6 +217,8 @@ export const PlatformSiteAdminHub: React.FC<{
     currentUser,
     isSuperAdmin,
     orgSettings,
+    activePeriod,
+    getAccountOpeningDrCr,
     exportSystemState,
     logActivity,
     logout,
@@ -265,6 +271,7 @@ export const PlatformSiteAdminHub: React.FC<{
   const [clientFormMainCampusCode, setClientFormMainCampusCode] = useState('');
   const [clientFormMainCampusCity, setClientFormMainCampusCity] = useState('');
   const [clientFormMainCampusFloat, setClientFormMainCampusFloat] = useState('50000');
+  const [clientFormMainCampusOpeningBalance, setClientFormMainCampusOpeningBalance] = useState('0');
   const [clientFormMainCampusPassword, setClientFormMainCampusPassword] = useState('campus');
   const [clientFormLogoUrl, setClientFormLogoUrl] = useState('');
 
@@ -282,6 +289,7 @@ export const PlatformSiteAdminHub: React.FC<{
   const [newCampusAccountant, setNewCampusAccountant] = useState('');
   const [newCampusPassword, setNewCampusPassword] = useState('');
   const [newCampusFloat, setNewCampusFloat] = useState('35000');
+  const [newCampusOpeningBalance, setNewCampusOpeningBalance] = useState('0');
   const [newCampusParentId, setNewCampusParentId] = useState<string>('none');
 
   // Campus Edit Modal State
@@ -291,6 +299,7 @@ export const PlatformSiteAdminHub: React.FC<{
   const [editCampusCity, setEditCampusCity] = useState('');
   const [editCampusAccountant, setEditCampusAccountant] = useState('');
   const [editCampusFloat, setEditCampusFloat] = useState('35000');
+  const [editCampusOpeningBalance, setEditCampusOpeningBalance] = useState('0');
   const [editCampusParentId, setEditCampusParentId] = useState<string>('none');
   const [editCampusStatus, setEditCampusStatus] = useState<'active' | 'inactive'>('active');
   const [editCampusLoginEnabled, setEditCampusLoginEnabled] = useState(true);
@@ -523,6 +532,7 @@ export const PlatformSiteAdminHub: React.FC<{
           const mainCampusCode = clientFormMainCampusCode.trim().toUpperCase() || `${cleanCode}-MAIN`;
           const mainCampusCity = clientFormMainCampusCity.trim() || 'Head Office';
           const mainCampusFloat = Number(clientFormMainCampusFloat) || 50000;
+          const mainCampusOpeningBalance = Math.max(0, Number(clientFormMainCampusOpeningBalance) || 0);
           const mainAdminName = clientFormContact.trim() || `${clientFormName.trim()} Administrator`;
           const mainAdminPass = clientFormMainCampusPassword.trim() || 'campus123';
 
@@ -534,6 +544,8 @@ export const PlatformSiteAdminHub: React.FC<{
             accountantName: mainAdminName,
             pettyCashFloat: mainCampusFloat,
             currentPettyCash: mainCampusFloat,
+            openingBalance: mainCampusOpeningBalance,
+            openingBalanceFiscalYear: activePeriod?.fiscalYear || '2026-2027',
             status: 'active',
             isMainCampus: true,
             parentCampusId: null,
@@ -992,6 +1004,7 @@ export const PlatformSiteAdminHub: React.FC<{
     setNewCampusAccountant('');
     setNewCampusPassword(generateDynamicPassword('SUB'));
     setNewCampusFloat('35000');
+    setNewCampusOpeningBalance('0');
     setNewCampusParentId(preselectedParentId || 'none');
     setIsCampusModalOpen(true);
   };
@@ -1014,6 +1027,7 @@ export const PlatformSiteAdminHub: React.FC<{
     const resolvedClientId = newCampusClientId || (parent as any)?.clientId || (clients[0]?.id || null);
 
     const newId = `campus-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+    const openingBalValue = Math.max(0, Number(newCampusOpeningBalance) || 0);
     const newCampus: ExtendedCampusNode = {
       id: newId,
       code: cleanCode,
@@ -1022,6 +1036,8 @@ export const PlatformSiteAdminHub: React.FC<{
       accountantName: newCampusAccountant.trim() || (parentId ? 'Branch Accountant' : 'Main Campus Administrator'),
       pettyCashFloat: Number(newCampusFloat) || 35000,
       currentPettyCash: Number(newCampusFloat) || 35000,
+      openingBalance: openingBalValue,
+      openingBalanceFiscalYear: activePeriod?.fiscalYear || '2026-2027',
       status: 'active',
       isMainCampus: !parentId,
       parentCampusId: parentId,
@@ -1144,6 +1160,19 @@ export const PlatformSiteAdminHub: React.FC<{
     setEditCampusCity(campus.city || 'Punjab');
     setEditCampusAccountant(campus.accountantName || '');
     setEditCampusFloat(String(campus.pettyCashFloat || 35000));
+    const cashHead = resolveCashInHandAccountHeadFromList(accountHeads);
+    const opDrCr =
+      cashHead && getAccountOpeningDrCr
+        ? getAccountOpeningDrCr(cashHead, campus.id)
+        : null;
+    const syncedLedgerOpening = opDrCr
+      ? (Number(opDrCr.debit) || 0) - (Number(opDrCr.credit) || 0)
+      : 0;
+    const initialOpening =
+      campus.openingBalance !== undefined
+        ? getConfiguredCampusOpeningBalance(campus)
+        : syncedLedgerOpening;
+    setEditCampusOpeningBalance(String(initialOpening));
     setEditCampusParentId(campus.parentCampusId || 'none');
     setEditCampusStatus((campus.status as any) || 'active');
     setEditCampusLoginEnabled(campus.loginEnabled !== false);
@@ -1172,12 +1201,15 @@ export const PlatformSiteAdminHub: React.FC<{
       }
     }
 
+    const parsedOpeningBalance = Math.max(0, Number(editCampusOpeningBalance) || 0);
     const updates: Partial<ExtendedCampusNode> = {
       name: editCampusName.trim(),
       code: cleanCode,
       city: editCampusCity.trim() || 'Punjab',
       accountantName: editCampusAccountant.trim() || 'Branch Accountant',
       pettyCashFloat: Number(editCampusFloat) || 35000,
+      openingBalance: parsedOpeningBalance,
+      openingBalanceFiscalYear: activePeriod?.fiscalYear || editingCampus.openingBalanceFiscalYear || '2026-2027',
       parentCampusId: targetParent,
       isMainCampus: !targetParent,
       status: editCampusStatus,
@@ -1193,6 +1225,7 @@ export const PlatformSiteAdminHub: React.FC<{
       ...(editingCampus as ExtendedCampusNode),
       ...updates,
     };
+    window.__APLUS_CLOUD_SYNC__?.syncCampus?.(updatedCampusObj).catch(() => {});
     const nextCredStatus: 'active' | 'suspended' =
       updates.loginEnabled === false || updates.status === 'inactive' ? 'suspended' : 'active';
     saveCampusCredentialToCloud({
@@ -1217,10 +1250,10 @@ export const PlatformSiteAdminHub: React.FC<{
       action: 'UPDATE_CAMPUS_DETAILS',
       targetEntity: 'Campus',
       targetId: editingCampus.id,
-      details: `Updated campus details for '${updates.name}' (${updates.code}). Parent: ${targetParent || 'None (Main)'}, Status: ${updates.status}, Login Enabled: ${updates.loginEnabled}.`,
+      details: `Updated campus details for '${updates.name}' (${updates.code}). Opening Balance: PKR ${parsedOpeningBalance.toLocaleString()} (${updates.openingBalanceFiscalYear}), Parent: ${targetParent || 'None (Main)'}, Status: ${updates.status}, Login Enabled: ${updates.loginEnabled}.`,
     });
 
-    triggerToast('success', `Campus '${updates.name}' updated & cloud credentials synchronized!`);
+    triggerToast('success', `Campus '${updates.name}' updated (Opening Balance: PKR ${parsedOpeningBalance.toLocaleString()}) & synchronized!`);
     setEditingCampus(null);
   };
 
@@ -1480,11 +1513,18 @@ export const PlatformSiteAdminHub: React.FC<{
           details: `Created global user '${provisioned.userRecord.name}' (@${cleanUsername}, ${resolvedEmail}) with ${normalizedLevel} & synced to Firebase Auth + Firestore.`,
         });
 
+        if (!provisioned.authProvisioned) {
+          triggerToast(
+            'error',
+            provisioned.warning ||
+              `User '@${cleanUsername}' profile saved in Firestore, but Firebase Authentication failed to register those credentials. Check the email or password before signing in.`
+          );
+          return;
+        }
+
         triggerToast(
-          provisioned.warning ? 'warning' : 'success',
-          provisioned.warning
-            ? `User '@${cleanUsername}' saved globally in Firestore DB. Note: ${provisioned.warning}`
-            : `Created '@${cleanUsername}' (${resolvedEmail}) — Synced globally to Cloud DB & Firebase Auth!`
+          'success',
+          `Created '@${cleanUsername}' (${resolvedEmail}) — Synced globally to Cloud DB & Firebase Auth!`
         );
       } else {
         const updates: any = {
@@ -1504,11 +1544,18 @@ export const PlatformSiteAdminHub: React.FC<{
           details: `Updated user account '@${cleanUsername}' & synchronized changes globally in Firestore.`,
         });
 
+        if (userFormPassword.trim() && !provisioned.authProvisioned) {
+          triggerToast(
+            'warning',
+            provisioned.warning ||
+              `Updated '@${cleanUsername}' in Firestore DB, but Firebase Auth password could not be verified/changed from client session.`
+          );
+          return;
+        }
+
         triggerToast(
-          provisioned.warning ? 'warning' : 'success',
-          provisioned.warning
-            ? `Updated '@${cleanUsername}' in global DB. Note: ${provisioned.warning}`
-            : `Updated user '@${cleanUsername}' & synced globally to Firestore DB!`
+          'success',
+          `Updated user '@${cleanUsername}' & synced globally to Firestore DB!`
         );
       }
 
@@ -2423,6 +2470,7 @@ export const PlatformSiteAdminHub: React.FC<{
                       setClientFormMainCampusCode('');
                       setClientFormMainCampusCity('');
                       setClientFormMainCampusFloat('50000');
+                      setClientFormMainCampusOpeningBalance('0');
                       setClientFormMainCampusPassword(generateDynamicPassword('ADMIN'));
                       setIsClientModalOpen(true);
                     }}
@@ -2468,6 +2516,8 @@ export const PlatformSiteAdminHub: React.FC<{
                                 setClientFormMaxCampuses('10');
                                 setClientFormMaxUsers('40');
                                 setClientFormRegisterMainCampus(true);
+                                setClientFormMainCampusFloat('50000');
+                                setClientFormMainCampusOpeningBalance('0');
                                 setClientFormMainCampusPassword(generateDynamicPassword('ADMIN'));
                                 setIsClientModalOpen(true);
                               }}
@@ -2663,6 +2713,8 @@ export const PlatformSiteAdminHub: React.FC<{
                       setNewCampusParentId('none');
                       setNewCampusName('');
                       setNewCampusCode(`C-${campuses.length + 1}`);
+                      setNewCampusFloat('35000');
+                      setNewCampusOpeningBalance('0');
                       setNewCampusPassword(generateDynamicPassword('CAMP'));
                       setIsCampusModalOpen(true);
                     }}
@@ -2711,9 +2763,14 @@ export const PlatformSiteAdminHub: React.FC<{
                               {isMain ? 'Main Campus (Parent)' : 'Sub-Campus (Child)'}
                             </span>
                           </div>
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            Float: PKR {campus.pettyCashFloat?.toLocaleString() || '35,000'}
-                          </span>
+                          <div className="text-right space-y-0.5">
+                            <span className="text-[10px] text-indigo-300 font-mono font-bold block">
+                              Opening Bal: PKR {(Number(campus.openingBalance) || 0).toLocaleString()}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono block">
+                              Float: PKR {campus.pettyCashFloat?.toLocaleString() || '35,000'}
+                            </span>
+                          </div>
                         </div>
 
                         <h4 className="text-sm font-bold text-white">{campus.name}</h4>
@@ -2758,6 +2815,8 @@ export const PlatformSiteAdminHub: React.FC<{
                                 setNewCampusName(`${campus.name} Sub-Branch`);
                                 setNewCampusCode(`${campus.code}-S${subBranches.length + 1}`);
                                 setNewCampusCity(campus.city || 'Punjab');
+                                setNewCampusFloat('35000');
+                                setNewCampusOpeningBalance('0');
                                 setNewCampusPassword(generateDynamicPassword(campus.code));
                                 setIsCampusModalOpen(true);
                               }}
@@ -3299,6 +3358,8 @@ export const PlatformSiteAdminHub: React.FC<{
                 setNewCampusParentId('none');
                 setNewCampusName('');
                 setNewCampusCode(`C-${campuses.length + 1}`);
+                setNewCampusFloat('35000');
+                setNewCampusOpeningBalance('0');
                 setNewCampusPassword(generateDynamicPassword('CAMP'));
                 setIsCampusModalOpen(true);
               }}
@@ -3813,7 +3874,7 @@ export const PlatformSiteAdminHub: React.FC<{
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div>
                           <label className="block text-slate-300 mb-1 font-bold">City / Location</label>
                           <input
@@ -3822,6 +3883,18 @@ export const PlatformSiteAdminHub: React.FC<{
                             onChange={(e) => setClientFormMainCampusCity(e.target.value)}
                             placeholder="e.g. Lahore / Islamabad"
                             className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-300 mb-1 font-bold">Opening Balance (PKR)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={clientFormMainCampusOpeningBalance}
+                            onChange={(e) => setClientFormMainCampusOpeningBalance(e.target.value)}
+                            placeholder="0"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-400"
                           />
                         </div>
                         <div>
@@ -4049,8 +4122,23 @@ export const PlatformSiteAdminHub: React.FC<{
                 </div>
               </div>
 
-              {/* Petty Cash Float and Password */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Opening Balance, Petty Cash Float and Password */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">
+                    Opening Balance (PKR) · FY {activePeriod?.fiscalYear || '2026-2027'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={newCampusOpeningBalance}
+                    onChange={(e) => setNewCampusOpeningBalance(e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-slate-400 mb-1 font-bold">Petty Cash Float (PKR)</label>
                   <input
@@ -4083,6 +4171,9 @@ export const PlatformSiteAdminHub: React.FC<{
                   </div>
                 </div>
               </div>
+              <p className="text-[10px] text-slate-400 -mt-2">
+                Initial Opening Balance automatically seeds the campus&apos;s fiscal-year Cash In Hand (100-4-01) and Capital Funds (200-1-01) ledgers.
+              </p>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
                 <button
@@ -4433,7 +4524,21 @@ export const PlatformSiteAdminHub: React.FC<{
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">
+                    Opening Balance (PKR) · FY {activePeriod?.fiscalYear || '2026-2027'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={editCampusOpeningBalance}
+                    onChange={(e) => setEditCampusOpeningBalance(e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-500"
+                  />
+                </div>
                 <div>
                   <label className="block text-slate-400 mb-1 font-bold">Petty Cash Float (PKR)</label>
                   <input
@@ -4456,6 +4561,9 @@ export const PlatformSiteAdminHub: React.FC<{
                   </select>
                 </div>
               </div>
+              <p className="text-[10px] text-slate-500 -mt-2">
+                Updating Opening Balance synchronizes Cash In Hand (100-4-01) and Capital Funds (200-1-01) across fiscal-year ledgers and financial statements.
+              </p>
 
               <div>
                 <label className="block text-slate-400 mb-1 font-bold">

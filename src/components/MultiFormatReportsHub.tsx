@@ -24,6 +24,7 @@ import {
   printOrDownloadElement,
   SchoolLogo,
 } from '../core/aplusEngine';
+import { resolveEffectiveAccountOpeningDrCr } from '../utils/campusOpeningBalance';
 import {
   validateClientReportAccess,
   getStoredClientReportPermissions,
@@ -356,14 +357,26 @@ export const MultiFormatReportsHub: React.FC<{
   }, [pettyCashTransactions, currentCampusId, isCampusAdmin, activeCampusId, dateFrom, dateTo]);
 
   // Compute Account-Level Movements & Balances for Formats 2–10
+  const effectiveReportCampusId =
+    isCampusAdmin && activeCampusId ? activeCampusId : currentCampusId;
+
   const accountAnalytics = useMemo(() => {
     return (accountHeads || []).map((head) => {
       let openDr = 0;
       let openCr = 0;
       if (getAccountOpeningDrCr) {
-        const op = getAccountOpeningDrCr(head, currentCampusId);
+        const op = getAccountOpeningDrCr(head, effectiveReportCampusId);
         openDr = Number(op?.debit) || 0;
         openCr = Number(op?.credit) || 0;
+      } else {
+        const op = resolveEffectiveAccountOpeningDrCr(
+          head,
+          effectiveReportCampusId,
+          campuses || [],
+          accountHeads || []
+        );
+        openDr = op.debit;
+        openCr = op.credit;
       }
 
       let periodDr = 0;
@@ -430,7 +443,7 @@ export const MultiFormatReportsHub: React.FC<{
           openDr > 0 || openCr > 0 || periodDr > 0 || periodCr > 0,
       };
     });
-  }, [accountHeads, scopedVouchers, currentCampusId, getAccountOpeningDrCr]);
+  }, [accountHeads, scopedVouchers, effectiveReportCampusId, getAccountOpeningDrCr, campuses]);
 
   const activeAccountRows = useMemo(() => {
     const active = accountAnalytics.filter((a) => a.hasActivity);

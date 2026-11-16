@@ -1,11 +1,15 @@
 import { TenantAuthProvider } from './context/TenantAuthContext';
-import { getVerifiedProfile } from './services/secureAuthentication';
+import {
+  getVerifiedProfile,
+  initAuthListener,
+  getAuthResolutionState,
+} from './services/secureAuthentication';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   AccountingProvider,
   MainApp,
@@ -54,23 +58,94 @@ window.__APLUS_TOP_BAR__ = AplusTopBar;
 (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
 
 function InnerApp() {
-  const { currentUser, isSuperAdmin, setCurrentCampusId, campuses } = useAccounting();
+  const { currentUser, isSuperAdmin, setCurrentCampusId, loginAsUser, logout, users, addUser, updateUser } = useAccounting();
   const [adminViewMode, setAdminViewMode] = useState<'platform_control_panel' | 'campus_operations'>('platform_control_panel');
   const [clientViewMode, setClientViewMode] = useState<'client_hub' | 'campus_operations'>('client_hub');
+  const [isAuthResolving, setIsAuthResolving] = useState<boolean>(() => !getAuthResolutionState().resolved);
+  const [, setAuthTick] = useState(0);
+
+  const bridgeRef = useRef({ currentUser, loginAsUser, logout, users, addUser, updateUser, setCurrentCampusId });
+  bridgeRef.current = { currentUser, loginAsUser, logout, users, addUser, updateUser, setCurrentCampusId };
+
+  useEffect(() => {
+    const unsubscribe = initAuthListener(
+      (profile) => {
+        const bridge = bridgeRef.current;
+        if (!profile || !bridge.loginAsUser) {
+          setIsAuthResolving(false);
+          setAuthTick((t) => t + 1);
+          if (bridge.currentUser && bridge.logout) {
+            bridge.logout();
+          }
+          return;
+        }
+        const isSuper = profile.permissionLevel === 'level_1_platform_super_admin';
+        let target = bridge.users?.find(
+          (u: any) =>
+            u.id === profile.id ||
+            (profile.email && u.email?.toLowerCase() === profile.email.toLowerCase()) ||
+            (profile.username && u.username?.toLowerCase() === profile.username.toLowerCase())
+        );
+        const resolvedUserObj = {
+          id: target?.id || profile.id,
+          uid: profile.uid,
+          username: profile.username || target?.username || profile.email?.split('@')[0] || 'user',
+          name: profile.name || target?.name || 'Campus Administrator',
+          email: profile.email || target?.email || `${profile.username}@institution.edu.pk`,
+          role: profile.role || target?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
+          permissionLevel: profile.permissionLevel,
+          status: 'active',
+          clientId: profile.clientId ?? target?.clientId ?? null,
+          campusId: profile.campusId ?? target?.campusId ?? null,
+          permittedCampusIds: profile.permittedCampusIds || target?.permittedCampusIds || ['all'],
+          delegatedSubCampusIds: profile.delegatedCampusIds || profile.delegatedSubCampusIds || target?.delegatedSubCampusIds || [],
+          allowedModules: profile.allowedModules || target?.allowedModules || ['all'],
+        };
+        if (!target && bridge.addUser) {
+          target = bridge.addUser(resolvedUserObj);
+        } else if (target && bridge.updateUser) {
+          bridge.updateUser(target.id, resolvedUserObj);
+        }
+        if (
+          !isSuper &&
+          resolvedUserObj.permissionLevel !== 'level_2_client_super_admin' &&
+          resolvedUserObj.campusId &&
+          resolvedUserObj.campusId !== 'all' &&
+          bridge.setCurrentCampusId
+        ) {
+          bridge.setCurrentCampusId(resolvedUserObj.campusId);
+        }
+        const effectiveId = target?.id || resolvedUserObj.id;
+        if (bridge.currentUser?.id !== effectiveId || bridge.currentUser?.permissionLevel !== resolvedUserObj.permissionLevel) {
+          (bridge.loginAsUser as any)(effectiveId, isSuper, { ...resolvedUserObj, id: effectiveId });
+        }
+        setIsAuthResolving(false);
+        setAuthTick((t) => t + 1);
+      },
+      (state) => {
+        setIsAuthResolving(!state.resolved || state.resolving);
+        setAuthTick((t) => t + 1);
+      }
+    );
+    return () => unsubscribe?.();
+  }, []);
 
   const verifiedProfile = getVerifiedProfile();
+
+  if (isAuthResolving && (!currentUser || !verifiedProfile)) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+        <div className="text-center space-y-2">
+          <div className="w-7 h-7 mx-auto rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+          <p className="text-xs text-slate-400">Verifying institutional session &amp; campus permissions...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Strict Login Lockout: Never allow access to any panel without verified login
   if (!currentUser || !verifiedProfile) {
     return <DynamicCampusLoginPortal />;
-  }
-
-  if (verifiedProfile?.permissionLevel !== 'level_1_platform_super_admin') {
-    return <div className="min-h-screen bg-slate-950 text-white p-8">
-      <h1 className="text-xl font-bold">Workspace migration required</h1>
-      <p className="mt-3">Your account is verified. The legacy shared ledger must be migrated to your organization before this workspace can open. Contact the site owner.</p>
-      <button className="mt-4 underline" onClick={() => window.location.reload()}>Return to sign in</button>
-    </div>;
   }
 
   // Hierarchy Level 1: Platform Super Admin (Site Owner) - Strictly registered Level 1 account ONLY
