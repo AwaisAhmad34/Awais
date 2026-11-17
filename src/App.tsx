@@ -280,6 +280,9 @@ function InnerApp() {
           permittedCampusIds: profile.permittedCampusIds || target?.permittedCampusIds || ['all'],
           delegatedSubCampusIds: profile.delegatedCampusIds || profile.delegatedSubCampusIds || target?.delegatedSubCampusIds || [],
           allowedModules: profile.allowedModules || target?.allowedModules || ['all'],
+          designation: profile.designation || target?.designation || profile.role,
+          departmentalRole: profile.departmentalRole || target?.departmentalRole,
+          readOnly: Boolean(profile.readOnly || target?.readOnly),
         };
 
         if (!target && bridge.addUser) {
@@ -595,7 +598,7 @@ export default function App() {
     (window as any).__APLUS_PROVISION_CLOUD_USER__ = async (evt: { action: 'upsert' | 'status'; user: any }) => {
       try {
         const u = evt?.user;
-        if (!u) return;
+        if (!u) return { authProvisioned: false, warning: 'Missing user payload.' };
         if (evt.action === 'status') {
           await setGlobalUserStatusInCloud(
             {
@@ -607,7 +610,7 @@ export default function App() {
             },
             u.status === 'suspended' ? 'suspended' : 'active'
           );
-          return;
+          return { authProvisioned: true };
         }
         const res = await provisionGlobalUserAccount({
           id: u.id,
@@ -620,6 +623,7 @@ export default function App() {
           permissionLevel: u.permissionLevel,
           isSuperAdmin:
             u.role === 'super_admin' ||
+            u.role === 'level_1_platform_super_admin' ||
             u.permissionLevel === 'level_1_platform_super_admin' ||
             Boolean(u.isSuperAdmin),
           clientId: u.clientId ?? null,
@@ -631,15 +635,20 @@ export default function App() {
               : u.campusId && u.campusId !== 'all'
               ? [u.campusId]
               : ['all'],
-          allowedModules: u.allowedModules || ['all'],
+          delegatedSubCampusIds: u.delegatedSubCampusIds || [],
+          allowedModules: u.allowedModules,
           status: u.status || 'active',
           designation: u.designation,
+          departmentalRole: u.departmentalRole,
+          readOnly: u.readOnly,
         });
         if (u.password && !res.authProvisioned && res.warning) {
           console.warn('Cloud user credential provisioning notice:', res.warning);
         }
-      } catch (err) {
+        return res;
+      } catch (err: any) {
         console.warn('Cloud user provisioning bridge notice:', err);
+        return { authProvisioned: false, warning: err?.message || 'Cloud user provisioning failed.' };
       }
     };
   }, []);

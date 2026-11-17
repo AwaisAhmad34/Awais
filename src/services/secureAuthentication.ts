@@ -17,6 +17,7 @@ import {
   normalizeUsernameKey,
   syncUserRecordToLocalStorageCache,
 } from './globalUserSyncService';
+import { getDefaultModulesForRole, isUserReadOnlyRole } from './rolePresets';
 
 export interface AuthResolutionState {
   resolved: boolean;
@@ -702,6 +703,13 @@ async function restoreAccountInternal(user: User) {
         isRegistryOwner ||
         Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin');
 
+      const resolvedGlobalAllowedModules =
+        Array.isArray(globalUser.allowedModules) && globalUser.allowedModules.length > 0
+          ? globalUser.allowedModules
+          : isGlobalOwner || normalizedGlobalLevel === 'level_2_client_super_admin'
+          ? ['all']
+          : getDefaultModulesForRole(normalizedGlobalLevel, globalUser.role);
+
       const globalMembership = {
         userId: globalUser.id,
         name: globalUser.name || user.displayName || emailLower.split('@')[0],
@@ -713,6 +721,12 @@ async function restoreAccountInternal(user: User) {
         role: isGlobalOwner
           ? 'level_1_platform_super_admin'
           : globalUser.role || normalizedGlobalLevel || 'Accountant',
+        designation: globalUser.designation || globalUser.role,
+        departmentalRole: globalUser.departmentalRole,
+        readOnly: Boolean(
+          globalUser.readOnly ||
+            isUserReadOnlyRole({ role: globalUser.role, permissionLevel: normalizedGlobalLevel })
+        ),
         clientId: isGlobalOwner ? null : (globalUser.clientId ?? null),
         campusId: isGlobalOwner ? null : (globalUser.campusId ?? null),
         permittedCampusIds: globalUser.permittedCampusIds || (globalUser.campusId ? [globalUser.campusId] : ['all']),
@@ -720,7 +734,7 @@ async function restoreAccountInternal(user: User) {
           globalUser.delegatedSubCampusIds && globalUser.delegatedSubCampusIds.length > 0
             ? globalUser.delegatedSubCampusIds
             : globalUser.permittedCampusIds || ['all'],
-        allowedModules: globalUser.allowedModules || ['all'],
+        allowedModules: resolvedGlobalAllowedModules,
         status: globalUser.status || 'active',
         isPlatformAdmin: isGlobalOwner,
         createdAt: globalUser.createdAt || new Date().toISOString(),
@@ -757,6 +771,14 @@ async function restoreAccountInternal(user: User) {
     const isGlobalOwner =
       isRegistryOwner ||
       Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin');
+    const syncedAllowedModules =
+      Array.isArray(globalUser.allowedModules) && globalUser.allowedModules.length > 0
+        ? globalUser.allowedModules
+        : Array.isArray(membership?.allowedModules) && membership.allowedModules.length > 0
+        ? membership.allowedModules
+        : isGlobalOwner || normalizedGlobalLevel === 'level_2_client_super_admin'
+        ? ['all']
+        : getDefaultModulesForRole(normalizedGlobalLevel, globalUser.role || membership?.role);
 
     const syncedMembership = {
       ...membership,
@@ -770,6 +792,17 @@ async function restoreAccountInternal(user: User) {
       role: isGlobalOwner
         ? 'level_1_platform_super_admin'
         : globalUser.role || membership?.role,
+      designation: globalUser.designation || membership?.designation || globalUser.role,
+      departmentalRole: globalUser.departmentalRole || membership?.departmentalRole,
+      readOnly: Boolean(
+        globalUser.readOnly !== undefined
+          ? globalUser.readOnly
+          : isUserReadOnlyRole({
+              role: globalUser.role || membership?.role,
+              permissionLevel: normalizedGlobalLevel,
+              readOnly: membership?.readOnly,
+            })
+      ),
       clientId: isGlobalOwner ? null : (globalUser.clientId !== undefined ? globalUser.clientId : membership?.clientId),
       campusId: isGlobalOwner ? null : (globalUser.campusId !== undefined ? globalUser.campusId : membership?.campusId),
       permittedCampusIds:
@@ -779,7 +812,7 @@ async function restoreAccountInternal(user: User) {
       delegatedCampusIds: globalUser.delegatedSubCampusIds?.length
         ? globalUser.delegatedSubCampusIds
         : membership?.delegatedCampusIds,
-      allowedModules: globalUser.allowedModules || membership?.allowedModules,
+      allowedModules: syncedAllowedModules,
       isPlatformAdmin: isGlobalOwner || Boolean(membership?.isPlatformAdmin && isRegistryOwner),
       status: globalUser.status || membership?.status,
       updatedAt: globalUser.updatedAt || membership?.updatedAt,
@@ -788,9 +821,12 @@ async function restoreAccountInternal(user: User) {
     if (
       membership?.userId !== syncedMembership.userId ||
       membership?.permissionLevel !== syncedMembership.permissionLevel ||
+      membership?.role !== syncedMembership.role ||
       membership?.status !== syncedMembership.status ||
       membership?.campusId !== syncedMembership.campusId ||
-      membership?.clientId !== syncedMembership.clientId
+      membership?.clientId !== syncedMembership.clientId ||
+      JSON.stringify(membership?.allowedModules || []) !== JSON.stringify(syncedMembership.allowedModules || []) ||
+      JSON.stringify(membership?.permittedCampusIds || []) !== JSON.stringify(syncedMembership.permittedCampusIds || [])
     ) {
       setDoc(mRef, syncedMembership, { merge: true }).catch(() => {});
     }
@@ -894,7 +930,7 @@ async function restoreAccountInternal(user: User) {
 
   const assignedRole = isOwner
     ? 'level_1_platform_super_admin'
-    : (roles[normalizedLevel] || membership.role || 'level_2_client_super_admin');
+    : (membership.role || roles[normalizedLevel] || 'level_2_client_super_admin');
   const resolvedUsername =
     membership.username || (user.email?.split('@')[0] || user.email || 'user');
   const effectivePermissionLevel = isOwner ? 'level_1_platform_super_admin' : normalizedLevel;
@@ -905,6 +941,17 @@ async function restoreAccountInternal(user: User) {
       : resolvedCampusId
       ? [resolvedCampusId]
       : ['all'];
+  const resolvedAllowedModules =
+    Array.isArray(membership.allowedModules) && membership.allowedModules.length > 0
+      ? membership.allowedModules
+      : isOwner || effectivePermissionLevel === 'level_2_client_super_admin'
+      ? ['all']
+      : getDefaultModulesForRole(effectivePermissionLevel, assignedRole);
+  const resolvedReadOnly = Boolean(
+    !isOwner &&
+      (membership.readOnly ||
+        isUserReadOnlyRole({ role: assignedRole, permissionLevel: effectivePermissionLevel }))
+  );
 
   verifiedProfile = {
     id: resolvedId,
@@ -918,9 +965,12 @@ async function restoreAccountInternal(user: User) {
     clientId: isOwner ? null : (membership.clientId ?? null),
     campusId: resolvedCampusId,
     permittedCampusIds: resolvedPermittedCampuses,
-    allowedModules: membership.allowedModules || ['all'],
+    allowedModules: resolvedAllowedModules,
     delegatedCampusIds: membership.delegatedCampusIds || [],
     delegatedSubCampusIds: membership.delegatedCampusIds || [],
+    designation: membership.designation || assignedRole,
+    departmentalRole: membership.departmentalRole,
+    readOnly: resolvedReadOnly,
     status: membership.status,
   };
 
@@ -943,6 +993,9 @@ async function restoreAccountInternal(user: User) {
       permittedCampusIds: verifiedProfile.permittedCampusIds,
       delegatedSubCampusIds: verifiedProfile.delegatedSubCampusIds,
       allowedModules: verifiedProfile.allowedModules,
+      designation: verifiedProfile.designation,
+      departmentalRole: verifiedProfile.departmentalRole,
+      readOnly: verifiedProfile.readOnly,
       status: 'active',
       syncedToCloud: true,
       createdAt: membership?.createdAt || new Date().toISOString(),

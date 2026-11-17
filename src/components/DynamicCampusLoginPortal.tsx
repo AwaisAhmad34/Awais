@@ -213,6 +213,9 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
         permittedCampusIds: profile.permittedCampusIds || targetUser?.permittedCampusIds || ['all'],
         delegatedSubCampusIds: profile.delegatedCampusIds || profile.delegatedSubCampusIds || targetUser?.delegatedSubCampusIds || [],
         allowedModules: profile.allowedModules || targetUser?.allowedModules || ['all'],
+        designation: profile.designation || targetUser?.designation || profile.role,
+        departmentalRole: profile.departmentalRole || targetUser?.departmentalRole,
+        readOnly: Boolean(profile.readOnly || targetUser?.readOnly),
       };
 
       if (!targetUser && addUser) {

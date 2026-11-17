@@ -107,6 +107,11 @@ import {
   setGlobalUserStatusInCloud,
   type GlobalUserRecord,
 } from '../services/globalUserSyncService';
+import {
+  SYSTEM_SELECTIVE_MODULE_LIST,
+  getDefaultModulesForRole,
+  isUserReadOnlyRole,
+} from '../services/rolePresets';
 import { getVerifiedProfile, logoutAccount } from '../services/secureAuthentication';
 import { ConfigurableApprovalMatrixModule } from './ConfigurableApprovalMatrixModule';
 import { GlobalRecycleBinModule } from './GlobalRecycleBinModule';
@@ -330,7 +335,21 @@ export const PlatformSiteAdminHub: React.FC<{
   const [userFormCampusId, setUserFormCampusId] = useState<string>(campuses[0]?.id || '');
   const [userFormLevel, setUserFormLevel] = useState<PermissionLevel>('level_4_sub_campus_admin');
   const [userFormDelegatedSubCampuses, setUserFormDelegatedSubCampuses] = useState<string[]>([]);
+  const [userFormAllowedModules, setUserFormAllowedModules] = useState<string[]>(() =>
+    getDefaultModulesForRole('level_4_sub_campus_admin', 'Accountant')
+  );
+  const [userFormReadOnly, setUserFormReadOnly] = useState<boolean>(false);
   const [userFormStatus, setUserFormStatus] = useState<'active' | 'suspended'>('active');
+  const [lastCreatedCredentialsBanner, setLastCreatedCredentialsBanner] = useState<{
+    username: string;
+    email: string;
+    password: string;
+    role: string;
+    permissionLevel: string;
+    campusName: string;
+    modulesSummary: string;
+    readOnly: boolean;
+  } | null>(null);
 
   // Live Firestore real-time synchronization for Clients & Global Users
   useEffect(() => {
@@ -1399,33 +1418,74 @@ export const PlatformSiteAdminHub: React.FC<{
     setManagingModulesClient(null);
   };
 
+  const normalizeFormPermissionLevel = (lvl?: string): PermissionLevel => {
+    if (lvl === ('level_2_client_admin' as any)) return 'level_2_client_super_admin';
+    if (lvl === ('level_3_sub_campus_admin' as any)) return 'level_4_sub_campus_admin';
+    if (lvl === ('level_5_departmental_user' as any)) return 'level_5_departmental_staff';
+    if (
+      lvl === 'level_1_platform_super_admin' ||
+      lvl === 'level_2_client_super_admin' ||
+      lvl === 'level_3_main_campus_admin' ||
+      lvl === 'level_4_sub_campus_admin' ||
+      lvl === 'level_5_departmental_staff'
+    ) {
+      return lvl;
+    }
+    return 'level_4_sub_campus_admin';
+  };
+
+  const applySelectiveRoleDefaults = (nextLevel: PermissionLevel, nextRole: string) => {
+    const defaults = getDefaultModulesForRole(nextLevel, nextRole);
+    setUserFormAllowedModules(
+      defaults.includes('all') ? SYSTEM_SELECTIVE_MODULE_LIST.map((m) => m.id) : defaults
+    );
+    setUserFormReadOnly(isUserReadOnlyRole({ role: nextRole, permissionLevel: nextLevel }));
+  };
+
   const handleOpenAddUserModal = (preselectedCampusId?: string, userToEdit?: any) => {
     if (userToEdit) {
+      const normLvl = normalizeFormPermissionLevel(userToEdit.permissionLevel || userToEdit.role);
+      const normRole =
+        userToEdit.role && !String(userToEdit.role).startsWith('level_')
+          ? userToEdit.role
+          : userToEdit.designation || 'Accountant';
+      const existingMods: string[] = Array.isArray(userToEdit.allowedModules) && userToEdit.allowedModules.length > 0
+        ? userToEdit.allowedModules
+        : getDefaultModulesForRole(normLvl, normRole);
+      const expandedMods = existingMods.includes('all')
+        ? SYSTEM_SELECTIVE_MODULE_LIST.map((m) => m.id)
+        : existingMods;
+
       setSelectedUserToEdit(userToEdit);
       setUserFormUsername(userToEdit.username || '');
       setUserFormName(userToEdit.name || '');
       setUserFormEmail(userToEdit.email || '');
       setUserFormPassword('');
-      setUserFormRole(userToEdit.role || 'Accountant');
+      setUserFormRole(normRole);
       const camp = campuses.find((c) => c.id === userToEdit.campusId);
       setUserFormClientId(userToEdit.clientId || (camp as any)?.clientId || clients[0]?.id || '');
       setUserFormCampusId(userToEdit.campusId || campuses[0]?.id || '');
-      setUserFormLevel(userToEdit.permissionLevel || 'level_4_sub_campus_admin');
+      setUserFormLevel(normLvl);
       setUserFormDelegatedSubCampuses(userToEdit.delegatedSubCampusIds || []);
+      setUserFormAllowedModules(expandedMods);
+      setUserFormReadOnly(Boolean(userToEdit.readOnly || isUserReadOnlyRole(userToEdit)));
       setUserFormStatus(String(userToEdit.status || 'active').toLowerCase() === 'active' ? 'active' : 'suspended');
     } else {
+      const defaultLevel: PermissionLevel = 'level_4_sub_campus_admin';
+      const defaultRole = 'Accountant';
       setSelectedUserToEdit(null);
       setUserFormUsername('');
       setUserFormName('');
       setUserFormEmail('');
       setUserFormPassword(generateDynamicPassword('USER'));
-      setUserFormRole('Accountant');
+      setUserFormRole(defaultRole);
       const targetCampusId = preselectedCampusId || campuses[0]?.id || '';
       const camp = campuses.find((c) => c.id === targetCampusId);
       setUserFormClientId((camp as any)?.clientId || clients[0]?.id || '');
       setUserFormCampusId(targetCampusId);
-      setUserFormLevel(preselectedCampusId ? 'level_4_sub_campus_admin' : 'level_4_sub_campus_admin');
+      setUserFormLevel(defaultLevel);
       setUserFormDelegatedSubCampuses([]);
+      applySelectiveRoleDefaults(defaultLevel, defaultRole);
       setUserFormStatus('active');
     }
     setIsUserModalOpen(true);
@@ -1461,24 +1521,42 @@ export const PlatformSiteAdminHub: React.FC<{
       }
     }
 
+    const normalizedLevel = normalizeFormPermissionLevel(userFormLevel);
+    if (!isLevel1 && normalizedLevel !== 'level_2_client_super_admin' && userFormAllowedModules.length === 0) {
+      triggerToast('error', 'Select at least one allowed module for this selective user role.');
+      return;
+    }
+
     setIsSavingUser(true);
     try {
-      const normalizedLevel =
-        userFormLevel === ('level_2_client_admin' as any)
-          ? 'level_2_client_super_admin'
-          : userFormLevel === ('level_5_departmental_user' as any)
-          ? 'level_5_departmental_staff'
-          : userFormLevel;
-
       const resolvedRole = isLevel1
         ? 'level_1_platform_super_admin'
         : normalizedLevel === 'level_2_client_super_admin'
         ? 'level_2_client_super_admin'
+        : (userFormRole || (normalizedLevel === 'level_3_main_campus_admin' ? 'level_3_main_campus_admin' : 'Accountant'));
+
+      const effectiveCampusId = isLevel1 ? null : (userFormCampusId || assignedCampus?.id || null);
+      const effectivePermittedCampuses = isLevel1
+        ? ['all']
+        : normalizedLevel === 'level_2_client_super_admin'
+        ? ['all']
         : normalizedLevel === 'level_3_main_campus_admin'
-        ? 'level_3_main_campus_admin'
-        : normalizedLevel === 'level_4_sub_campus_admin'
-        ? 'level_3_sub_campus_admin'
-        : userFormRole;
+        ? Array.from(new Set([effectiveCampusId, ...userFormDelegatedSubCampuses].filter(Boolean) as string[]))
+        : [effectiveCampusId || 'all'];
+
+      const allSelectableCount = SYSTEM_SELECTIVE_MODULE_LIST.length;
+      const effectiveAllowedModules =
+        isLevel1 || normalizedLevel === 'level_2_client_super_admin'
+          ? ['all']
+          : userFormAllowedModules.length >= allSelectableCount && !userFormReadOnly
+          ? ['all']
+          : Array.from(new Set(userFormAllowedModules));
+
+      const effectiveReadOnly = Boolean(
+        !isLevel1 &&
+          normalizedLevel !== 'level_2_client_super_admin' &&
+          (userFormReadOnly || isUserReadOnlyRole({ role: resolvedRole, permissionLevel: normalizedLevel }))
+      );
 
       if (userFormPassword.trim() && userFormPassword.trim().length < 6) {
         triggerToast('error', 'Password must be at least 6 characters for Firebase Authentication.');
@@ -1497,19 +1575,56 @@ export const PlatformSiteAdminHub: React.FC<{
         permissionLevel: normalizedLevel,
         isSuperAdmin: isLevel1,
         clientId: resolvedClientId,
-        campusId: isLevel1 ? null : (userFormCampusId || assignedCampus?.id || null),
+        campusId: effectiveCampusId,
         campusName: isLevel1 ? 'All Campuses (Central Platform)' : (assignedCampus?.name || 'All Campuses'),
-        permittedCampusIds: isLevel1
-          ? ['all']
-          : normalizedLevel === 'level_2_client_super_admin'
-          ? ['all']
-          : [userFormCampusId || assignedCampus?.id || 'all'],
+        permittedCampusIds: effectivePermittedCampuses,
         delegatedSubCampusIds:
           normalizedLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
-        allowedModules: ['all'],
+        allowedModules: effectiveAllowedModules,
         status: userFormStatus,
         designation: resolvedRole,
+        departmentalRole: resolvedRole.toLowerCase().replace(/\s+/g, '_'),
+        readOnly: effectiveReadOnly,
       });
+
+      // Keep hierarchical RBAC user assignment synchronized
+      try {
+        const nextRbac: HierarchicalRbacMasterConfig = {
+          ...rbacConfig,
+          updatedAt: new Date().toISOString(),
+          userRoleAssignments: {
+            ...(rbacConfig.userRoleAssignments || {}),
+            [provisioned.userRecord.id]: {
+              userId: provisioned.userRecord.id,
+              userName: provisioned.userRecord.name,
+              userEmail: provisioned.userRecord.email,
+              permissionLevel: normalizedLevel,
+              departmentalRole:
+                resolvedRole.toLowerCase().includes('auditor') || resolvedRole.toLowerCase().includes('viewer')
+                  ? 'viewer_auditor'
+                  : resolvedRole.toLowerCase().includes('fee')
+                  ? 'fee_manager'
+                  : resolvedRole.toLowerCase().includes('hr')
+                  ? 'hr_manager'
+                  : 'accountant',
+              assignedCampusId: effectiveCampusId || 'all',
+              assignedCampusName: provisioned.userRecord.campusName || 'All Campuses',
+              delegatedSubCampusIds:
+                normalizedLevel === 'level_3_main_campus_admin' ? userFormDelegatedSubCampuses : [],
+              assignedAt: new Date().toISOString(),
+              assignedBy: currentUser?.name || 'Platform Site Admin',
+              assignedByRole: currentUser?.role || 'Level 1 Platform Creator',
+              status: userFormStatus,
+            },
+          },
+        };
+        setRbacConfig(nextRbac);
+        syncHierarchicalRbacToCloud(nextRbac).catch(() => {});
+      } catch {}
+
+      const modulesSummary = effectiveAllowedModules.includes('all')
+        ? 'All Modules'
+        : `${effectiveAllowedModules.length} Selective Module(s)`;
 
       if (!selectedUserToEdit) {
         if (!provisioned.authProvisioned) {
@@ -1530,6 +1645,17 @@ export const PlatformSiteAdminHub: React.FC<{
           password: userFormPassword.trim(),
         });
 
+        setLastCreatedCredentialsBanner({
+          username: cleanUsername,
+          email: resolvedEmail,
+          password: userFormPassword.trim(),
+          role: resolvedRole,
+          permissionLevel: normalizedLevel,
+          campusName: provisioned.userRecord.campusName || 'Assigned Campus',
+          modulesSummary,
+          readOnly: effectiveReadOnly,
+        });
+
         recordSiteAdminSecurityEvent({
           actorName: currentUser?.name || 'Platform Site Admin',
           actorRole: 'Level 1 Platform Creator',
@@ -1538,12 +1664,12 @@ export const PlatformSiteAdminHub: React.FC<{
           action: 'CREATE_USER_ACCOUNT',
           targetEntity: 'User',
           targetId: provisioned.userRecord.id,
-          details: `Created global user '${provisioned.userRecord.name}' (@${cleanUsername}, ${resolvedEmail}) with ${normalizedLevel} & synced to Firebase Auth + Firestore.`,
+          details: `Created global user '${provisioned.userRecord.name}' (@${cleanUsername}, ${resolvedEmail}) with ${normalizedLevel} (${resolvedRole}, ${modulesSummary}) & synced to Firebase Auth + Firestore.`,
         });
 
         triggerToast(
           'success',
-          `Created '@${cleanUsername}' (${resolvedEmail}) — Synced globally to Cloud DB & Firebase Auth!`
+          `Registered '@${cleanUsername}' (${resolvedEmail}) with ${resolvedRole} • ${modulesSummary}!`
         );
       } else {
         setCloudGlobalUsers((prev) =>
@@ -1563,7 +1689,7 @@ export const PlatformSiteAdminHub: React.FC<{
           action: 'UPDATE_USER_ACCOUNT',
           targetEntity: 'User',
           targetId: selectedUserToEdit.id,
-          details: `Updated user account '@${cleanUsername}' & synchronized changes globally in Firestore.`,
+          details: `Updated user account '@${cleanUsername}' (${resolvedRole}, ${modulesSummary}) & synchronized changes globally in Firestore.`,
         });
 
         if (userFormPassword.trim() && !provisioned.authProvisioned) {
@@ -1577,7 +1703,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
         triggerToast(
           'success',
-          `Updated user '@${cleanUsername}' & synced globally to Firestore DB!`
+          `Updated '@${cleanUsername}' (${resolvedRole} • ${modulesSummary}) globally!`
         );
       }
 
@@ -2959,6 +3085,45 @@ export const PlatformSiteAdminHub: React.FC<{
                 </div>
               </div>
 
+              {lastCreatedCredentialsBanner && (
+                <div className="p-4 rounded-2xl bg-emerald-950/50 border border-emerald-700/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 font-black text-emerald-300">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span>Registered Global Login Credentials Ready</span>
+                    </div>
+                    <div className="text-slate-200 font-mono text-[11px] flex flex-wrap gap-x-4 gap-y-1">
+                      <span>Username: <strong className="text-white">{lastCreatedCredentialsBanner.username}</strong></span>
+                      <span>Email: <strong className="text-white">{lastCreatedCredentialsBanner.email}</strong></span>
+                      <span>Password: <strong className="text-amber-300">{lastCreatedCredentialsBanner.password}</strong></span>
+                      <span>Role: <strong className="text-indigo-300">{lastCreatedCredentialsBanner.role}</strong></span>
+                      <span>Access: <strong className="text-emerald-300">{lastCreatedCredentialsBanner.modulesSummary}{lastCreatedCredentialsBanner.readOnly ? ' (Read-Only)' : ''}</strong></span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(
+                          `Portal Login Credentials\nUsername: ${lastCreatedCredentialsBanner.username}\nEmail: ${lastCreatedCredentialsBanner.email}\nPassword: ${lastCreatedCredentialsBanner.password}\nRole: ${lastCreatedCredentialsBanner.role} (${lastCreatedCredentialsBanner.modulesSummary})\nCampus: ${lastCreatedCredentialsBanner.campusName}`
+                        );
+                        triggerToast('success', 'Credentials copied to clipboard!');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold cursor-pointer"
+                    >
+                      Copy Credentials
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLastCreatedCredentialsBanner(null)}
+                      className="px-2 py-1.5 rounded-xl text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Users Table */}
               <div className="border border-slate-800 rounded-2xl overflow-x-auto bg-slate-950/70">
                 <table className="w-full text-left text-xs border-collapse min-w-[780px]">
@@ -2967,7 +3132,7 @@ export const PlatformSiteAdminHub: React.FC<{
                       <th className="py-3 px-4">User Account</th>
                       <th className="py-3 px-4">Permission Level</th>
                       <th className="py-3 px-4">Organization & Campus</th>
-                      <th className="py-3 px-4">Cloud DB Sync</th>
+                      <th className="py-3 px-4">Selective Role & Access</th>
                       <th className="py-3 px-4 text-right">Actions & Security</th>
                     </tr>
                   </thead>
@@ -2995,6 +3160,11 @@ export const PlatformSiteAdminHub: React.FC<{
                             : pLevel === 'level_4_sub_campus_admin' || pLevel === 'level_3_sub_campus_admin'
                             ? { text: 'Level 4 Sub-Campus Admin', cls: 'bg-sky-950 text-sky-300 border border-sky-800' }
                             : { text: 'Level 5 Branch Staff', cls: 'bg-indigo-950 text-indigo-300 border border-indigo-800' };
+                        const modList = Array.isArray(u.allowedModules) ? u.allowedModules : ['all'];
+                        const modBadge = modList.includes('all')
+                          ? 'All Modules'
+                          : `${modList.length} Modules`;
+                        const readOnlyBadge = Boolean((u as any).readOnly || isUserReadOnlyRole(u));
 
                         return (
                           <tr key={`${u.id || u.username || 'user'}-${idx}`} className="hover:bg-slate-900/60 transition-colors">
@@ -3037,9 +3207,17 @@ export const PlatformSiteAdminHub: React.FC<{
                                     ? 'Login Enabled ✓'
                                     : 'Suspended'}
                                 </span>
-                                <span className="text-[10px] text-slate-500 font-mono">
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono font-bold border border-slate-700">
                                   {u.role || 'Accountant'}
                                 </span>
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-900 text-slate-300 font-mono border border-slate-800">
+                                  {modBadge}
+                                </span>
+                                {readOnlyBadge && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 font-bold border border-amber-800/70">
+                                    Read-Only
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td className="py-3 px-4 text-right">
@@ -4260,13 +4438,26 @@ export const PlatformSiteAdminHub: React.FC<{
                 </label>
                 <select
                   value={userFormLevel}
-                  onChange={(e: any) => setUserFormLevel(e.target.value)}
+                  onChange={(e) => {
+                    const nextLevel = normalizeFormPermissionLevel(e.target.value);
+                    setUserFormLevel(nextLevel);
+                    const nextRole =
+                      nextLevel === 'level_1_platform_super_admin'
+                        ? 'level_1_platform_super_admin'
+                        : nextLevel === 'level_2_client_super_admin'
+                        ? 'level_2_client_super_admin'
+                        : nextLevel === 'level_3_main_campus_admin'
+                        ? 'Principal'
+                        : userFormRole;
+                    setUserFormRole(nextRole);
+                    applySelectiveRoleDefaults(nextLevel, nextRole);
+                  }}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 font-bold"
                 >
                   <option value="level_1_platform_super_admin">
                     Level 1 — Platform Super Admin (Platform Creator / Full Central Access)
                   </option>
-                  <option value="level_2_client_admin">
+                  <option value="level_2_client_super_admin">
                     Level 2 — School Client / Organization Admin (Owns Institution Network)
                   </option>
                   <option value="level_3_main_campus_admin">
@@ -4275,8 +4466,8 @@ export const PlatformSiteAdminHub: React.FC<{
                   <option value="level_4_sub_campus_admin">
                     Level 4 — Sub-Campus Admin (Manages Single Sub-Campus Operations)
                   </option>
-                  <option value="level_5_departmental_user">
-                    Level 5 — Departmental Staff (Accountant, Cashier, Auditor, Viewer)
+                  <option value="level_5_departmental_staff">
+                    Level 5 — Departmental Staff (Accountant, Cashier, Fee/HR Officer, Auditor, Viewer)
                   </option>
                 </select>
               </div>
@@ -4284,18 +4475,28 @@ export const PlatformSiteAdminHub: React.FC<{
               {/* Step 2: Role and Campus */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1 font-bold">2. Assign Role Type</label>
+                  <label className="block text-slate-400 mb-1 font-bold">2. Assign Selective Role</label>
                   <select
                     value={userFormRole}
-                    onChange={(e) => setUserFormRole(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500"
+                    onChange={(e) => {
+                      const nextRole = e.target.value;
+                      setUserFormRole(nextRole);
+                      applySelectiveRoleDefaults(userFormLevel, nextRole);
+                    }}
+                    disabled={
+                      userFormLevel === 'level_1_platform_super_admin' ||
+                      userFormLevel === 'level_2_client_super_admin'
+                    }
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500 disabled:opacity-50"
                   >
                     <option value="Accountant">Campus Accountant</option>
-                    <option value="Cashier">Petty Cashier</option>
-                    <option value="Principal">Campus Principal / Director</option>
-                    <option value="Auditor">Internal Auditor</option>
-                    <option value="Viewer">Read-Only Viewer</option>
-                    <option value="admin">Administrator</option>
+                    <option value="Cashier">Petty Cashier (Cash & Petty Cash Focus)</option>
+                    <option value="Fee Manager">Fee Manager (Student Fee & Challan ERP)</option>
+                    <option value="HR Manager">HR Manager (Payroll & Staff ERP)</option>
+                    <option value="Principal">Campus Principal / Branch Administrator</option>
+                    <option value="Auditor">Internal Auditor (Read-Only Ledgers & Audit)</option>
+                    <option value="Viewer">Read-Only Viewer (Dashboard & Reports Only)</option>
+                    <option value="admin">Branch Operations Administrator</option>
                   </select>
                 </div>
 
@@ -4437,6 +4638,150 @@ export const PlatformSiteAdminHub: React.FC<{
                   </select>
                 </div>
               </div>
+
+              {/* Step 9: Delegated Sub-Campuses (Level 3 Main Campus Admin) */}
+              {userFormLevel === 'level_3_main_campus_admin' && campuses.length > 1 && (
+                <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-200">
+                      9. Delegated Sub-Campuses ({userFormDelegatedSubCampuses.length} selected)
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Optional additional branches supervised by this Main Campus Admin
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-28 overflow-y-auto">
+                    {campuses
+                      .filter((c) => c.id !== userFormCampusId)
+                      .map((c) => {
+                        const checked = userFormDelegatedSubCampuses.includes(c.id);
+                        return (
+                          <label
+                            key={c.id}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] cursor-pointer ${
+                              checked
+                                ? 'bg-indigo-950/60 border-indigo-700 text-white'
+                                : 'bg-slate-900 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setUserFormDelegatedSubCampuses((prev) =>
+                                  prev.includes(c.id) ? prev.filter((id) => id !== c.id) : [...prev, c.id]
+                                )
+                              }
+                              className="accent-indigo-500"
+                            />
+                            <span className="truncate font-mono">{c.code}</span>
+                            <span className="truncate">{c.name}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 10: Selective Role Modules & Read-Only Enforcement */}
+              {userFormLevel !== 'level_1_platform_super_admin' &&
+                userFormLevel !== 'level_2_client_super_admin' && (
+                  <div className="p-3 rounded-2xl bg-slate-950 border border-indigo-900/70 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="font-bold text-indigo-300 block">
+                          Selective Role Modules ({userFormAllowedModules.length} / {SYSTEM_SELECTIVE_MODULE_LIST.length} active)
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          When this user signs in with their credentials, ONLY checked modules are visible and accessible.
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => applySelectiveRoleDefaults(userFormLevel, userFormRole)}
+                          className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[10px] border border-slate-700 cursor-pointer"
+                        >
+                          Role Default
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUserFormRole('Cashier');
+                            applySelectiveRoleDefaults('level_5_departmental_staff', 'Cashier');
+                          }}
+                          className="px-2 py-1 rounded-lg bg-amber-950/80 hover:bg-amber-900 text-amber-300 font-bold text-[10px] border border-amber-800 cursor-pointer"
+                        >
+                          Cashier Only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUserFormRole('Auditor');
+                            applySelectiveRoleDefaults('level_5_departmental_staff', 'Auditor');
+                          }}
+                          className="px-2 py-1 rounded-lg bg-sky-950/80 hover:bg-sky-900 text-sky-300 font-bold text-[10px] border border-sky-800 cursor-pointer"
+                        >
+                          Auditor Read-Only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setUserFormAllowedModules(SYSTEM_SELECTIVE_MODULE_LIST.map((m) => m.id))}
+                          className="px-2 py-1 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 font-bold text-[10px] border border-indigo-800 cursor-pointer"
+                        >
+                          Select All
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto pr-1">
+                      {SYSTEM_SELECTIVE_MODULE_LIST.map((mod) => {
+                        const checked = userFormAllowedModules.includes(mod.id);
+                        return (
+                          <label
+                            key={mod.id}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] cursor-pointer transition-colors ${
+                              checked
+                                ? 'bg-indigo-950/50 border-indigo-700/80 text-white'
+                                : 'bg-slate-900/70 border-slate-800 text-slate-500'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setUserFormAllowedModules((prev) =>
+                                  prev.includes(mod.id)
+                                    ? prev.filter((id) => id !== mod.id)
+                                    : [...prev, mod.id]
+                                )
+                              }
+                              className="accent-indigo-500"
+                            />
+                            <span className="truncate font-medium">{mod.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    <label className="flex items-center justify-between p-2 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer">
+                      <div>
+                        <span className="font-bold text-slate-200 block text-[11px]">
+                          Enforce Read-Only Mode (Audit / View Access)
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          Prevents creating, editing, approving, or deleting vouchers regardless of visible reports.
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={userFormReadOnly}
+                        onChange={(e) => setUserFormReadOnly(e.target.checked)}
+                        className="w-4 h-4 accent-amber-500"
+                      />
+                    </label>
+                  </div>
+                )}
 
               <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-800/70 text-[11px] text-emerald-200 flex items-center gap-2">
                 <Globe className="w-4 h-4 text-emerald-400 shrink-0" />

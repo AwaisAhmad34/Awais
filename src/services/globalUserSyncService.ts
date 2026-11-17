@@ -24,8 +24,9 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { auth, db } from '../firebase';
+import { db, auth } from '../firebase';
 import { handleFirestoreError, OperationType } from './firestoreErrorHandler';
+import { getDefaultModulesForRole, isUserReadOnlyRole } from './rolePresets';
 
 export interface GlobalUserRecord {
   id: string;
@@ -44,6 +45,8 @@ export interface GlobalUserRecord {
   allowedModules: string[];
   status: 'active' | 'inactive' | 'suspended';
   designation?: string;
+  departmentalRole?: string;
+  readOnly?: boolean;
   syncedToCloud: boolean;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +70,8 @@ export interface ProvisionGlobalUserInput {
   allowedModules?: string[];
   status?: 'active' | 'inactive' | 'suspended';
   designation?: string;
+  departmentalRole?: string;
+  readOnly?: boolean;
 }
 
 export interface ProvisionGlobalUserResult {
@@ -194,20 +199,28 @@ function toCanonicalGlobalUser(raw: any): GlobalUserRecord {
   const createdAt = raw?.createdAt ? String(raw.createdAt) : '1970-01-01T00:00:00.000Z';
   const updatedAt = raw?.updatedAt ? String(raw.updatedAt) : createdAt;
 
+  const canonicalRole = String(
+    raw?.role ||
+      (isLevel1
+        ? 'level_1_platform_super_admin'
+        : resolvedLevel === 'level_2_client_super_admin'
+        ? 'level_2_client_super_admin'
+        : 'Accountant')
+  );
+  const canonicalAllowedModules =
+    Array.isArray(raw?.allowedModules) && raw.allowedModules.length > 0
+      ? raw.allowedModules.map(String)
+      : isLevel1 || resolvedLevel === 'level_2_client_super_admin'
+      ? ['all']
+      : getDefaultModulesForRole(resolvedLevel, canonicalRole);
+
   return {
     id: String(raw?.id || `usr-${cleanUsername}`),
     uid: raw?.uid ? String(raw.uid) : null,
     username: String(raw?.username || cleanUsername).trim().toLowerCase(),
     name: String(raw?.name || raw?.username || cleanUsername).trim(),
     email: resolvedEmail,
-    role: String(
-      raw?.role ||
-        (isLevel1
-          ? 'level_1_platform_super_admin'
-          : resolvedLevel === 'level_2_client_super_admin'
-          ? 'level_2_client_super_admin'
-          : 'Accountant')
-    ),
+    role: canonicalRole,
     permissionLevel: resolvedLevel,
     isSuperAdmin: isLevel1,
     clientId: isLevel1 ? null : (raw?.clientId ?? null),
@@ -226,13 +239,12 @@ function toCanonicalGlobalUser(raw: any): GlobalUserRecord {
       : Array.isArray(raw?.delegatedCampusIds)
       ? raw.delegatedCampusIds.map(String)
       : [],
-    allowedModules:
-      Array.isArray(raw?.allowedModules) && raw.allowedModules.length > 0
-        ? raw.allowedModules.map(String)
-        : ['all'],
+    allowedModules: canonicalAllowedModules,
     status:
       raw?.status === 'inactive' || raw?.status === 'suspended' ? raw.status : 'active',
     designation: raw?.designation ? String(raw.designation) : undefined,
+    departmentalRole: raw?.departmentalRole ? String(raw.departmentalRole) : undefined,
+    readOnly: Boolean(raw?.readOnly || isUserReadOnlyRole({ role: canonicalRole, permissionLevel: resolvedLevel })),
     syncedToCloud: true,
     createdAt,
     updatedAt,
@@ -453,6 +465,18 @@ export async function provisionGlobalUserAccount(
     }
   }
 
+  const resolvedModules =
+    input.allowedModules && input.allowedModules.length > 0
+      ? input.allowedModules.map(String)
+      : isLevel1 || resolvedLevel === 'level_2_client_super_admin'
+      ? ['all']
+      : getDefaultModulesForRole(resolvedLevel, resolvedRole);
+
+  const resolvedReadOnly =
+    input.readOnly !== undefined
+      ? Boolean(input.readOnly)
+      : isUserReadOnlyRole({ role: resolvedRole, permissionLevel: resolvedLevel });
+
   const userRecord: GlobalUserRecord = {
     id: userId,
     uid: resolvedUid,
@@ -474,10 +498,11 @@ export async function provisionGlobalUserAccount(
         ? [input.campusId]
         : ['all'],
     delegatedSubCampusIds: input.delegatedSubCampusIds || [],
-    allowedModules:
-      input.allowedModules && input.allowedModules.length > 0 ? input.allowedModules : ['all'],
+    allowedModules: resolvedModules,
     status: input.status || 'active',
     designation: input.designation || resolvedRole,
+    departmentalRole: input.departmentalRole,
+    readOnly: resolvedReadOnly,
     syncedToCloud: true,
     createdAt: existingUser?.createdAt || now,
     updatedAt: now,
@@ -566,6 +591,9 @@ export async function provisionGlobalUserAccount(
                 : userRecord.permittedCampusIds,
             allowedModules: userRecord.allowedModules,
             status: userRecord.status,
+            designation: userRecord.designation,
+            departmentalRole: userRecord.departmentalRole,
+            readOnly: userRecord.readOnly,
             isPlatformAdmin: isLevel1,
             createdAt: now,
             updatedAt: now,

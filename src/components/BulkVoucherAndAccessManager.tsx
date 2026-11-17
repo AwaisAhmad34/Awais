@@ -52,6 +52,11 @@ import {
 } from '../services/approvalMatrixService';
 import { FullTransactionLedgerPdfExport } from './FullTransactionLedgerPdfExport';
 import { PermissionEngine } from './PermissionEngine';
+import {
+  isLevel1SuperAdminUser,
+  isUserReadOnlyRole,
+  isUserPermittedForModule,
+} from '../services/rolePresets';
 
 export interface RolePermissionProfile {
   modules: string[];
@@ -355,20 +360,64 @@ export function resolveActiveProfileForUser(
     return cfg.profiles.campus_head;
   }
 
-  // If logged in as non-super-admin
-  if (currentUser && currentUser.role !== 'super_admin') {
-    const cid = currentUser.campusId || currentCampusId;
-    if (cid && cid !== 'all' && cfg.campusOverrides[cid]) {
-      return cfg.campusOverrides[cid];
-    }
-    const roleStr = String(currentUser.role || currentUser.designation || '').toLowerCase();
-    if (roleStr.includes('admin') || roleStr.includes('controller') || roleStr.includes('director')) {
-      return cfg.profiles.administration;
-    }
-    return cfg.profiles.campus_head;
+  // Pure Level 1 Platform Super Admin with no preview active has unrestricted access
+  if (isLevel1SuperAdminUser(currentUser)) {
+    return null;
   }
 
-  // Pure Super Admin with no preview active has unrestricted access
+  // If logged in as a non-Level-1 user, honor selective user modules & read-only restrictions
+  if (currentUser) {
+    const cid = currentUser.campusId || currentCampusId;
+    const baseProfile =
+      cid && cid !== 'all' && cfg.campusOverrides[cid]
+        ? cfg.campusOverrides[cid]
+        : (() => {
+            const roleStr = String(currentUser.role || currentUser.designation || '').toLowerCase();
+            if (
+              currentUser.permissionLevel === 'level_2_client_super_admin' ||
+              currentUser.permissionLevel === 'level_3_main_campus_admin' ||
+              roleStr.includes('admin') ||
+              roleStr.includes('controller') ||
+              roleStr.includes('director')
+            ) {
+              return cfg.profiles.administration;
+            }
+            return cfg.profiles.campus_head;
+          })();
+
+    const hasExplicitSelectiveModules =
+      Array.isArray(currentUser.allowedModules) &&
+      currentUser.allowedModules.length > 0 &&
+      !currentUser.allowedModules.includes('all');
+
+    const effectiveModules = hasExplicitSelectiveModules
+      ? currentUser.allowedModules
+      : baseProfile.modules;
+
+    if (isUserReadOnlyRole(currentUser)) {
+      return {
+        ...baseProfile,
+        modules: effectiveModules,
+        permissions: {
+          canBulkApproveReject: false,
+          canDeleteVouchers: false,
+          canEditApprovedVouchers: false,
+          canApproveHighValue: false,
+          canExportData: true,
+        },
+      };
+    }
+
+    if (hasExplicitSelectiveModules) {
+      return {
+        ...baseProfile,
+        modules: effectiveModules,
+      };
+    }
+
+    return baseProfile;
+  }
+
   return null;
 }
 
@@ -376,9 +425,13 @@ export function resolveActiveProfileForUser(
 export function installGlobalVisibilityHook() {
   window.__APLUS_VISIBILITY_CHECK__ = (moduleId: string, user?: any) => {
     const cfg = getStoredVisibilityConfig();
+    if (cfg.previewRole !== 'super_admin') {
+      const previewProfile = resolveActiveProfileForUser(cfg, user);
+      return previewProfile ? previewProfile.modules.includes(moduleId) : true;
+    }
+    if (isLevel1SuperAdminUser(user)) return true;
     const profile = resolveActiveProfileForUser(cfg, user);
-    if (!profile) return true; // Super Admin unrestricted
-    return profile.modules.includes(moduleId);
+    return isUserPermittedForModule(moduleId, user, profile?.modules || null);
   };
 }
 

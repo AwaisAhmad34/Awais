@@ -27,10 +27,37 @@ export const TenantAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       };
     }
 
-    const isSuper = Boolean(isSuperAdmin || currentUser?.isSuperAdmin || currentUser?.role === 'super_admin');
+    const isSuper = Boolean(
+      isSuperAdmin ||
+        currentUser?.isSuperAdmin ||
+        currentUser?.role === 'super_admin' ||
+        currentUser?.role === 'level_1_platform_super_admin' ||
+        currentUser?.permissionLevel === 'level_1_platform_super_admin'
+    );
+    const roleLower = String(currentUser?.role || currentUser?.departmentalRole || '').toLowerCase();
+    const isAuditorOrViewer =
+      Boolean(currentUser?.readOnly) ||
+      roleLower.includes('auditor') ||
+      roleLower.includes('viewer');
+    const isCampusAdminLevel =
+      !isSuper &&
+      !isAuditorOrViewer &&
+      (currentUser?.permissionLevel === 'level_2_client_super_admin' ||
+        currentUser?.permissionLevel === 'level_3_main_campus_admin' ||
+        currentUser?.permissionLevel === 'level_4_sub_campus_admin' ||
+        currentUser?.role === 'campus_admin' ||
+        currentUser?.role === 'level_2_client_super_admin' ||
+        currentUser?.role === 'level_3_main_campus_admin' ||
+        currentUser?.role === 'level_4_sub_campus_admin' ||
+        currentUser?.role === 'level_3_sub_campus_admin' ||
+        roleLower === 'principal' ||
+        roleLower === 'admin');
+
     const role: TenantAuthContextType['platformRole'] = isSuper
       ? 'super_admin'
-      : (currentUser?.role === 'campus_admin' || currentUser?.campusId)
+      : isAuditorOrViewer
+      ? 'auditor'
+      : isCampusAdminLevel
       ? 'campus_admin'
       : 'accountant';
 

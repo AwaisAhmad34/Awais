@@ -65,7 +65,16 @@ import { DeploymentReadinessHub } from './DeploymentReadinessHub';
 import {
   provisionGlobalUserAccount,
   deleteGlobalUserFromCloud,
+  subscribeToGlobalUsersFromCloud,
+  setGlobalUserStatusInCloud,
+  normalizeAndDeduplicateGlobalUsers,
+  type GlobalUserRecord,
 } from '../services/globalUserSyncService';
+import {
+  SYSTEM_SELECTIVE_MODULE_LIST,
+  getDefaultModulesForRole,
+  isUserReadOnlyRole,
+} from '../services/rolePresets';
 import {
   createDynamicCampusCredential,
   saveCampusCredentialToCloud,
@@ -103,9 +112,24 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     'overview' | 'sub_campuses' | 'report_permissions' | 'billing' | 'consolidated_reports'
   >('overview');
 
-  // Trigger re-render when client organization profile is customized
   const [clientRefreshKey, setClientRefreshKey] = useState(0);
   const [showDeploymentModal, setShowDeploymentModal] = useState(false);
+  const [cloudOrgUsers, setCloudOrgUsers] = useState<GlobalUserRecord[] | null>(null);
+  const [isStaffUserModalOpen, setIsStaffUserModalOpen] = useState(false);
+  const [editingStaffUser, setEditingStaffUser] = useState<any | null>(null);
+  const [staffNameInput, setStaffNameInput] = useState('');
+  const [staffUsernameInput, setStaffUsernameInput] = useState('');
+  const [staffEmailInput, setStaffEmailInput] = useState('');
+  const [staffPasswordInput, setStaffPasswordInput] = useState('');
+  const [staffLevelInput, setStaffLevelInput] = useState<'level_3_main_campus_admin' | 'level_4_sub_campus_admin' | 'level_5_departmental_staff'>('level_5_departmental_staff');
+  const [staffRoleInput, setStaffRoleInput] = useState('Accountant');
+  const [staffCampusIdInput, setStaffCampusIdInput] = useState('');
+  const [staffAllowedModules, setStaffAllowedModules] = useState<string[]>(() =>
+    getDefaultModulesForRole('level_5_departmental_staff', 'Accountant')
+  );
+  const [staffReadOnly, setStaffReadOnly] = useState(false);
+  const [staffStatusInput, setStaffStatusInput] = useState<'active' | 'suspended'>('active');
+  const [isSavingStaffUser, setIsSavingStaffUser] = useState(false);
 
   React.useEffect(() => {
     const handleClientsUpdated = () => {
@@ -113,6 +137,13 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     };
     window.addEventListener('aplus-clients-updated', handleClientsUpdated);
     return () => window.removeEventListener('aplus-clients-updated', handleClientsUpdated);
+  }, []);
+
+  React.useEffect(() => {
+    const unsub = subscribeToGlobalUsersFromCloud((list) => {
+      setCloudOrgUsers(list);
+    });
+    return unsub;
   }, []);
 
   // Client resolution from currentUser
@@ -828,6 +859,177 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
     showToast('success', `Branch '${campusName}' deleted from cloud & moved to Global Recycle Bin.`);
     setBranchToDelete(null);
+  };
+
+  // Organization-scoped staff list (exclusively own clientId or own campuses, never Level 1 owner)
+  const myOrgStaffUsers = useMemo(() => {
+    const myCampusIdSet = new Set(myCampuses.map((c) => c.id));
+    const source = cloudOrgUsers !== null
+      ? cloudOrgUsers
+      : normalizeAndDeduplicateGlobalUsers(users || [], currentUser);
+    return source.filter((u) => {
+      if (u.isSuperAdmin || u.permissionLevel === 'level_1_platform_super_admin') return false;
+      if (u.clientId && u.clientId === clientInfo.id) return true;
+      if (u.campusId && myCampusIdSet.has(u.campusId)) return true;
+      return false;
+    });
+  }, [cloudOrgUsers, users, currentUser, clientInfo.id, myCampuses]);
+
+  const applyStaffRolePreset = (
+    lvl: 'level_3_main_campus_admin' | 'level_4_sub_campus_admin' | 'level_5_departmental_staff',
+    roleVal: string
+  ) => {
+    const mods = getDefaultModulesForRole(lvl, roleVal);
+    setStaffAllowedModules(mods.includes('all') ? SYSTEM_SELECTIVE_MODULE_LIST.map((m) => m.id) : mods);
+    setStaffReadOnly(isUserReadOnlyRole({ role: roleVal, permissionLevel: lvl }));
+  };
+
+  const handleOpenStaffUserModal = (userToEdit?: any) => {
+    if (userToEdit) {
+      const lvlRaw = String(userToEdit.permissionLevel || '');
+      const lvl: 'level_3_main_campus_admin' | 'level_4_sub_campus_admin' | 'level_5_departmental_staff' =
+        lvlRaw === 'level_3_main_campus_admin'
+          ? 'level_3_main_campus_admin'
+          : lvlRaw === 'level_4_sub_campus_admin' || lvlRaw === 'level_3_sub_campus_admin'
+          ? 'level_4_sub_campus_admin'
+          : 'level_5_departmental_staff';
+      const roleVal =
+        userToEdit.role && !String(userToEdit.role).startsWith('level_')
+          ? userToEdit.role
+          : userToEdit.designation || 'Accountant';
+      const existingMods: string[] =
+        Array.isArray(userToEdit.allowedModules) && userToEdit.allowedModules.length > 0
+          ? userToEdit.allowedModules
+          : getDefaultModulesForRole(lvl, roleVal);
+      setEditingStaffUser(userToEdit);
+      setStaffNameInput(userToEdit.name || '');
+      setStaffUsernameInput(userToEdit.username || '');
+      setStaffEmailInput(userToEdit.email || '');
+      setStaffPasswordInput('');
+      setStaffLevelInput(lvl);
+      setStaffRoleInput(roleVal);
+      setStaffCampusIdInput(userToEdit.campusId || myCampuses[0]?.id || '');
+      setStaffAllowedModules(
+        existingMods.includes('all') ? SYSTEM_SELECTIVE_MODULE_LIST.map((m) => m.id) : existingMods
+      );
+      setStaffReadOnly(Boolean(userToEdit.readOnly || isUserReadOnlyRole(userToEdit)));
+      setStaffStatusInput(String(userToEdit.status || 'active') === 'suspended' ? 'suspended' : 'active');
+    } else {
+      const defLvl = 'level_5_departmental_staff';
+      const defRole = 'Accountant';
+      setEditingStaffUser(null);
+      setStaffNameInput('');
+      setStaffUsernameInput('');
+      setStaffEmailInput('');
+      setStaffPasswordInput('');
+      setStaffLevelInput(defLvl);
+      setStaffRoleInput(defRole);
+      setStaffCampusIdInput(myCampuses[0]?.id || '');
+      applyStaffRolePreset(defLvl, defRole);
+      setStaffStatusInput('active');
+    }
+    setIsStaffUserModalOpen(true);
+  };
+
+  const handleSaveStaffUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUsername = staffUsernameInput.trim().toLowerCase().replace(/\s+/g, '');
+    const cleanName = staffNameInput.trim();
+    const cleanEmail = (
+      staffEmailInput.trim() || `${cleanUsername}@${clientInfo.code.toLowerCase()}.edu.pk`
+    ).toLowerCase();
+    const cleanPassword = staffPasswordInput.trim();
+
+    if (!cleanName || !cleanUsername) {
+      showToast('error', 'Staff full name and login username are required.');
+      return;
+    }
+    if (!editingStaffUser && (!cleanPassword || cleanPassword.length < 6)) {
+      showToast('error', 'Password must be at least 6 characters for Firebase Authentication.');
+      return;
+    }
+    if (cleanPassword && cleanPassword.length < 6) {
+      showToast('error', 'Password must be at least 6 characters.');
+      return;
+    }
+    if (staffAllowedModules.length === 0) {
+      showToast('error', 'Select at least one allowed module for this user.');
+      return;
+    }
+
+    const assignedCampus = myCampuses.find((c) => c.id === staffCampusIdInput) || myCampuses[0];
+    if (!assignedCampus) {
+      showToast('error', 'Register at least one campus before creating campus staff credentials.');
+      return;
+    }
+
+    setIsSavingStaffUser(true);
+    try {
+      const effectiveReadOnly = Boolean(
+        staffReadOnly || isUserReadOnlyRole({ role: staffRoleInput, permissionLevel: staffLevelInput })
+      );
+      const effectiveMods =
+        staffAllowedModules.length >= SYSTEM_SELECTIVE_MODULE_LIST.length && !effectiveReadOnly
+          ? ['all']
+          : Array.from(new Set(staffAllowedModules));
+
+      const provisioned = await provisionGlobalUserAccount({
+        id: editingStaffUser?.id,
+        uid: editingStaffUser?.uid || null,
+        username: cleanUsername,
+        name: cleanName,
+        email: cleanEmail,
+        password: cleanPassword || undefined,
+        role: staffRoleInput,
+        permissionLevel: staffLevelInput,
+        isSuperAdmin: false,
+        clientId: clientInfo.id,
+        campusId: assignedCampus.id,
+        campusName: assignedCampus.name,
+        permittedCampusIds:
+          staffLevelInput === 'level_3_main_campus_admin'
+            ? myCampuses.map((c) => c.id)
+            : [assignedCampus.id],
+        delegatedSubCampusIds:
+          staffLevelInput === 'level_3_main_campus_admin'
+            ? myCampuses.filter((c) => c.id !== assignedCampus.id).map((c) => c.id)
+            : [],
+        allowedModules: effectiveMods,
+        status: staffStatusInput,
+        designation: staffRoleInput,
+        departmentalRole: staffRoleInput.toLowerCase().replace(/\s+/g, '_'),
+        readOnly: effectiveReadOnly,
+      });
+
+      if (!editingStaffUser && !provisioned.authProvisioned) {
+        showToast(
+          'error',
+          provisioned.warning ||
+            `Could not register '@${cleanUsername}' in Firebase Authentication. Verify email & password (>= 6 characters).`
+        );
+        return;
+      }
+
+      if (editingStaffUser) {
+        updateUser?.(editingStaffUser.id, provisioned.userRecord);
+        showToast(
+          'success',
+          `Updated '@${cleanUsername}' (${staffRoleInput} • ${effectiveMods.includes('all') ? 'All Modules' : `${effectiveMods.length} Modules`})!`
+        );
+      } else {
+        addUser?.({ ...provisioned.userRecord, password: cleanPassword });
+        showToast(
+          'success',
+          `Registered '@${cleanUsername}' (${cleanEmail}) with ${staffRoleInput} role across Firebase Auth & Firestore!`
+        );
+      }
+      setIsStaffUserModalOpen(false);
+      setEditingStaffUser(null);
+    } catch (err: any) {
+      showToast('error', err?.message || 'Failed to register user credentials.');
+    } finally {
+      setIsSavingStaffUser(false);
+    }
   };
 
   // Filtered transactions for consolidated reports
@@ -1606,6 +1808,111 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* Organization Staff & Selective Role Users Section */}
+            <div className="pt-5 border-t border-slate-800 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-black text-white flex items-center gap-2">
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    <span>Organization Staff &amp; Selective Role Credentials ({myOrgStaffUsers.length})</span>
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    Register Accountants, Cashiers, Fee/HR Officers, Sub-Campus Admins, or Read-Only Auditors with strict selective module access.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenStaffUserModal()}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Register Selective Role User</span>
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[680px]">
+                  <thead className="bg-slate-950 text-slate-300 uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="p-3">Staff Member &amp; Username</th>
+                      <th className="p-3">Selective Role</th>
+                      <th className="p-3">Assigned Branch</th>
+                      <th className="p-3">Permitted Modules</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {myOrgStaffUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-4 text-center text-slate-400">
+                          No staff accounts registered yet. Click &ldquo;Register Selective Role User&rdquo; to create credentials.
+                        </td>
+                      </tr>
+                    ) : (
+                      myOrgStaffUsers.map((staff) => {
+                        const camp = myCampuses.find((c) => c.id === staff.campusId);
+                        const modCount = Array.isArray(staff.allowedModules)
+                          ? staff.allowedModules.includes('all')
+                            ? 'All Modules'
+                            : `${staff.allowedModules.length} Modules`
+                          : 'Default Modules';
+                        const isReadOnly = Boolean(staff.readOnly || isUserReadOnlyRole(staff));
+                        return (
+                          <tr key={staff.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3">
+                              <div className="font-bold text-white">{staff.name}</div>
+                              <div className="text-[11px] font-mono text-indigo-300">
+                                @{staff.username} · {staff.email}
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-bold text-[11px]">
+                                {staff.role}
+                              </span>
+                              {isReadOnly && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 text-[10px] font-bold">
+                                  Read-Only
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3 text-slate-300">
+                              {camp ? `${camp.name} (${camp.code})` : staff.campusName || 'All Client Branches'}
+                            </td>
+                            <td className="p-3 font-mono text-slate-300">{modCount}</td>
+                            <td className="p-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {staff.id !== currentUser?.id && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const nextSt = staff.status === 'suspended' ? 'active' : 'suspended';
+                                      await setGlobalUserStatusInCloud(staff, nextSt);
+                                      updateUser?.(staff.id, { status: nextSt });
+                                      showToast('success', `User @${staff.username} is now ${nextSt}.`);
+                                    }}
+                                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[10px] cursor-pointer"
+                                  >
+                                    {staff.status === 'suspended' ? 'Enable' : 'Suspend'}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenStaffUserModal(staff)}
+                                  className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] cursor-pointer"
+                                >
+                                  Edit Role / Pass
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -2666,6 +2973,208 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
           </div>
         </div>
       )}
+      {/* Selective Role Staff Registration / Edit Modal */}
+      {isStaffUserModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-2xl w-full p-6 text-slate-100 max-h-[92vh] overflow-y-auto space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  {editingStaffUser ? 'Edit Staff Selective Role & Credentials' : 'Register Selective Role User Credentials'}
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Credentials are registered in Firebase Authentication &amp; Cloud Firestore with strict selective access.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStaffUserModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveStaffUser} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">Full Name *</label>
+                  <input
+                    type="text"
+                    value={staffNameInput}
+                    onChange={(e) => setStaffNameInput(e.target.value)}
+                    placeholder="e.g. Bilal Ahmed"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">Login Username *</label>
+                  <input
+                    type="text"
+                    value={staffUsernameInput}
+                    onChange={(e) => setStaffUsernameInput(e.target.value.toLowerCase().replace(/\s+/g, ''))}
+                    disabled={!!editingStaffUser}
+                    placeholder="e.g. bilal.cashier"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono disabled:opacity-50"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    value={staffEmailInput}
+                    onChange={(e) => setStaffEmailInput(e.target.value)}
+                    placeholder={`Auto: ${staffUsernameInput || 'user'}@${clientInfo.code.toLowerCase()}.edu.pk`}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">
+                    Password {editingStaffUser ? '(Blank = unchanged)' : '(Min 6 chars) *'}
+                  </label>
+                  <input
+                    type="text"
+                    value={staffPasswordInput}
+                    onChange={(e) => setStaffPasswordInput(e.target.value)}
+                    placeholder={editingStaffUser ? 'Leave blank to keep existing' : 'Min 6 characters'}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                    required={!editingStaffUser}
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">Authority Tier</label>
+                  <select
+                    value={staffLevelInput}
+                    onChange={(e) => {
+                      const nextLvl = e.target.value as any;
+                      setStaffLevelInput(nextLvl);
+                      const nextRole = nextLvl === 'level_3_main_campus_admin' || nextLvl === 'level_4_sub_campus_admin' ? 'Principal' : staffRoleInput;
+                      setStaffRoleInput(nextRole);
+                      applyStaffRolePreset(nextLvl, nextRole);
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-bold"
+                  >
+                    <option value="level_5_departmental_staff">Level 5 — Departmental Staff</option>
+                    <option value="level_4_sub_campus_admin">Level 4 — Sub-Campus Admin</option>
+                    <option value="level_3_main_campus_admin">Level 3 — Main Campus Admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">Selective Role</label>
+                  <select
+                    value={staffRoleInput}
+                    onChange={(e) => {
+                      const nextRole = e.target.value;
+                      setStaffRoleInput(nextRole);
+                      applyStaffRolePreset(staffLevelInput, nextRole);
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                  >
+                    <option value="Accountant">Campus Accountant</option>
+                    <option value="Cashier">Petty Cashier</option>
+                    <option value="Fee Manager">Fee Manager</option>
+                    <option value="HR Manager">HR Manager</option>
+                    <option value="Principal">Campus Principal</option>
+                    <option value="Auditor">Internal Auditor (Read-Only)</option>
+                    <option value="Viewer">Read-Only Viewer</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-slate-300 font-bold mb-1">Assigned Campus Branch</label>
+                  <select
+                    value={staffCampusIdInput}
+                    onChange={(e) => setStaffCampusIdInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                  >
+                    {myCampuses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-950 border border-indigo-900/70 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-indigo-300">
+                    Permitted Modules ({staffAllowedModules.length} / {SYSTEM_SELECTIVE_MODULE_LIST.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => applyStaffRolePreset(staffLevelInput, staffRoleInput)}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 font-bold cursor-pointer"
+                  >
+                    Reset to Role Default
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
+                  {SYSTEM_SELECTIVE_MODULE_LIST.map((mod) => {
+                    const checked = staffAllowedModules.includes(mod.id);
+                    return (
+                      <label
+                        key={mod.id}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] cursor-pointer ${
+                          checked
+                            ? 'bg-indigo-950/60 border-indigo-700 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-500'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setStaffAllowedModules((prev) =>
+                              prev.includes(mod.id)
+                                ? prev.filter((id) => id !== mod.id)
+                                : [...prev, mod.id]
+                            )
+                          }
+                          className="accent-indigo-500"
+                        />
+                        <span className="truncate">{mod.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <label className="flex items-center justify-between pt-1 cursor-pointer">
+                  <span className="text-[11px] font-bold text-slate-300">Read-Only Mode (Blocks Posting/Edits/Deletions)</span>
+                  <input
+                    type="checkbox"
+                    checked={staffReadOnly}
+                    onChange={(e) => setStaffReadOnly(e.target.checked)}
+                    className="accent-amber-500"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsStaffUserModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingStaffUser}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold cursor-pointer"
+                >
+                  {isSavingStaffUser
+                    ? 'Registering...'
+                    : editingStaffUser
+                    ? 'Save & Sync Changes'
+                    : 'Register Credentials'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Deployment Readiness Modal */}
       {showDeploymentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">

@@ -109,6 +109,9 @@ function InnerApp() {
           permittedCampusIds: profile.permittedCampusIds || target?.permittedCampusIds || ['all'],
           delegatedSubCampusIds: profile.delegatedCampusIds || profile.delegatedSubCampusIds || target?.delegatedSubCampusIds || [],
           allowedModules: profile.allowedModules || target?.allowedModules || ['all'],
+          designation: profile.designation || target?.designation || profile.role,
+          departmentalRole: profile.departmentalRole || target?.departmentalRole,
+          readOnly: Boolean(profile.readOnly || target?.readOnly),
         };
         if (!target && bridge.addUser) {
           target = bridge.addUser(resolvedUserObj);

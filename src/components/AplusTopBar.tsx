@@ -79,6 +79,7 @@ import { SmartCommandBar } from './SmartCommandBar';
 import { ExpressVoucherModal } from './ExpressVoucherModal';
 import { ExpressPettyCashModal } from './ExpressPettyCashModal';
 import { VoucherDetailModal } from './VoucherDetailModal';
+import { isUserPermittedForModule, isUserReadOnlyRole } from '../services/rolePresets';
 
 interface AplusTopBarProps {
   activeTab: string;
@@ -196,8 +197,9 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
       const key = e.key.toLowerCase();
       const ctrlOrMeta = e.ctrlKey || e.metaKey;
 
-      // Ctrl+N or Alt+N -> New Voucher Entry
+      // Ctrl+N or Alt+N -> New Voucher Entry (only if permitted & non-read-only)
       if ((ctrlOrMeta && key === 'n') || (e.altKey && key === 'n')) {
+        if (isReadOnlyRole || !isModuleAllowed('transaction')) return;
         e.preventDefault();
         onNavigate('transaction');
         triggerShortcutToast('Shortcut Ctrl+N → Opened New Voucher Entry');
@@ -231,6 +233,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
 
       // Ctrl+S or Ctrl+Enter -> Save Voucher or Save Petty Cash Entry
       if ((ctrlOrMeta && key === 's') || (ctrlOrMeta && e.key === 'Enter')) {
+        if (isReadOnlyRole) return;
         if (activeTab === 'transaction' && window.__APLUS_TRIGGER_VOUCHER_SAVE__) {
           e.preventDefault();
           window.__APLUS_TRIGGER_VOUCHER_SAVE__();
@@ -247,6 +250,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
 
       // Alt+P -> Petty Cash Entry
       if (e.altKey && key === 'p') {
+        if (!isModuleAllowed('pettycash')) return;
         e.preventDefault();
         onNavigate('pettycash');
         triggerShortcutToast('Shortcut Alt+P → Opened Petty Cash Management');
@@ -259,6 +263,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
 
       // Alt+L -> All Transactions / Voucher Audit Ledger
       if (e.altKey && key === 'l') {
+        if (!isModuleAllowed('alltransactions')) return;
         e.preventDefault();
         onNavigate('alltransactions');
         triggerShortcutToast('Shortcut Alt+L → Opened All Vouchers & Audit Ledger');
@@ -420,9 +425,13 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     return cl?.enabledModules || DEFAULT_CLIENT_MODULES;
   }, [userClientId]);
 
+  const isReadOnlyRole = isUserReadOnlyRole(currentUser);
+
   const isModuleAllowed = (moduleId: string) => {
-    if (!clientAllowedModules) return true;
-    return clientAllowedModules.includes(moduleId);
+    if (clientAllowedModules && !clientAllowedModules.includes(moduleId)) {
+      return false;
+    }
+    return isUserPermittedForModule(moduleId, currentUser, activeProfile?.modules || null);
   };
 
   const pendingCount = (transactions || []).filter(
@@ -595,27 +604,31 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 ml-auto">
-          {/* Quick Express Voucher button */}
-          <button
-            type="button"
-            onClick={() => setIsExpressVoucherOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-            title="Open Express Voucher Overlay for rapid entry without page reload (Alt+N)"
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-300 fill-current" />
-            <span>Express Voucher</span>
-          </button>
+          {/* Quick Express Voucher button (hidden for read-only users or users lacking voucher entry access) */}
+          {!isReadOnlyRole && isModuleAllowed('transaction') && (
+            <button
+              type="button"
+              onClick={() => setIsExpressVoucherOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+              title="Open Express Voucher Overlay for rapid entry without page reload (Alt+N)"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300 fill-current" />
+              <span>Express Voucher</span>
+            </button>
+          )}
 
           {/* Quick Express Petty Cash button */}
-          <button
-            type="button"
-            onClick={() => setIsExpressPettyCashOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-            title="Record Petty Cash Expense Slip (Alt+P)"
-          >
-            <Wallet className="w-3.5 h-3.5 text-emerald-200" />
-            <span>Petty Cash</span>
-          </button>
+          {!isReadOnlyRole && isModuleAllowed('pettycash') && (
+            <button
+              type="button"
+              onClick={() => setIsExpressPettyCashOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+              title="Record Petty Cash Expense Slip (Alt+P)"
+            >
+              <Wallet className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Petty Cash</span>
+            </button>
+          )}
 
           {currentUser && (
             <button
@@ -810,7 +823,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          {(isPlatformSiteAdmin || isClientOwnerMainAdmin || currentUser?.role?.includes('admin') || currentUser?.role?.includes('accountant') || isModuleAllowed('alltransactions')) && (
+          {(isPlatformSiteAdmin || isModuleAllowed('alltransactions')) && !isReadOnlyRole && (
             <button
               onClick={() => onNavigate('alltransactions')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -825,20 +838,22 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => onNavigate('dashboard')}
-            className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === 'dashboard'
-                ? 'bg-emerald-600 text-white shadow-xs'
-                : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
-            }`}
-            title="Open Daily Cash Summary Dashboard (Live Inflows, Outflows & Net Movement per Campus for Current Date)"
-          >
-            <Banknote className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Daily Cash Summary</span>
-          </button>
+          {isModuleAllowed('dashboard') && (
+            <button
+              onClick={() => onNavigate('dashboard')}
+              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'dashboard'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
+              }`}
+              title="Open Daily Cash Summary Dashboard (Live Inflows, Outflows & Net Movement per Campus for Current Date)"
+            >
+              <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Daily Cash Summary</span>
+            </button>
+          )}
 
-          {(!activeProfile || activeProfile.widgets.showTopBarErpButton) && (
+          {(!activeProfile || activeProfile.widgets.showTopBarErpButton) && isModuleAllowed('erp_overview') && (
             <button
               onClick={() => onNavigate('erp_overview')}
               className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
