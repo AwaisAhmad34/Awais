@@ -341,24 +341,36 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     // Provision main campus administrator login globally in Firestore + login_directory
     const mainUsername = mainCred.username;
     const mainEmail = `${mainUsername}@${clientInfo.code.toLowerCase()}.edu.pk`;
-    provisionGlobalUserAccount({
-      id: `user-${newMainId}`,
-      username: mainUsername,
-      name: newMainCampusObj.accountantName || cleanName,
-      email: mainEmail,
-      password: mainCred.password,
-      role: 'level_3_main_campus_admin',
-      permissionLevel: 'level_3_main_campus_admin',
-      isSuperAdmin: false,
-      clientId: clientInfo.id,
-      campusId: newMainId,
-      campusName: cleanName,
-      permittedCampusIds: ['all'],
-      delegatedSubCampusIds: [],
-      allowedModules: DEFAULT_CLIENT_MODULES,
-      status: 'active',
-      designation: `Main Campus Administrator (${cleanCode})`,
-    }).catch(() => {});
+    try {
+      const provisioned = await provisionGlobalUserAccount({
+        id: `user-${newMainId}`,
+        username: mainUsername,
+        name: newMainCampusObj.accountantName || cleanName,
+        email: mainEmail,
+        password: mainCred.password,
+        role: 'level_3_main_campus_admin',
+        permissionLevel: 'level_3_main_campus_admin',
+        isSuperAdmin: false,
+        clientId: clientInfo.id,
+        campusId: newMainId,
+        campusName: cleanName,
+        permittedCampusIds: ['all'],
+        delegatedSubCampusIds: [],
+        allowedModules: DEFAULT_CLIENT_MODULES,
+        status: 'active',
+        designation: `Main Campus Administrator (${cleanCode})`,
+      });
+      if (provisioned.authProvisioned || provisioned.uid) {
+        addUser?.({
+          ...provisioned.userRecord,
+          password: mainCred.password,
+        });
+      } else if (provisioned.warning) {
+        showToast('error', `Main Campus saved, login provisioning notice: ${provisioned.warning}`);
+      }
+    } catch (err: any) {
+      showToast('error', err?.message || 'Main Campus saved, but global login provisioning returned an error.');
+    }
 
     // Link this newly registered main campus to client organization
     const allClients = getStoredSchoolClients();
@@ -480,6 +492,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       return;
     }
 
+    if (newBranchPassword.trim() && newBranchPassword.trim().length < 6) {
+      showToast('error', 'Sub-campus password must be at least 6 characters.');
+      return;
+    }
+
     const newId = `campus-${clientInfo.code.toLowerCase()}-${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
     const newCampusObj: Campus = {
       id: newId,
@@ -512,6 +529,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
 
     let provisionedUid: string | null = null;
     let provisioningWarning: string | undefined;
+    let authProvisioned = false;
     try {
       const provisioned = await provisionGlobalUserAccount({
         id: branchUserId,
@@ -532,6 +550,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
         designation: `Sub-Campus Administrator (${cleanCode})`,
       });
       provisionedUid = provisioned.uid;
+      authProvisioned = Boolean(provisioned.authProvisioned);
       if (!provisioned.authProvisioned) {
         provisioningWarning =
           provisioned.warning || 'Sub-campus profile created, but Firebase Authentication provisioning returned a notice.';
@@ -540,7 +559,7 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       provisioningWarning = err?.message || 'Global Firebase Auth provisioning failed.';
     }
 
-    if (addUser) {
+    if (addUser && (authProvisioned || provisionedUid)) {
       addUser({
         id: branchUserId,
         uid: provisionedUid,
@@ -617,26 +636,36 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     const updatedCred = createDynamicCampusCredential(editingCampus, existingCred, newPassword);
     await saveCampusCredentialToCloud(updatedCred).catch(() => {});
 
+    let resetWarning: string | undefined;
     if (targetUser) {
-      await provisionGlobalUserAccount({
-        id: targetUser.id,
-        uid: (targetUser as any).uid || null,
-        username: targetUser.username || updatedCred.username,
-        name: targetUser.name || editingCampus.accountantName || editingCampus.name,
-        email: targetUser.email || `${updatedCred.username}@${clientInfo.code.toLowerCase()}.edu.pk`,
-        password: newPassword,
-        role: targetUser.role || 'level_3_sub_campus_admin',
-        permissionLevel: (targetUser as any).permissionLevel || 'level_4_sub_campus_admin',
-        isSuperAdmin: false,
-        clientId: (targetUser as any).clientId || clientInfo.id,
-        campusId: editingCampus.id,
-        campusName: editingCampus.name,
-        permittedCampusIds: (targetUser as any).permittedCampusIds || [editingCampus.id],
-        delegatedSubCampusIds: (targetUser as any).delegatedSubCampusIds || [],
-        allowedModules: (targetUser as any).allowedModules || DEFAULT_CLIENT_MODULES,
-        status: (targetUser as any).status === 'suspended' ? 'suspended' : 'active',
-        designation: (targetUser as any).designation,
-      }).catch(() => {});
+      try {
+        const provisioned = await provisionGlobalUserAccount({
+          id: targetUser.id,
+          uid: (targetUser as any).uid || null,
+          username: targetUser.username || updatedCred.username,
+          name: targetUser.name || editingCampus.accountantName || editingCampus.name,
+          email: targetUser.email || `${updatedCred.username}@${clientInfo.code.toLowerCase()}.edu.pk`,
+          password: newPassword,
+          role: targetUser.role || 'level_3_sub_campus_admin',
+          permissionLevel: (targetUser as any).permissionLevel || 'level_4_sub_campus_admin',
+          isSuperAdmin: false,
+          clientId: (targetUser as any).clientId || clientInfo.id,
+          campusId: editingCampus.id,
+          campusName: editingCampus.name,
+          permittedCampusIds: (targetUser as any).permittedCampusIds || [editingCampus.id],
+          delegatedSubCampusIds: (targetUser as any).delegatedSubCampusIds || [],
+          allowedModules: (targetUser as any).allowedModules || DEFAULT_CLIENT_MODULES,
+          status: (targetUser as any).status === 'suspended' ? 'suspended' : 'active',
+          designation: (targetUser as any).designation,
+        });
+        if (!provisioned.authProvisioned) {
+          resetWarning =
+            provisioned.warning ||
+            'Password reset could not update Firebase Authentication from client session. Use Forgot Password on the login page if sign-in rejects the new password.';
+        }
+      } catch (err: any) {
+        resetWarning = err?.message || 'Could not update Firebase Authentication password.';
+      }
     }
 
     logActivity(
@@ -648,7 +677,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
     );
 
     setIsResetting(false);
-    showToast('success', `Password for ${editingCampus.name} reset & synced globally across devices!`);
+    if (resetWarning) {
+      showToast('error', resetWarning);
+    } else {
+      showToast('success', `Password for ${editingCampus.name} reset & synced globally across devices!`);
+    }
     setEditingCampus(null);
     setResetPasswordInput('');
   };

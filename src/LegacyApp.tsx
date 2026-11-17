@@ -3,6 +3,7 @@ import {
   getVerifiedProfile,
   initAuthListener,
   getAuthResolutionState,
+  logoutAccount,
 } from './services/secureAuthentication';
 /**
  * @license
@@ -40,6 +41,13 @@ import { initFirebaseCloudSync } from './services/firebaseSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 installGlobalVisibilityHook();
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    localStorage.removeItem('ams_current_user_v5_clean');
+    localStorage.removeItem('ams_impersonation_admin_v1');
+    localStorage.removeItem('aplus_current_user');
+  } catch {}
+}
 window.__APLUS_CUSTOM_DOCS__ = AplusSystemManual;
 window.__APLUS_AUDIT_TRAIL__ = SecureAuditTrail as any;
 window.__APLUS_VOUCHER_PRINT_LAYOUT__ = PrintableVoucherA4Layout;
@@ -94,6 +102,7 @@ function InnerApp() {
           email: profile.email || target?.email || `${profile.username}@institution.edu.pk`,
           role: profile.role || target?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
           permissionLevel: profile.permissionLevel,
+          isSuperAdmin: Boolean(isSuper || profile.isSuperAdmin),
           status: 'active',
           clientId: profile.clientId ?? target?.clientId ?? null,
           campusId: profile.campusId ?? target?.campusId ?? null,
@@ -123,7 +132,7 @@ function InnerApp() {
         setAuthTick((t) => t + 1);
       },
       (state) => {
-        setIsAuthResolving(!state.resolved || state.resolving);
+        setIsAuthResolving(!state.resolved);
         setAuthTick((t) => t + 1);
       }
     );
@@ -131,6 +140,12 @@ function InnerApp() {
   }, []);
 
   const verifiedProfile = getVerifiedProfile();
+
+  useEffect(() => {
+    if (!currentUser && verifiedProfile) {
+      logoutAccount().catch(() => {});
+    }
+  }, [currentUser, verifiedProfile]);
 
   if (isAuthResolving && (!currentUser || !verifiedProfile)) {
     return (

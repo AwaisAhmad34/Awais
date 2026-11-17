@@ -44,6 +44,7 @@ import {
   resetAllUsersAndOwner,
   getVerifiedProfile,
   getAuthResolutionState,
+  logoutAccount,
 } from './services/secureAuthentication';
 import {
   provisionGlobalUserAccount,
@@ -120,6 +121,15 @@ function ensureCleanSlateBootstrap() {
 // Clean-slate setup: ensure all legacy cached users and owner sessions are wiped
 ensureCleanSlateBootstrap();
 
+// Always require explicit login on browser refresh/boot (no automatic session restore)
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    localStorage.removeItem('ams_current_user_v5_clean');
+    localStorage.removeItem('ams_impersonation_admin_v1');
+    localStorage.removeItem('aplus_current_user');
+  } catch {}
+}
+
 // One-time cleanup utility available on window.__PURGE_PRODUCTION_DATA__ for emergency resets
 (window as any).__PURGE_PRODUCTION_DATA__ = purgeAllProductionData;
 (window as any).__RESET_ALL_USERS_AND_OWNER__ = resetAllUsersAndOwner;
@@ -169,6 +179,13 @@ function InnerApp() {
     fetchSchoolClientsFromCloud().catch(() => {});
     return subscribeCloudSync(setSyncStats);
   }, [isSessionVerified, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser && isSessionVerified) {
+      setIsSessionVerified(false);
+      logoutAccount().catch(() => {});
+    }
+  }, [currentUser, isSessionVerified]);
 
   // Side navigation bar expanded / minimized state variable in main layout
   const [isSidebarMinimized, setIsSidebarMinimized] = useState<boolean>(() => {
@@ -256,6 +273,7 @@ function InnerApp() {
           email: profile.email || target?.email || `${profile.username}@institution.edu.pk`,
           role: profile.role || target?.role || (isSuper ? 'level_1_platform_super_admin' : 'level_2_client_super_admin'),
           permissionLevel: profile.permissionLevel,
+          isSuperAdmin: Boolean(isSuper || profile.isSuperAdmin),
           status: 'active',
           clientId: profile.clientId ?? target?.clientId ?? null,
           campusId: profile.campusId ?? target?.campusId ?? null,
@@ -289,7 +307,7 @@ function InnerApp() {
         setIsAuthResolving(false);
       },
       (authState) => {
-        setIsAuthResolving(!authState.resolved || authState.resolving);
+        setIsAuthResolving(!authState.resolved);
       }
     );
 
@@ -591,7 +609,7 @@ export default function App() {
           );
           return;
         }
-        await provisionGlobalUserAccount({
+        const res = await provisionGlobalUserAccount({
           id: u.id,
           uid: u.uid || null,
           username: u.username,
@@ -600,15 +618,26 @@ export default function App() {
           password: u.password,
           role: u.role,
           permissionLevel: u.permissionLevel,
-          isSuperAdmin: u.role === 'super_admin' || u.permissionLevel === 'level_1_platform_super_admin',
+          isSuperAdmin:
+            u.role === 'super_admin' ||
+            u.permissionLevel === 'level_1_platform_super_admin' ||
+            Boolean(u.isSuperAdmin),
           clientId: u.clientId ?? null,
           campusId: u.campusId === 'all' ? null : (u.campusId ?? null),
           campusName: u.campusName,
-          permittedCampusIds: u.campusId && u.campusId !== 'all' ? [u.campusId] : ['all'],
+          permittedCampusIds:
+            Array.isArray(u.permittedCampusIds) && u.permittedCampusIds.length > 0
+              ? u.permittedCampusIds
+              : u.campusId && u.campusId !== 'all'
+              ? [u.campusId]
+              : ['all'],
           allowedModules: u.allowedModules || ['all'],
           status: u.status || 'active',
           designation: u.designation,
         });
+        if (u.password && !res.authProvisioned && res.warning) {
+          console.warn('Cloud user credential provisioning notice:', res.warning);
+        }
       } catch (err) {
         console.warn('Cloud user provisioning bridge notice:', err);
       }

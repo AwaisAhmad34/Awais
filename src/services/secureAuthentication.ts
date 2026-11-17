@@ -28,6 +28,7 @@ let verifiedProfile: any = null;
 let authListenerAttached = false;
 let authResolvedOnce = false;
 let authResolving = false;
+let interactiveAuthInProgress = false;
 const pendingRestoreByUid = new Map<string, Promise<any>>();
 const authStateSubscribers = new Set<(state: AuthResolutionState) => void>();
 
@@ -67,7 +68,7 @@ function normalizeResolvedPermissionLevel(level?: string, role?: string): string
   }
   if (role === 'level_2_client_super_admin') return 'level_2_client_super_admin';
   if (role === 'level_3_main_campus_admin') return 'level_3_main_campus_admin';
-  if (role === 'level_3_sub_campus_admin' || role === 'level_4_sub_campus_admin') {
+  if (role === 'level_3_sub_campus_admin' || role === 'level_4_sub_campus_admin' || role === 'campus_admin') {
     return 'level_4_sub_campus_admin';
   }
   return 'level_5_departmental_staff';
@@ -284,42 +285,58 @@ export async function authenticateAccount(emailOrUsername: string, password: str
     throw new Error('Please enter both your email or username and password.');
   }
 
-  const candidateEmails = await collectCandidateEmailsForUsername(cleanInput);
-  if (candidateEmails.length === 0) {
-    throw new Error('Invalid email or password.');
-  }
+  interactiveAuthInProgress = true;
+  try {
+    const candidateEmails = await collectCandidateEmailsForUsername(cleanInput);
+    if (candidateEmails.length === 0) {
+      throw new Error('Invalid email or password.');
+    }
 
-  let authenticatedUser: User | null = null;
-  let lastAuthErr: any = null;
+    let authenticatedUser: User | null = null;
+    let lastAuthErr: any = null;
 
-  // Strictly attempt sign-in against Firebase Auth with registered credentials only
-  for (const emailCandidate of candidateEmails) {
-    try {
-      const credential = await signInWithEmailAndPassword(auth, emailCandidate, cleanPassword);
-      authenticatedUser = credential.user;
-      break;
-    } catch (authErr: any) {
-      lastAuthErr = authErr;
-      const code = String(authErr?.code || '');
-      const isRetryableLookupFailure =
-        code === 'auth/invalid-credential' ||
-        code === 'auth/user-not-found' ||
-        code === 'auth/wrong-password' ||
-        code === 'auth/invalid-email';
-      if (!isRetryableLookupFailure) {
-        await signOut(auth).catch(() => {});
-        throw new Error(mapFirebaseAuthErrorMessage(authErr));
+    // Strictly attempt sign-in against Firebase Auth with registered credentials only
+    for (const emailCandidate of candidateEmails) {
+      try {
+        const credential = await signInWithEmailAndPassword(auth, emailCandidate, cleanPassword);
+        authenticatedUser = credential.user;
+        break;
+      } catch (authErr: any) {
+        lastAuthErr = authErr;
+        const code = String(authErr?.code || '');
+        const isRetryableLookupFailure =
+          code === 'auth/invalid-credential' ||
+          code === 'auth/user-not-found' ||
+          code === 'auth/wrong-password' ||
+          code === 'auth/invalid-email';
+        if (!isRetryableLookupFailure) {
+          await signOut(auth).catch(() => {});
+          throw new Error(mapFirebaseAuthErrorMessage(authErr));
+        }
       }
     }
-  }
 
-  if (!authenticatedUser) {
-    await signOut(auth).catch(() => {});
-    throw new Error(mapFirebaseAuthErrorMessage(lastAuthErr));
-  }
+    if (!authenticatedUser) {
+      await signOut(auth).catch(() => {});
+      throw new Error(mapFirebaseAuthErrorMessage(lastAuthErr));
+    }
 
-  // Resolve authoritative user profile & campus mappings outside retry loop so domain errors surface directly
-  return await restoreAccount(authenticatedUser);
+    // Resolve authoritative user profile & campus mappings outside retry loop so domain errors surface directly
+    const profile = await restoreAccount(authenticatedUser);
+    authResolvedOnce = true;
+    authResolving = false;
+    if (latestProfileCallback) latestProfileCallback(profile);
+    notifyAuthStateSubscribers();
+    return profile;
+  } catch (err) {
+    verifiedProfile = null;
+    authResolvedOnce = true;
+    authResolving = false;
+    notifyAuthStateSubscribers();
+    throw err;
+  } finally {
+    interactiveAuthInProgress = false;
+  }
 }
 
 /**
@@ -328,10 +345,26 @@ export async function authenticateAccount(emailOrUsername: string, password: str
  */
 export async function signInWithGoogle() {
   verifiedProfile = null;
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  const credential = await signInWithPopup(auth, provider);
-  return await restoreAccount(credential.user);
+  interactiveAuthInProgress = true;
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const credential = await signInWithPopup(auth, provider);
+    const profile = await restoreAccount(credential.user);
+    authResolvedOnce = true;
+    authResolving = false;
+    if (latestProfileCallback) latestProfileCallback(profile);
+    notifyAuthStateSubscribers();
+    return profile;
+  } catch (err) {
+    verifiedProfile = null;
+    authResolvedOnce = true;
+    authResolving = false;
+    notifyAuthStateSubscribers();
+    throw err;
+  } finally {
+    interactiveAuthInProgress = false;
+  }
 }
 
 /**
@@ -508,79 +541,89 @@ export async function provisionInitialPlatformOwner(
   }
 
   // 2. Client-side Firebase account creation / sign-in
-  let user: User;
-  if (serverHandled) {
-    const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-    user = credential.user;
-  } else {
-    try {
-      const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+  interactiveAuthInProgress = true;
+  try {
+    let user: User;
+    if (serverHandled) {
+      const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
       user = credential.user;
-    } catch (createErr: any) {
-      if (createErr.code === 'auth/email-already-in-use') {
-        const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+    } else {
+      try {
+        const credential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         user = credential.user;
-      } else {
-        throw createErr;
+      } catch (createErr: any) {
+        if (createErr.code === 'auth/email-already-in-use') {
+          const credential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+          user = credential.user;
+        } else {
+          throw createErr;
+        }
       }
     }
-  }
 
-  // 3. Create or update authoritative membership in Firestore
-  const mRef = doc(db, 'memberships', user.uid);
-  const ownerMembership = {
-    name: name || user.displayName || 'Platform Super Admin (Site Owner)',
-    username: cleanEmail.split('@')[0] || 'admin',
-    email: cleanEmail,
-    permissionLevel: 'level_1_platform_super_admin',
-    clientId: null,
-    campusId: null,
-    status: 'active',
-    allowedModules: ['all'],
-    delegatedCampusIds: ['all'],
-    isPlatformAdmin: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  await setDoc(mRef, ownerMembership, { merge: true });
-
-  // 4. Update cloud platform owner registry
-  try {
-    const regRef = doc(db, 'system_state', 'platform_owner_registry');
-    await setDoc(regRef, {
-      isInitialized: true,
-      ownerUid: user.uid,
-      ownerEmail: cleanEmail,
-      initializedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch {}
-
-  // 5. Mirror Platform Owner into global_users & login_directory so owner appears globally in DB
-  try {
-    await provisionGlobalUserAccount({
-      id: 'user-platform-owner',
-      uid: user.uid,
-      username: ownerMembership.username,
-      name: ownerMembership.name,
+    // 3. Create or update authoritative membership in Firestore
+    const mRef = doc(db, 'memberships', user.uid);
+    const ownerMembership = {
+      name: name || user.displayName || 'Platform Super Admin (Site Owner)',
+      username: cleanEmail.split('@')[0] || 'admin',
       email: cleanEmail,
-      role: 'level_1_platform_super_admin',
       permissionLevel: 'level_1_platform_super_admin',
-      isSuperAdmin: true,
       clientId: null,
       campusId: null,
-      permittedCampusIds: ['all'],
-      allowedModules: ['all'],
       status: 'active',
-    });
-  } catch {}
+      allowedModules: ['all'],
+      delegatedCampusIds: ['all'],
+      isPlatformAdmin: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await setDoc(mRef, ownerMembership, { merge: true });
 
-  // 6. Update local storage marker
-  if (typeof window !== 'undefined' && window.localStorage) {
-    localStorage.setItem('aplus_owner_registered_local', 'true');
-    localStorage.setItem('aplus_owner_email_local', cleanEmail);
+    // 4. Update cloud platform owner registry
+    try {
+      const regRef = doc(db, 'system_state', 'platform_owner_registry');
+      await setDoc(regRef, {
+        isInitialized: true,
+        ownerUid: user.uid,
+        ownerEmail: cleanEmail,
+        initializedAt: new Date().toISOString(),
+      }, { merge: true });
+    } catch {}
+
+    // 5. Mirror Platform Owner into global_users & login_directory so owner appears globally in DB
+    try {
+      await provisionGlobalUserAccount({
+        id: 'user-platform-owner',
+        uid: user.uid,
+        username: ownerMembership.username,
+        name: ownerMembership.name,
+        email: cleanEmail,
+        role: 'level_1_platform_super_admin',
+        permissionLevel: 'level_1_platform_super_admin',
+        isSuperAdmin: true,
+        clientId: null,
+        campusId: null,
+        permittedCampusIds: ['all'],
+        allowedModules: ['all'],
+        status: 'active',
+      });
+    } catch {}
+
+    // 6. Update local storage marker
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('aplus_owner_registered_local', 'true');
+      localStorage.setItem('aplus_owner_email_local', cleanEmail);
+    }
+
+    const profile = await restoreAccount(user);
+    authResolvedOnce = true;
+    authResolving = false;
+    if (latestProfileCallback) latestProfileCallback(profile);
+    notifyAuthStateSubscribers();
+    return profile;
+  } finally {
+    interactiveAuthInProgress = false;
   }
-
-  return await restoreAccount(user);
 }
 
 export async function logoutAccount() {
@@ -656,8 +699,8 @@ async function restoreAccountInternal(user: User) {
     if (globalUser) {
       const normalizedGlobalLevel = normalizeResolvedPermissionLevel(globalUser.permissionLevel, globalUser.role);
       const isGlobalOwner =
-        Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin') &&
-        (!regData?.isInitialized || isRegistryOwner);
+        isRegistryOwner ||
+        Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin');
 
       const globalMembership = {
         userId: globalUser.id,
@@ -712,14 +755,15 @@ async function restoreAccountInternal(user: User) {
   } else if (globalUser) {
     const normalizedGlobalLevel = normalizeResolvedPermissionLevel(globalUser.permissionLevel, globalUser.role);
     const isGlobalOwner =
-      Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin') &&
-      (!regData?.isInitialized || isRegistryOwner);
+      isRegistryOwner ||
+      Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin');
 
-    membership = {
+    const syncedMembership = {
       ...membership,
       userId: globalUser.id,
       name: globalUser.name || membership?.name,
       username: globalUser.username || membership?.username,
+      email: globalUser.email || membership?.email || emailLower,
       permissionLevel: isGlobalOwner
         ? 'level_1_platform_super_admin'
         : normalizedGlobalLevel || normalizeResolvedPermissionLevel(membership?.permissionLevel, membership?.role),
@@ -740,6 +784,17 @@ async function restoreAccountInternal(user: User) {
       status: globalUser.status || membership?.status,
       updatedAt: globalUser.updatedAt || membership?.updatedAt,
     };
+
+    if (
+      membership?.userId !== syncedMembership.userId ||
+      membership?.permissionLevel !== syncedMembership.permissionLevel ||
+      membership?.status !== syncedMembership.status ||
+      membership?.campusId !== syncedMembership.campusId ||
+      membership?.clientId !== syncedMembership.clientId
+    ) {
+      setDoc(mRef, syncedMembership, { merge: true }).catch(() => {});
+    }
+    membership = syncedMembership;
   }
 
   // Strictly block unregistered/removed users even if a stale memberships document exists
@@ -827,6 +882,7 @@ async function restoreAccountInternal(user: User) {
   const normalizedLevel = normalizeResolvedPermissionLevel(membership?.permissionLevel, membership?.role);
   const isOwner = Boolean(
     isRegistryOwner ||
+    Boolean(globalUser && (globalUser.isSuperAdmin || normalizeResolvedPermissionLevel(globalUser.permissionLevel, globalUser.role) === 'level_1_platform_super_admin')) ||
     ((membership?.isPlatformAdmin === true || normalizedLevel === 'level_1_platform_super_admin') &&
       (!regData?.isInitialized || regData?.ownerUid === user.uid || regData?.ownerEmail?.toLowerCase() === emailLower))
   );
@@ -936,6 +992,10 @@ export function initAuthListener(
   notifyAuthStateSubscribers();
 
   onAuthStateChanged(auth, async (user) => {
+    if (interactiveAuthInProgress) {
+      return;
+    }
+
     authResolving = true;
     notifyAuthStateSubscribers();
 

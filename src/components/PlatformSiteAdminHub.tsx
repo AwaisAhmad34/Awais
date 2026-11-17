@@ -272,7 +272,7 @@ export const PlatformSiteAdminHub: React.FC<{
   const [clientFormMainCampusCity, setClientFormMainCampusCity] = useState('');
   const [clientFormMainCampusFloat, setClientFormMainCampusFloat] = useState('50000');
   const [clientFormMainCampusOpeningBalance, setClientFormMainCampusOpeningBalance] = useState('0');
-  const [clientFormMainCampusPassword, setClientFormMainCampusPassword] = useState('campus');
+  const [clientFormMainCampusPassword, setClientFormMainCampusPassword] = useState('Campus@123');
   const [clientFormLogoUrl, setClientFormLogoUrl] = useState('');
 
   // --------------------------------------------------------------------------
@@ -562,6 +562,12 @@ export const PlatformSiteAdminHub: React.FC<{
           const adminEmail =
             clientFormEmail.trim() || `${adminUsername}@${cleanCode.toLowerCase().replace(/[^a-z0-9]/g, '')}.edu.pk`;
 
+          if (mainAdminPass.length < 6) {
+            triggerToast('error', 'Main campus admin password must be at least 6 characters.');
+            setIsSavingClient(false);
+            return;
+          }
+
           const provisioned = await provisionGlobalUserAccount({
             id: `user-${newId}-admin`,
             username: adminUsername,
@@ -580,15 +586,19 @@ export const PlatformSiteAdminHub: React.FC<{
             status: 'active',
           });
 
-          if (addUser) {
-            addUser({
-              ...provisioned.userRecord,
-              password: mainAdminPass,
-            });
+          if (provisioned.authProvisioned || provisioned.uid) {
+            if (addUser) {
+              addUser({
+                ...provisioned.userRecord,
+                password: mainAdminPass,
+              });
+            }
+            setCloudGlobalUsers((prev) =>
+              normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+            );
+          } else if (provisioned.warning) {
+            triggerToast('warning', `Client registered, notice for @${adminUsername}: ${provisioned.warning}`);
           }
-          setCloudGlobalUsers((prev) =>
-            normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
-          );
 
           // Generate dynamic credentials and sync to cloud
           const cred = createDynamicCampusCredential(newMainCampus, undefined, mainAdminPass);
@@ -1069,6 +1079,10 @@ export const PlatformSiteAdminHub: React.FC<{
 
     // Generate dynamic credentials and save to database
     const pass = newCampusPassword.trim() || generateDynamicPassword(cleanCode);
+    if (pass.length < 6) {
+      triggerToast('error', 'Campus login password must be at least 6 characters.');
+      return;
+    }
     const cred = createDynamicCampusCredential(newCampus, undefined, pass);
     saveCampusCredentialToCloud(cred).catch(() => {});
 
@@ -1079,6 +1093,8 @@ export const PlatformSiteAdminHub: React.FC<{
     const autoEmail = `${autoUsername}@institution.edu.pk`;
     const assignedLevel = parentId ? 'level_4_sub_campus_admin' : 'level_3_main_campus_admin';
 
+    let campusAuthProvisioned = false;
+    let campusProvisionWarning: string | undefined;
     try {
       const provisioned = await provisionGlobalUserAccount({
         id: `user-${newId}`,
@@ -1098,33 +1114,22 @@ export const PlatformSiteAdminHub: React.FC<{
         status: 'active',
       });
 
-      if (addUser) {
-        addUser({
-          ...provisioned.userRecord,
-          password: pass,
-        });
+      campusAuthProvisioned = Boolean(provisioned.authProvisioned);
+      campusProvisionWarning = provisioned.warning;
+
+      if (provisioned.authProvisioned || provisioned.uid) {
+        if (addUser) {
+          addUser({
+            ...provisioned.userRecord,
+            password: pass,
+          });
+        }
+        setCloudGlobalUsers((prev) =>
+          normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+        );
       }
-      setCloudGlobalUsers((prev) =>
-        normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
-      );
-    } catch {
-      if (addUser) {
-        addUser({
-          id: `user-${newId}`,
-          username: autoUsername,
-          name: newCampusAccountant.trim() || `${newCampusName.trim()} Accountant`,
-          email: autoEmail,
-          role: parentId ? 'level_3_sub_campus_admin' : 'level_3_main_campus_admin',
-          permissionLevel: assignedLevel,
-          status: 'active',
-          password: pass,
-          clientId: resolvedClientId || null,
-          campusId: newId,
-          permittedCampusIds: [newId],
-          allowedModules: newCampus.allowedModules,
-          designation: parentId ? `Sub-Campus Accountant (${cleanCode})` : `Main Campus Administrator (${cleanCode})`,
-        });
-      }
+    } catch (err: any) {
+      campusProvisionWarning = err?.message || 'Failed to provision Firebase Authentication credentials for campus user.';
     }
 
     recordSiteAdminSecurityEvent({
@@ -1136,16 +1141,24 @@ export const PlatformSiteAdminHub: React.FC<{
       targetEntity: 'Campus',
       targetId: newId,
       details: parentId
-        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}' and synced global login @${autoUsername}.`
-        : `Created Main Campus '${newCampus.name}' (${newCampus.code}) and synced global login @${autoUsername}.`,
+        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) under Parent '${parent?.name}' (${campusAuthProvisioned ? `synced global login @${autoUsername}` : 'auth notice'}).`
+        : `Created Main Campus '${newCampus.name}' (${newCampus.code}) (${campusAuthProvisioned ? `synced global login @${autoUsername}` : 'auth notice'}).`,
     });
 
-    triggerToast(
-      'success',
-      parentId
-        ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) & synced login @${autoUsername} globally!`
-        : `Created Main Campus '${newCampus.name}' (${newCampus.code}) & synced login @${autoUsername} globally!`
-    );
+    if (!campusAuthProvisioned) {
+      triggerToast(
+        'warning',
+        campusProvisionWarning ||
+          `Campus '${newCampus.name}' saved, but Firebase Auth failed for @${autoUsername}. Re-create the user in User Management before login.`
+      );
+    } else {
+      triggerToast(
+        'success',
+        parentId
+          ? `Created Sub-Campus '${newCampus.name}' (${newCampus.code}) & synced login @${autoUsername} globally!`
+          : `Created Main Campus '${newCampus.name}' (${newCampus.code}) & synced login @${autoUsername} globally!`
+      );
+    }
 
     setIsCampusModalOpen(false);
   };
@@ -1467,6 +1480,12 @@ export const PlatformSiteAdminHub: React.FC<{
         ? 'level_3_sub_campus_admin'
         : userFormRole;
 
+      if (userFormPassword.trim() && userFormPassword.trim().length < 6) {
+        triggerToast('error', 'Password must be at least 6 characters for Firebase Authentication.');
+        setIsSavingUser(false);
+        return;
+      }
+
       const provisioned = await provisionGlobalUserAccount({
         id: selectedUserToEdit?.id,
         uid: selectedUserToEdit?.uid || null,
@@ -1492,11 +1511,20 @@ export const PlatformSiteAdminHub: React.FC<{
         designation: resolvedRole,
       });
 
-      setCloudGlobalUsers((prev) =>
-        normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
-      );
-
       if (!selectedUserToEdit) {
+        if (!provisioned.authProvisioned) {
+          triggerToast(
+            'error',
+            provisioned.warning ||
+              `Could not create '@${cleanUsername}': Firebase Authentication rejected these credentials. Verify the email and password (>= 6 characters).`
+          );
+          return;
+        }
+
+        setCloudGlobalUsers((prev) =>
+          normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+        );
+
         addUser({
           ...provisioned.userRecord,
           password: userFormPassword.trim(),
@@ -1513,20 +1541,14 @@ export const PlatformSiteAdminHub: React.FC<{
           details: `Created global user '${provisioned.userRecord.name}' (@${cleanUsername}, ${resolvedEmail}) with ${normalizedLevel} & synced to Firebase Auth + Firestore.`,
         });
 
-        if (!provisioned.authProvisioned) {
-          triggerToast(
-            'error',
-            provisioned.warning ||
-              `User '@${cleanUsername}' profile saved in Firestore, but Firebase Authentication failed to register those credentials. Check the email or password before signing in.`
-          );
-          return;
-        }
-
         triggerToast(
           'success',
           `Created '@${cleanUsername}' (${resolvedEmail}) — Synced globally to Cloud DB & Firebase Auth!`
         );
       } else {
+        setCloudGlobalUsers((prev) =>
+          normalizeAndDeduplicateGlobalUsers([provisioned.userRecord, ...(prev || [])], currentUser)
+        );
         const updates: any = {
           ...provisioned.userRecord,
           ...(userFormPassword.trim() ? { password: userFormPassword.trim() } : {}),
@@ -1548,7 +1570,7 @@ export const PlatformSiteAdminHub: React.FC<{
           triggerToast(
             'warning',
             provisioned.warning ||
-              `Updated '@${cleanUsername}' in Firestore DB, but Firebase Auth password could not be verified/changed from client session.`
+              `Updated '@${cleanUsername}' profile in Firestore DB, but Firebase Auth password could not be changed from client session.`
           );
           return;
         }
@@ -1763,6 +1785,7 @@ export const PlatformSiteAdminHub: React.FC<{
     verifiedSessionProfile &&
     !currentUser.clientId &&
     (currentUser.role === 'level_1_platform_super_admin' ||
+     currentUser.permissionLevel === 'level_1_platform_super_admin' ||
      currentUser.username?.toLowerCase() === 'admin' ||
      (currentUser.role === 'admin' && !currentUser.campusId && isSuperAdmin))
   );

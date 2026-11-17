@@ -1,6 +1,9 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import {
+  initializeAuth,
   getAuth,
+  inMemoryPersistence,
+  setPersistence,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
@@ -115,7 +118,16 @@ function getProvisioningApp(): FirebaseApp {
 }
 
 function getProvisioningAuth(): Auth {
-  return getAuth(getProvisioningApp());
+  const appInstance = getProvisioningApp();
+  try {
+    return initializeAuth(appInstance, {
+      persistence: inMemoryPersistence,
+    });
+  } catch {
+    const secondary = getAuth(appInstance);
+    setPersistence(secondary, inMemoryPersistence).catch(() => {});
+    return secondary;
+  }
 }
 
 export function normalizeUsernameKey(username: string): string {
@@ -140,14 +152,16 @@ async function getAuthBearerHeaders(): Promise<Record<string, string>> {
 function normalizePermissionLevel(level?: string, role?: string, isSuperAdmin?: boolean): string {
   if (level) {
     if (level === 'level_2_client_admin') return 'level_2_client_super_admin';
+    if (level === 'level_3_sub_campus_admin') return 'level_4_sub_campus_admin';
+    if (level === 'level_5_departmental_user') return 'level_5_departmental_staff';
     return level;
   }
-  if (isSuperAdmin || role === 'level_1_platform_super_admin' || role === 'admin') {
+  if (isSuperAdmin || role === 'level_1_platform_super_admin' || role === 'admin' || role === 'super_admin') {
     return 'level_1_platform_super_admin';
   }
   if (role === 'level_2_client_super_admin') return 'level_2_client_super_admin';
   if (role === 'level_3_main_campus_admin') return 'level_3_main_campus_admin';
-  if (role === 'level_3_sub_campus_admin' || role === 'level_4_sub_campus_admin') {
+  if (role === 'level_3_sub_campus_admin' || role === 'level_4_sub_campus_admin' || role === 'campus_admin') {
     return 'level_4_sub_campus_admin';
   }
   return 'level_5_departmental_staff';
@@ -469,6 +483,22 @@ export async function provisionGlobalUserAccount(
     updatedAt: now,
   };
 
+  // Prevent writing an un-loggable phantom user when creating a brand-new password-based account fails Firebase Auth
+  if (cleanPassword && !authProvisioned && !resolvedUid) {
+    return {
+      userRecord: {
+        ...userRecord,
+        syncedToCloud: false,
+      },
+      uid: null,
+      authProvisioned: false,
+      authErrorCode,
+      warning:
+        warning ||
+        'Firebase Authentication credentials could not be provisioned. User account was not activated for login.',
+    };
+  }
+
   // 2. Write to Firestore `global_users/{userId}`
   if (auth.currentUser) {
     const globalUserPath = `global_users/${userId}`;
@@ -630,26 +660,30 @@ export async function reconcileGlobalUsersLoginDirectory(
 
   for (const u of users) {
     if (!u || !u.username || !u.email) continue;
+    const rawClean = u.username.trim().toLowerCase().replace(/\s+/g, '');
     const dirKey = normalizeUsernameKey(u.username);
     if (!dirKey) continue;
-    const cacheSignature = `${dirKey}|${normalizeEmailKey(u.email)}|${u.status || 'active'}|${u.uid || ''}`;
+    const keys = Array.from(new Set([dirKey, rawClean].filter(Boolean)));
+    const cacheSignature = `${keys.join(',')}|${normalizeEmailKey(u.email)}|${u.status || 'active'}|${u.uid || ''}`;
     if (reconciledDirectoryKeys.has(cacheSignature)) continue;
 
     reconciledDirectoryKeys.add(cacheSignature);
-    try {
-      await setDoc(
-        doc(db, 'login_directory', dirKey),
-        sanitizeFirestorePayload({
-          username: u.username.trim().toLowerCase(),
-          email: normalizeEmailKey(u.email),
-          userId: u.id,
-          uid: u.uid || null,
-          status: u.status || 'active',
-          updatedAt: now,
-        }),
-        { merge: true }
-      );
-    } catch {}
+    for (const key of keys) {
+      try {
+        await setDoc(
+          doc(db, 'login_directory', key),
+          sanitizeFirestorePayload({
+            username: rawClean || dirKey,
+            email: normalizeEmailKey(u.email),
+            userId: u.id,
+            uid: u.uid || null,
+            status: u.status || 'active',
+            updatedAt: now,
+          }),
+          { merge: true }
+        );
+      } catch {}
+    }
   }
 }
 
@@ -759,6 +793,20 @@ export async function findGlobalUserInCloudByEmailOrUid(
         if (dirUserSnap.exists()) {
           return { ...(dirUserSnap.data() as GlobalUserRecord), id: dirUserSnap.id };
         }
+      }
+    }
+    // Case-insensitive directory scan fallback (handles mixed-case emails or non-matching local parts)
+    const allSnap = await getDocs(collection(db, 'global_users'));
+    for (const d of allSnap.docs) {
+      const data = d.data() as GlobalUserRecord;
+      const docEmail = normalizeEmailKey(data?.email);
+      const docUid = data?.uid ? String(data.uid) : '';
+      if (
+        (userIdHint && d.id === String(userIdHint)) ||
+        (uid && docUid === uid) ||
+        (cleanEmail && docEmail === cleanEmail)
+      ) {
+        return { ...data, id: d.id };
       }
     }
   } catch (err: any) {

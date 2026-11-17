@@ -23,6 +23,7 @@ import {
   fetchGlobalUsersFromCloud,
   subscribeToGlobalUsersFromCloud,
   normalizeAndDeduplicateGlobalUsers,
+  reconcileGlobalUsersLoginDirectory,
   type GlobalUserRecord,
 } from './globalUserSyncService';
 import {
@@ -718,13 +719,17 @@ export function initFirebaseCloudSync() {
     ensureAutoSyncScheduler().start();
   });
 
-  ensureAutoSyncScheduler().start();
+  if (auth.currentUser && getVerifiedProfile()) {
+    ensureAutoSyncScheduler().start();
 
-  setTimeout(() => {
-    startCrossBrowserRealtimeSync().catch(() => {
-      window.__APLUS_MARK_CLOUD_READY__?.();
-    });
-  }, 100);
+    setTimeout(() => {
+      startCrossBrowserRealtimeSync().catch(() => {
+        window.__APLUS_MARK_CLOUD_READY__?.();
+      });
+    }, 100);
+  } else {
+    window.__APLUS_MARK_CLOUD_READY__?.();
+  }
 }
 
 async function flushMasterSnapshotToCloud(state: any): Promise<void> {
@@ -968,6 +973,7 @@ export async function triggerInstantCloudSyncAndLoad(): Promise<void> {
       const cloudUsers = await fetchGlobalUsersFromCloud();
       const finalUsers = normalizeAndDeduplicateGlobalUsers(cloudUsers, getVerifiedProfile());
       syncLocalUsersCache(finalUsers);
+      reconcileGlobalUsersLoginDirectory(finalUsers).catch(() => {});
       const cur = window.__APLUS_GET_CURRENT_STATE__?.();
       if (cur && window.__APLUS_HYDRATE_FROM_CLOUD__) {
         const next = { ...cur, users: finalUsers };
@@ -1159,6 +1165,7 @@ async function startCrossBrowserRealtimeSync() {
 
     window.__APLUS_HYDRATE_FROM_CLOUD__?.(finalState);
     syncLocalUsersCache(finalUsers);
+    reconcileGlobalUsersLoginDirectory(finalUsers).catch(() => {});
     dispatchGlobalUsersSyncedEvent(finalUsers);
     await saveSnapshotToIndexedDB(finalState, false);
 

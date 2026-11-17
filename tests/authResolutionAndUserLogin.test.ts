@@ -189,3 +189,28 @@ test('DynamicCampusLoginPortal displays clear Firebase Auth errors and provides 
   assert.ok(portal.includes("aria-label={showConfirmOwnerPassword ? 'Hide confirm password' : 'Show confirm password'}"));
   assert.ok(portal.includes("aria-label={showOwnerSecret ? 'Hide bootstrap secret' : 'Show bootstrap secret'}"));
 });
+
+test('refresh never auto-authenticates and login portal stays mounted during failed sign-in attempts', () => {
+  const firebaseSource = readSource('src/firebase.ts');
+  assert.ok(firebaseSource.includes('inMemoryPersistence'));
+  assert.ok(firebaseSource.includes('initializeAuth'));
+
+  const appSource = readSource('src/App.tsx');
+  assert.ok(appSource.includes("localStorage.removeItem('ams_current_user_v5_clean')"));
+  assert.ok(appSource.includes('setIsAuthResolving(!authState.resolved)'));
+  assert.equal(appSource.includes('setIsAuthResolving(!authState.resolved || authState.resolving)'), false);
+
+  const legacySource = readSource('src/LegacyApp.tsx');
+  assert.ok(legacySource.includes("localStorage.removeItem('ams_current_user_v5_clean')"));
+  assert.ok(legacySource.includes('setIsAuthResolving(!state.resolved)'));
+  assert.equal(legacySource.includes('setIsAuthResolving(!state.resolved || state.resolving)'), false);
+
+  const secureAuth = readSource('src/services/secureAuthentication.ts');
+  assert.ok(secureAuth.includes('interactiveAuthInProgress'));
+  assert.ok(secureAuth.includes("Boolean(globalUser.isSuperAdmin || normalizedGlobalLevel === 'level_1_platform_super_admin')"));
+
+  const globalSync = readSource('src/services/globalUserSyncService.ts');
+  assert.ok(globalSync.includes('inMemoryPersistence'));
+  assert.ok(globalSync.includes('if (cleanPassword && !authProvisioned && !resolvedUid)'));
+  assert.ok(globalSync.includes("const allSnap = await getDocs(collection(db, 'global_users'))"));
+});

@@ -1,5 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import {
+  initializeAuth,
+  getAuth,
+  inMemoryPersistence,
+  setPersistence,
+  type Auth,
+} from 'firebase/auth';
 import {
   initializeFirestore,
   getFirestore,
@@ -43,7 +49,19 @@ try {
 }
 
 export const db = firestoreDb;
-export const auth = getAuth(app);
+
+let firebaseAuth: Auth;
+try {
+  // Strictly use in-memory persistence so refreshing the screen never auto-authenticates a cached session
+  firebaseAuth = initializeAuth(app, {
+    persistence: inMemoryPersistence,
+  });
+} catch {
+  firebaseAuth = getAuth(app);
+  setPersistence(firebaseAuth, inMemoryPersistence).catch(() => {});
+}
+
+export const auth = firebaseAuth;
 
 // Skill Directive: Test Firestore connectivity on boot
 async function testConnection() {

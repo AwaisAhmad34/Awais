@@ -135,5 +135,6 @@ test('protected Firestore listeners and global_users queries strictly gate on au
   const approvalMatrix = readSource('src/services/approvalMatrixService.ts');
   assert.ok(approvalMatrix.includes('onAuthStateChanged(auth, (firebaseUser) => {'));
   assert.ok(approvalMatrix.includes('if (disposed || unsubscribeFirestore || !auth.currentUser) return;'));
+  assert.ok(firebaseSync.includes('if (auth.currentUser && getVerifiedProfile())'));
 });
 
