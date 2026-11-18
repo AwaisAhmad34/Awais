@@ -267,6 +267,26 @@ export async function collectCandidateEmailsForUsername(emailOrUsername: string)
   if (cleanUname) {
     pushUnique(`${cleanUname}@institution.edu.pk`);
     pushUnique(`${cleanUname}@aschoolsystem.edu.pk`);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        for (const storageKey of ['aplus_school_clients_v1', 'ams_clients_v5']) {
+          const rawClients = window.localStorage.getItem(storageKey);
+          if (!rawClients) continue;
+          const parsedClients = JSON.parse(rawClients);
+          if (Array.isArray(parsedClients)) {
+            for (const c of parsedClients) {
+              const clientCode = String(c?.code || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, '');
+              if (clientCode) {
+                pushUnique(`${cleanUname}@${clientCode}.edu.pk`);
+              }
+            }
+          }
+        }
+      } catch {}
+    }
   }
 
   return candidates;
@@ -327,6 +347,9 @@ export async function authenticateAccount(emailOrUsername: string, password: str
     authResolvedOnce = true;
     authResolving = false;
     if (latestProfileCallback) latestProfileCallback(profile);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('aplus-verified-login'));
+    }
     notifyAuthStateSubscribers();
     return profile;
   } catch (err) {
@@ -355,6 +378,9 @@ export async function signInWithGoogle() {
     authResolvedOnce = true;
     authResolving = false;
     if (latestProfileCallback) latestProfileCallback(profile);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('aplus-verified-login'));
+    }
     notifyAuthStateSubscribers();
     return profile;
   } catch (err) {
@@ -833,7 +859,7 @@ async function restoreAccountInternal(user: User) {
     membership = syncedMembership;
   }
 
-  // Strictly block unregistered/removed users even if a stale memberships document exists
+  // Verify active registration for Levels 2-5 while recovering from global_users query lag when active membership exists
   if (snapshot.exists() && membership?.status === 'active') {
     const isVerifiedOwnerMember =
       isRegistryOwner ||
@@ -861,10 +887,51 @@ async function restoreAccountInternal(user: User) {
           status: 'active',
         }).catch(() => {});
       } else {
-        // Levels 2-5 MUST exist as an active registered user in global_users
-        verifiedProfile = null;
-        await signOut(auth).catch(() => {});
-        throw new Error('This registered user account has been removed or disabled. Contact your administrator.');
+        const lookupUsername = String(membership.username || emailLower.split('@')[0] || '').trim();
+        const dirEntry = lookupUsername
+          ? await lookupLoginDirectoryByUsername(lookupUsername).catch(() => null)
+          : null;
+        if (dirEntry && (dirEntry.status === 'suspended' || dirEntry.status === 'inactive')) {
+          verifiedProfile = null;
+          await signOut(auth).catch(() => {});
+          throw new Error('This registered user account has been removed or disabled. Contact your administrator.');
+        }
+
+        // Active memberships/{uid} was provisioned by an authorized admin; backfill global_users & login_directory cleanly
+        const recoveredLevel = normalizeResolvedPermissionLevel(membership?.permissionLevel, membership?.role);
+        const recoveredRole = membership?.role || recoveredLevel || 'Accountant';
+        const recoveredId = String(membership?.userId || dirEntry?.userId || `usr-${normalizeUsernameKey(lookupUsername || user.uid)}`).trim();
+        const recoveredModules =
+          Array.isArray(membership?.allowedModules) && membership.allowedModules.length > 0
+            ? membership.allowedModules
+            : recoveredLevel === 'level_2_client_super_admin'
+            ? ['all']
+            : getDefaultModulesForRole(recoveredLevel, recoveredRole);
+
+        await provisionGlobalUserAccount({
+          id: recoveredId,
+          uid: user.uid,
+          username: lookupUsername || emailLower.split('@')[0] || 'user',
+          name: membership?.name || user.displayName || lookupUsername || 'Campus User',
+          email: membership?.email || emailLower,
+          role: recoveredRole,
+          permissionLevel: recoveredLevel,
+          isSuperAdmin: false,
+          clientId: membership?.clientId ?? null,
+          campusId: membership?.campusId ?? null,
+          permittedCampusIds:
+            Array.isArray(membership?.permittedCampusIds) && membership.permittedCampusIds.length > 0
+              ? membership.permittedCampusIds
+              : membership?.campusId
+              ? [String(membership.campusId)]
+              : ['all'],
+          delegatedSubCampusIds: Array.isArray(membership?.delegatedCampusIds) ? membership.delegatedCampusIds : [],
+          allowedModules: recoveredModules,
+          status: 'active',
+          designation: membership?.designation || recoveredRole,
+          departmentalRole: membership?.departmentalRole,
+          readOnly: Boolean(membership?.readOnly),
+        }).catch(() => {});
       }
     } else if (!globalUser.uid) {
       setDoc(
@@ -1058,6 +1125,9 @@ export function initAuthListener(
         authResolvedOnce = true;
         authResolving = false;
         if (latestProfileCallback) latestProfileCallback(profile);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('aplus-verified-login'));
+        }
         notifyAuthStateSubscribers();
       } catch (err) {
         console.warn('Membership verification pending or failed for signed-in Firebase user:', err);

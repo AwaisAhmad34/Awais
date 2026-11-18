@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { formatAccountingNumber } from '../utils/accountingFormat';
 
 export interface ReportPdfAccountRow {
   code: string;
@@ -37,7 +38,6 @@ export interface GenerateReportPdfOptions {
   accountRows?: ReportPdfAccountRow[];
   totals?: ReportPdfTotals;
   vouchers?: any[];
-  pettyCashTransactions?: any[];
 }
 
 export interface GenerateReportPdfResult {
@@ -107,13 +107,6 @@ export async function generateAndDownloadReportPdf(
 
   let y = margin + 28;
 
-  if (reportSubtitle) {
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(reportSubtitle, margin, y);
-    y += 5;
-  }
-
   // Draw table header
   const isLandscape = orientation === 'landscape';
   
@@ -165,10 +158,10 @@ export async function generateAndDownloadReportPdf(
   drawTableHeader(y);
   y += 7;
 
-  // Format currency
+  // Format currency (negative amounts shown in parentheses)
   const fmt = (n?: number) => {
-    if (!n || Math.abs(n) < 0.001) return '-';
-    return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (!n || Math.abs(n) < 0.005) return '-';
+    return formatAccountingNumber(n);
   };
 
   doc.setFontSize(7);
@@ -364,7 +357,7 @@ export async function generateAndDownloadReportPdf(
     doc.setFontSize(6.5);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Page ${i} of ${totalPages} — Official A+ School Multi-Campus Financial System Report — Confidential`,
+      `Page ${i} of ${totalPages}`,
       pageWidth / 2,
       pageHeight - 4,
       { align: 'center' }

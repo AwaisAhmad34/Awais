@@ -27,6 +27,7 @@ import {
   generateElementPdf,
   printOrDownloadElement,
 } from '../core/aplusEngine';
+import { formatAccountingInteger } from '../utils/accountingFormat';
 
 interface FullTransactionLedgerPdfExportProps {
   onClose?: () => void;
@@ -540,10 +541,6 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                   <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-950 uppercase">
                     {orgSettings?.schoolName || 'Aplus School System'}
                   </h1>
-                  <p className="text-xs sm:text-sm font-semibold text-slate-700">
-                    {orgSettings?.subTitle ||
-                      'Multi-Campus Voucher & Petty Cash Management System'}
-                  </p>
                   <p className="text-[11px] text-slate-500 font-medium">
                     {selectedCampus
                       ? `${selectedCampus.name} (${selectedCampus.code}) · ${
@@ -557,9 +554,6 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
               <div className="text-right shrink-0">
                 <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded text-[11px] font-black uppercase tracking-wider mb-1">
                   General Ledger Register
-                </div>
-                <div className="text-[11px] font-mono text-slate-600">
-                  Document ID: APL-GL-{Date.now().toString().slice(-6)}
                 </div>
                 <div className="text-[11px] text-slate-500 font-medium">
                   Date: {new Date().toLocaleDateString('en-PK', { dateStyle: 'long' })}
@@ -585,11 +579,6 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                 <span>
                   Total Transactions: <strong>{filteredLedgerRows.length}</strong>
                 </span>
-                <span>·</span>
-                <span className="flex items-center gap-1 text-emerald-800 font-bold">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Double-Entry Verified</span>
-                </span>
               </div>
             </div>
           </div>
@@ -601,7 +590,7 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                 Total Ledger Debits (Dr)
               </div>
               <div className="text-sm sm:text-base font-black font-mono text-slate-900 mt-0.5">
-                Rs. {Math.round(totalDebit).toLocaleString('en-PK')}
+                Rs. {formatAccountingInteger(totalDebit)}
               </div>
             </div>
 
@@ -610,7 +599,7 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                 Total Ledger Credits (Cr)
               </div>
               <div className="text-sm sm:text-base font-black font-mono text-slate-900 mt-0.5">
-                Rs. {Math.round(totalCredit).toLocaleString('en-PK')}
+                Rs. {formatAccountingInteger(totalCredit)}
               </div>
             </div>
 
@@ -627,7 +616,7 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                 ) : (
                   <span className="text-amber-700 flex items-center gap-1">
                     <Scale className="w-4 h-4 text-amber-600" />
-                    <span>Net Δ: Rs. {Math.round(balancedVariance).toLocaleString('en-PK')}</span>
+                    <span>Net Δ: Rs. {formatAccountingInteger(balancedVariance)}</span>
                   </span>
                 )}
               </div>
@@ -704,12 +693,12 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                           </td>
                           <td className="p-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                             {tx.totalDebit > 0
-                              ? `Rs. ${Math.round(tx.totalDebit).toLocaleString('en-PK')}`
+                              ? `Rs. ${formatAccountingInteger(tx.totalDebit)}`
                               : '—'}
                           </td>
                           <td className="p-2 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                             {tx.totalCredit > 0
-                              ? `Rs. ${Math.round(tx.totalCredit).toLocaleString('en-PK')}`
+                              ? `Rs. ${formatAccountingInteger(tx.totalCredit)}`
                               : '—'}
                           </td>
                           <td className="p-2 text-center">
@@ -737,10 +726,10 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                     Total Ledger Debits & Credits:
                   </td>
                   <td className="p-2.5 text-right font-mono font-black text-xs text-slate-950">
-                    Rs. {Math.round(totalDebit).toLocaleString('en-PK')}
+                    Rs. {formatAccountingInteger(totalDebit)}
                   </td>
                   <td className="p-2.5 text-right font-mono font-black text-xs text-slate-950">
-                    Rs. {Math.round(totalCredit).toLocaleString('en-PK')}
+                    Rs. {formatAccountingInteger(totalCredit)}
                   </td>
                   <td className="p-2.5 text-center text-[10px] text-emerald-700 font-bold">
                     Balanced
@@ -816,16 +805,6 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
                 </div>
                 <div className="text-[10px] font-mono text-slate-400">Date: _______________</div>
               </div>
-            </div>
-
-            {/* Document Bottom Security Note */}
-            <div className="mt-8 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between text-[10px] text-slate-500 font-mono">
-              <span>
-                System: {orgSettings?.schoolName || 'Aplus School System'} · Multi-Campus Financial Suite
-              </span>
-              <span>
-                Report Ref: GL-REC-{filteredLedgerRows.length}-{new Date().getFullYear()} · Page 1 of 1
-              </span>
             </div>
           </div>
         </div>

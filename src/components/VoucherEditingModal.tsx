@@ -46,6 +46,7 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
     transactions,
     updateTransaction,
     deleteTransaction,
+    getNextVoucherNumber,
     campuses,
     accountHeads,
     currentUser,
@@ -244,6 +245,25 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
   const handleSaveChanges = () => {
     if (!activeVoucher) return;
 
+    const cleanVoucherNo = formVoucherNo.trim();
+    if (!cleanVoucherNo) {
+      setFeedback({ type: 'error', msg: 'Voucher number cannot be empty.' });
+      return;
+    }
+
+    const isDuplicateNo = (transactions || []).some(
+      (tx) =>
+        tx.id !== activeVoucher.id &&
+        String(tx.voucherNo || '').trim().toLowerCase() === cleanVoucherNo.toLowerCase()
+    );
+    if (isDuplicateNo) {
+      setFeedback({
+        type: 'error',
+        msg: `Voucher number "${cleanVoucherNo}" is already assigned to another transaction. Please enter a unique voucher number.`,
+      });
+      return;
+    }
+
     if (!formNarration.trim()) {
       setFeedback({ type: 'error', msg: 'Narration is required for audit compliance.' });
       return;
@@ -268,6 +288,7 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
     }
 
     const updatedVoucherPayload: Partial<Transaction> = {
+      voucherNo: cleanVoucherNo,
       voucherType: formVoucherType,
       date: formDate,
       campusId: formCampusId,
@@ -278,17 +299,29 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
       totalCredit,
     };
 
-    updateTransaction(activeVoucher.id, updatedVoucherPayload);
+    try {
+      updateTransaction(activeVoucher.id, updatedVoucherPayload);
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        msg: err?.message || 'Failed to update voucher due to duplicate voucher number.',
+      });
+      return;
+    }
 
     // Audit log
     logActivity(
       'UPDATE_VOUCHER',
       'Voucher',
       activeVoucher.id,
-      `Amended voucher #${activeVoucher.voucherNo} (${formVoucherType}). Total Debit: PKR ${totalDebit.toLocaleString()}. Narration: ${formNarration}`,
+      `Amended voucher #${cleanVoucherNo} (${formVoucherType}). Total Debit: PKR ${totalDebit.toLocaleString()}. Narration: ${formNarration}`,
       formCampusId,
       totalDebit,
       {
+        previousVoucherNo: activeVoucher.voucherNo,
+        previousVoucherType: activeVoucher.voucherType,
+        voucherNo: cleanVoucherNo,
+        voucherType: formVoucherType,
         previousEntries: activeVoucher.entries,
         updatedEntries: formEntries,
         modifiedBy: currentUser?.name || 'Administrator',
@@ -298,7 +331,7 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
     setHasUnsavedChanges(false);
     setFeedback({
       type: 'success',
-      msg: `Voucher #${activeVoucher.voucherNo} successfully updated and verified in general ledger!`,
+      msg: `Voucher #${cleanVoucherNo} (${formVoucherType}) successfully updated and verified in general ledger!`,
     });
 
     setTimeout(() => {
@@ -521,7 +554,7 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
           {activeTab === 'editor' && (
             <div className="space-y-6">
               {/* Metadata Form Header Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950/80 border border-slate-800 p-4 rounded-2xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 bg-slate-950/80 border border-slate-800 p-4 rounded-2xl">
                 {/* Voucher Type */}
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
@@ -530,7 +563,17 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
                   <select
                     value={formVoucherType}
                     onChange={(e) => {
-                      setFormVoucherType(e.target.value as any);
+                      const nextType = e.target.value as 'BPV' | 'BRV' | 'CPV' | 'CRV' | 'JV';
+                      setFormVoucherType(nextType);
+                      if (
+                        activeVoucher &&
+                        nextType === activeVoucher.voucherType &&
+                        formCampusId === activeVoucher.campusId
+                      ) {
+                        setFormVoucherNo(activeVoucher.voucherNo);
+                      } else if (getNextVoucherNumber) {
+                        setFormVoucherNo(getNextVoucherNumber(nextType, formCampusId));
+                      }
                       setHasUnsavedChanges(true);
                     }}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono font-bold"
@@ -541,6 +584,38 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
                     <option value="CRV">CRV - Cash Receipt Voucher</option>
                     <option value="JV">JV - Journal Voucher</option>
                   </select>
+                </div>
+
+                {/* Voucher Number */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                    Voucher No (Unique)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      value={formVoucherNo}
+                      onChange={(e) => {
+                        setFormVoucherNo(e.target.value);
+                        setHasUnsavedChanges(true);
+                      }}
+                      placeholder="e.g. BPV-C1-26-001"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono font-bold"
+                    />
+                    {getNextVoucherNumber && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormVoucherNo(getNextVoucherNumber(formVoucherType, formCampusId));
+                          setHasUnsavedChanges(true);
+                        }}
+                        title="Generate Next Unique Voucher No"
+                        className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[10px] font-bold shrink-0 cursor-pointer"
+                      >
+                        Auto
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Voucher Date */}
@@ -567,7 +642,17 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
                   <select
                     value={formCampusId}
                     onChange={(e) => {
-                      setFormCampusId(e.target.value);
+                      const nextCampus = e.target.value;
+                      setFormCampusId(nextCampus);
+                      if (
+                        activeVoucher &&
+                        formVoucherType === activeVoucher.voucherType &&
+                        nextCampus === activeVoucher.campusId
+                      ) {
+                        setFormVoucherNo(activeVoucher.voucherNo);
+                      } else if (getNextVoucherNumber) {
+                        setFormVoucherNo(getNextVoucherNumber(formVoucherType, nextCampus));
+                      }
                       setHasUnsavedChanges(true);
                     }}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -598,7 +683,7 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
                 </div>
 
                 {/* Narration (full width) */}
-                <div className="sm:col-span-2 md:col-span-4">
+                <div className="sm:col-span-2 md:col-span-5">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                     Narration / Transaction Description
                   </label>

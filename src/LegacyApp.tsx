@@ -144,8 +144,14 @@ function InnerApp() {
 
   const verifiedProfile = getVerifiedProfile();
 
+  const hadLegacyUserRef = useRef(false);
   useEffect(() => {
-    if (!currentUser && verifiedProfile) {
+    if (currentUser) {
+      hadLegacyUserRef.current = true;
+      return;
+    }
+    if (!currentUser && verifiedProfile && hadLegacyUserRef.current) {
+      hadLegacyUserRef.current = false;
       logoutAccount().catch(() => {});
     }
   }, [currentUser, verifiedProfile]);

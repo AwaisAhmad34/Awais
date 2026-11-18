@@ -546,7 +546,8 @@ export async function provisionGlobalUserAccount(
 
     // 3. Write username -> email mapping to `login_directory/{usernameKey}` so fresh browsers can log in by username
     const dirKey = normalizeUsernameKey(cleanUsername);
-    const loginDirKeys = Array.from(new Set([dirKey, cleanUsername].filter(Boolean)));
+    const sanitizedCleanUsername = cleanUsername.replace(/\//g, '_');
+    const loginDirKeys = Array.from(new Set([dirKey, sanitizedCleanUsername].filter(Boolean)));
     for (const key of loginDirKeys) {
       const loginDirPath = `login_directory/${key}`;
       try {

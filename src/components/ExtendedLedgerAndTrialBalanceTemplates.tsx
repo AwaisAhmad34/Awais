@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   Layers,
 } from 'lucide-react';
+import { formatAccountingInteger } from '../utils/accountingFormat';
 
 export type ExtendedReportId =
   | 'format_11_all_trial_balances'
@@ -25,7 +26,7 @@ export interface ExtendedLedgerAndTrialBalanceTemplatesProps {
   accountAnalytics?: any;
   activeAccountRows: any[];
   scopedVouchers: any[];
-  scopedPettyCash: any[];
+  scopedPettyCash?: any[];
   totals: {
     openingDr?: number;
     openingCr?: number;
@@ -40,7 +41,7 @@ export interface ExtendedLedgerAndTrialBalanceTemplatesProps {
 }
 
 function formatPKR(val: number): string {
-  return Math.round(val || 0).toLocaleString('en-PK');
+  return formatAccountingInteger(val);
 }
 
 export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
@@ -49,7 +50,6 @@ export const ExtendedLedgerAndTrialBalanceTemplates: React.FC<
   selectedFormat,
   activeAccountRows = [],
   scopedVouchers = [],
-  scopedPettyCash = [],
   totals,
 }) => {
   // Defensive normalization so rows handle both raw account head structures and analytics summary shapes

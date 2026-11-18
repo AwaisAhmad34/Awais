@@ -51,6 +51,7 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
     currentUser,
     orgSettings,
     accountHeads,
+    transactions,
     getNextVoucherNumber,
     addTransaction,
     logActivity,
@@ -256,7 +257,23 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
     try {
       const selectedCampus = campuses.find((c) => c.id === selectedCampusId);
       const campusCode = selectedCampus?.code || 'HQ';
-      const cleanVoucherNo = generatedVoucherNo || `${campusCode}-${voucherType}-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+      const cleanVoucherNo = (
+        generatedVoucherNo.trim() ||
+        (getNextVoucherNumber
+          ? getNextVoucherNumber(voucherType, selectedCampusId)
+          : `${campusCode}-${voucherType}-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`)
+      ).trim();
+
+      const duplicateTx = (transactions || []).find(
+        (tx) => String(tx.voucherNo || '').trim().toLowerCase() === cleanVoucherNo.toLowerCase()
+      );
+      if (duplicateTx) {
+        setErrorNotice(
+          `Voucher number "${cleanVoucherNo}" already exists (${duplicateTx.voucherType} on ${duplicateTx.date}). Please use a unique voucher number or click Auto.`
+        );
+        setIsSubmitting(false);
+        return;
+      }
 
       const entries: VoucherEntry[] = [
         {
@@ -561,9 +578,26 @@ export const ExpressVoucherModal: React.FC<ExpressVoucherModalProps> = ({
                     ))}
                   </select>
                 </div>
-                <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 font-mono">
-                  <span>Voucher No: <strong className="text-slate-900">{generatedVoucherNo}</strong></span>
-                  <span>Auto-allocated</span>
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-1.5 font-mono">
+                  <span className="shrink-0 font-bold text-slate-700">Voucher #:</span>
+                  <input
+                    type="text"
+                    value={generatedVoucherNo}
+                    onChange={(e) => setGeneratedVoucherNo(e.target.value)}
+                    placeholder="Unique Voucher No"
+                    className="flex-1 min-w-0 bg-white border border-slate-300 rounded-md px-2 py-0.5 text-[11px] font-bold text-slate-900 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                  />
+                  {getNextVoucherNumber && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGeneratedVoucherNo(getNextVoucherNumber(voucherType, selectedCampusId))
+                      }
+                      className="px-2 py-0.5 rounded-md bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold cursor-pointer shrink-0"
+                    >
+                      Auto
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

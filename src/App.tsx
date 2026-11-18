@@ -180,10 +180,20 @@ function InnerApp() {
     return subscribeCloudSync(setSyncStats);
   }, [isSessionVerified, currentUser]);
 
+  const hadAuthenticatedUserRef = useRef(false);
   useEffect(() => {
+    if (currentUser) {
+      hadAuthenticatedUserRef.current = true;
+      return;
+    }
     if (!currentUser && isSessionVerified) {
-      setIsSessionVerified(false);
-      logoutAccount().catch(() => {});
+      if (hadAuthenticatedUserRef.current) {
+        hadAuthenticatedUserRef.current = false;
+        setIsSessionVerified(false);
+        logoutAccount().catch(() => {});
+      } else if (!getVerifiedProfile()) {
+        setIsSessionVerified(false);
+      }
     }
   }, [currentUser, isSessionVerified]);
 

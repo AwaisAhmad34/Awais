@@ -148,7 +148,7 @@ export const RELEVANT_REPORT_OPTIONS: {
   },
   {
     key: 'format_9_expense_pettycash',
-    label: 'Format 9 · Departmental Expense & Petty Cash',
+    label: 'Format 9 · Departmental Operating Expense Schedule',
     group: 'Formats 2 to 10',
   },
   {
@@ -516,19 +516,6 @@ export const DynamicReportSignatureBlock: React.FC<{
           </div>
         </div>
       )}
-
-      <div className="mt-3 flex flex-wrap items-center justify-between text-[10px] text-gray-700 border-t border-black pt-1.5 font-mono">
-        <div>
-          <span>
-            {orgSettings?.schoolName || 'A+ School System'} · Authorized Signatories:{' '}
-            <strong>{activePersons.length} Person(s)</strong>
-          </span>
-          {docRef && <span> · Doc Ref: {docRef}</span>}
-        </div>
-        <div>
-          <span>Period: {periodText}</span>
-        </div>
-      </div>
     </div>
   );
 };

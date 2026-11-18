@@ -96,7 +96,7 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
       aria-labelledby="voucher-detail-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150 print:p-0 print:bg-white voucher-print-modal-backdrop"
     >
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden text-slate-800 print:shadow-none print:border-none print:max-w-full voucher-print-modal-card">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden text-slate-800 print:shadow-none print:border-none print:max-w-full voucher-print-modal-card">
         {/* Modal Header */}
         <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 print:hidden">
           <div className="flex items-center gap-3">
@@ -245,12 +245,12 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
                         <table className="w-full text-xs border-collapse">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] border-b border-slate-200">
-                              <th className="p-2.5 text-left font-mono w-24">Account Code</th>
-                              <th className="p-2.5 text-left">Account Title & Description</th>
-                              <th className="p-2.5 text-right font-mono w-28 bg-emerald-50/70 text-emerald-900">
+                              <th className="px-3.5 py-2.5 text-left font-mono w-28">Account Code</th>
+                              <th className="px-3.5 py-2.5 text-left min-w-[240px]">Account Title & Description</th>
+                              <th className="px-3.5 py-2.5 text-right font-mono w-32 bg-emerald-50/70 text-emerald-900">
                                 Debit (PKR)
                               </th>
-                              <th className="p-2.5 text-right font-mono w-28 bg-blue-50/70 text-blue-900">
+                              <th className="px-3.5 py-2.5 text-right font-mono w-32 bg-blue-50/70 text-blue-900">
                                 Credit (PKR)
                               </th>
                             </tr>

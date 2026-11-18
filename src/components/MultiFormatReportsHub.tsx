@@ -24,6 +24,7 @@ import {
   printOrDownloadElement,
   SchoolLogo,
 } from '../core/aplusEngine';
+import { formatAccountingInteger } from '../utils/accountingFormat';
 import { resolveEffectiveAccountOpeningDrCr } from '../utils/campusOpeningBalance';
 import {
   validateClientReportAccess,
@@ -141,10 +142,9 @@ export const TEN_REPORT_FORMATS: FormatDefinition[] = [
   {
     id: 'format_9_expense_pettycash',
     number: 9,
-    shortTitle: '9. Expense & Petty Cash',
-    fullTitle: 'Format 9: Departmental Expense & Petty Cash Imprest Utilization Schedule',
-    subtitle:
-      'Combined Operating Expense ledger heads (500-series) and Petty Cash imprest register with float status',
+    shortTitle: '9. Operating Expense Schedule',
+    fullTitle: 'Format 9: Departmental Operating Expense Ledger Schedule',
+    subtitle: 'General Ledger Operating Expense heads (500-series) breakdown',
     icon: Wallet,
   },
   {
@@ -231,7 +231,7 @@ export const TEN_REPORT_FORMATS: FormatDefinition[] = [
 ];
 
 function formatNum(val: number): string {
-  return Math.round(val || 0).toLocaleString('en-PK');
+  return formatAccountingInteger(val);
 }
 
 export const MultiFormatReportsHub: React.FC<{
@@ -241,7 +241,6 @@ export const MultiFormatReportsHub: React.FC<{
     currentUser,
     accountHeads,
     transactions,
-    pettyCashTransactions,
     campuses,
     currentCampusId,
     setCurrentCampusId,
@@ -341,20 +340,6 @@ export const MultiFormatReportsHub: React.FC<{
       })
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [transactions, currentCampusId, isCampusAdmin, activeCampusId, dateFrom, dateTo]);
-
-  const scopedPettyCash = useMemo(() => {
-    return (pettyCashTransactions || []).filter((pc) => {
-      if (isCampusAdmin) {
-        if (pc.campusId !== activeCampusId) return false;
-      } else if (currentCampusId !== 'all' && pc.campusId !== currentCampusId) {
-        return false;
-      }
-      const d = (pc.date || '').slice(0, 10);
-      if (dateFrom && d && d < dateFrom) return false;
-      if (dateTo && d && d > dateTo) return false;
-      return true;
-    });
-  }, [pettyCashTransactions, currentCampusId, isCampusAdmin, activeCampusId, dateFrom, dateTo]);
 
   // Compute Account-Level Movements & Balances for Formats 2–10
   const effectiveReportCampusId =
@@ -584,7 +569,6 @@ export const MultiFormatReportsHub: React.FC<{
           accountRows: rows,
           totals: totals,
           vouchers: scopedVouchers,
-          pettyCashTransactions: scopedPettyCash,
         });
 
         setToastMsg(`Successfully generated and downloaded PDF: ${result.fileName}`);
@@ -655,24 +639,19 @@ export const MultiFormatReportsHub: React.FC<{
     />
   );
 
-  // Official Institutional Report Header shared across Formats 2–10
+  // Official Institutional Report Header shared across Formats 2–18
   const OfficialReportHeader = ({
-    formatNumber,
     title,
-    subtitle,
   }: {
-    formatNumber: number;
+    formatNumber?: number;
     title: string;
-    subtitle: string;
+    subtitle?: string;
   }) => (
     <div className="border-b-2 border-black pb-4 mb-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <SchoolLogo size="md" />
           <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">
-              Official Report Format #{formatNumber} of 10 · Institutional Financial Standard
-            </div>
             <h1 className="text-lg sm:text-xl font-black uppercase tracking-tight text-black">
               {orgSettings?.schoolName || 'A+ School System'}
             </h1>
@@ -684,7 +663,6 @@ export const MultiFormatReportsHub: React.FC<{
           <div className="text-slate-700">
             Period: <strong>{dateFrom}</strong> to <strong>{dateTo}</strong>
           </div>
-          <div className="text-[11px] text-slate-500">{subtitle}</div>
         </div>
       </div>
     </div>
@@ -1316,7 +1294,7 @@ export const MultiFormatReportsHub: React.FC<{
                               {rows.length}
                             </td>
                             <td className="border border-black p-2.5 text-right font-mono">
-                              {formatNum(Math.abs(opDr))}
+                              {formatNum(opDr)}
                             </td>
                             <td className="border border-black p-2.5 text-right font-mono">
                               {formatNum(pDr)}
@@ -1828,7 +1806,7 @@ export const MultiFormatReportsHub: React.FC<{
                                 key={c.id}
                                 className="border border-black p-2 text-right font-mono"
                               >
-                                {formatNum(Math.abs(cBal))}
+                                {formatNum(cBal)}
                               </td>
                             );
                           })
@@ -1843,12 +1821,12 @@ export const MultiFormatReportsHub: React.FC<{
               </div>
             )}
 
-            {/* FORMAT 9: DEPARTMENTAL EXPENSE & PETTY CASH IMPREST UTILIZATION */}
+            {/* FORMAT 9: DEPARTMENTAL OPERATING EXPENSE SCHEDULE */}
             {selectedFormat === 'format_9_expense_pettycash' && (
               <div className="space-y-6">
                 <div>
                   <h3 className="text-xs font-black uppercase mb-2">
-                    Part A: General Ledger Operating Expense Heads (500-Series)
+                    General Ledger Operating Expense Heads (500-Series)
                   </h3>
                   <table className="w-full border-collapse border-2 border-black text-xs">
                     <thead>
@@ -1886,48 +1864,6 @@ export const MultiFormatReportsHub: React.FC<{
                     </tbody>
                   </table>
                 </div>
-
-                <div>
-                  <h3 className="text-xs font-black uppercase mb-2">
-                    Part B: Petty Cash Imprest Register ({scopedPettyCash.length} Slips)
-                  </h3>
-                  <table className="w-full border-collapse border-2 border-black text-xs">
-                    <thead>
-                      <tr className="bg-slate-100 border-b-2 border-black font-black uppercase">
-                        <th className="border border-black p-2 text-left">Date</th>
-                        <th className="border border-black p-2 text-left">Slip #</th>
-                        <th className="border border-black p-2 text-left">Category / Head</th>
-                        <th className="border border-black p-2 text-left">Narration</th>
-                        <th className="border border-black p-2 text-right">Amount (PKR)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {scopedPettyCash.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="p-4 text-center text-slate-500">
-                            No Petty Cash slips recorded in selected period.
-                          </td>
-                        </tr>
-                      ) : (
-                        scopedPettyCash.map((pc) => (
-                          <tr key={pc.id} className="border-b border-black">
-                            <td className="border border-black p-2 font-mono">{pc.date}</td>
-                            <td className="border border-black p-2 font-mono font-bold">
-                              {pc.voucherNo}
-                            </td>
-                            <td className="border border-black p-2 font-semibold">
-                              {pc.category || pc.payee}
-                            </td>
-                            <td className="border border-black p-2">{pc.narration}</td>
-                            <td className="border border-black p-2 text-right font-mono font-bold">
-                              {formatNum(Number(pc.amount) || 0)}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
               </div>
             )}
 
@@ -1939,11 +1875,11 @@ export const MultiFormatReportsHub: React.FC<{
                     Statutory Internal & External Audit Certification Statement
                   </div>
                   <p>
-                    We hereby certify that the books of accounts, General Ledger registers, Four-Voucher
-                    books (BPV, BRV, CPV, CRV, JV), and Petty Cash imprest scrolls of{' '}
+                    We hereby certify that the General Ledger registers and voucher books (BPV, BRV,
+                    CPV, CRV, JV) of{' '}
                     <strong>{orgSettings?.schoolName || 'A+ School System'}</strong> (
                     <strong>{campusLabel}</strong>) for the period <strong>{dateFrom}</strong> to{' '}
-                    <strong>{dateTo}</strong> have been examined in accordance with IAS-1 double-entry
+                    <strong>{dateTo}</strong> have been examined in accordance with double-entry
                     accounting standards.
                   </p>
                 </div>
@@ -2013,7 +1949,6 @@ export const MultiFormatReportsHub: React.FC<{
                   accountAnalytics={accountAnalytics}
                   activeAccountRows={activeAccountRows}
                   scopedVouchers={scopedVouchers}
-                  scopedPettyCash={scopedPettyCash}
                   totals={totals}
                 />
               )}

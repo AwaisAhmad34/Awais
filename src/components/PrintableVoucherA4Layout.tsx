@@ -17,12 +17,12 @@ import {
   generateElementPdf,
   printOrDownloadElement,
 } from '../core/aplusEngine';
-import { DynamicReportSignatureBlock } from './ReportSignatureManager';
-import { VoucherQRCodeBadge } from './VoucherQRCodeAndScanner';
 import {
   resolveVoucherCampusInfo,
   usePrintRequestTimestamp,
 } from '../utils/voucherPrintUtils';
+import { formatAccountingNumber } from '../utils/accountingFormat';
+import { DynamicReportSignatureBlock } from './ReportSignatureManager';
 
 export type StandardVoucherType = 'BPV' | 'BRV' | 'CPV' | 'CRV' | 'JV';
 
@@ -111,11 +111,7 @@ function formatVoucherDate(dateStr?: string): string {
 }
 
 function formatPKR(val?: number): string {
-  const num = Number(val) || 0;
-  return num.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return formatAccountingNumber(val);
 }
 
 function numberToWordsPKR(amount?: number): string {
@@ -332,7 +328,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
       <div
         data-voucher-campus-name={campusInfo.campusDisplayLabel}
         data-print-timestamp={printTimestamp}
-        className={`official-voucher-document a4-voucher-sheet bg-white text-black mx-auto ${PADDING_CLASS_MAP[paddingPreset]} ${TYPOGRAPHY_CLASS_MAP[typographyScale]} ${className}`}
+        className={`official-voucher-document a4-voucher-sheet bg-white text-black max-w-5xl w-full mx-auto ${PADDING_CLASS_MAP[paddingPreset]} ${TYPOGRAPHY_CLASS_MAP[typographyScale]} ${className}`}
       >
         <table className="voucher-print-table-wrapper w-full border-collapse">
           <thead className="voucher-print-thead">
@@ -386,7 +382,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
           </div>
 
           <div className="flex items-start gap-2.5 shrink-0">
-            <div className="border-2 border-black text-center shrink-0 min-w-[165px] bg-white">
+            <div className="border-2 border-black text-center shrink-0 min-w-[175px] bg-white">
               <div className="text-[11px] font-bold text-black uppercase border-b-2 border-black py-1 px-3 tracking-wide">
                 Campus Name
               </div>
@@ -396,13 +392,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
               <div className="text-[10px] font-mono font-bold text-black border-t border-black py-0.5 px-2">
                 Voucher Type: {meta.shortCode}
               </div>
-              <div className="text-[9px] font-mono font-semibold text-black border-t border-black py-0.5 px-2 truncate max-w-[175px]">
-                Tx ID: {voucher.id || voucher.voucherNo}
-              </div>
             </div>
-
-            {/* Embedded Scannable QR Code for Quick App-Based Retrieval */}
-            <VoucherQRCodeBadge voucher={voucher} campus={campus} size={74} />
           </div>
         </div>
 
@@ -439,27 +429,27 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
           </div>
         </div>
 
-        {/* Double-Entry Ledger Table */}
-        <div className="my-4">
+        {/* Double-Entry Ledger Table with Widened Readable Columns */}
+        <div className="my-4 overflow-x-auto">
           <table className="w-full border-collapse border-2 border-black a4-voucher-table">
             <thead>
               <tr className="border-b-2 border-black font-bold bg-white">
                 <td
                   colSpan={3}
-                  className="border-r-2 border-black px-3 py-1.5 text-left font-bold text-black"
+                  className="border-r-2 border-black px-3 py-2 text-left font-bold text-black"
                 >
                   Voucher No:{' '}
                   <span className="font-mono font-bold">{voucher.voucherNo}</span>
                 </td>
                 <td
                   colSpan={2}
-                  className="border-r-2 border-black px-3 py-1.5 text-left font-bold text-black"
+                  className="border-r-2 border-black px-3 py-2 text-left font-bold text-black"
                 >
                   Tr Date : <span className="font-bold">{formattedDate}</span>
                 </td>
                 <td
                   colSpan={2}
-                  className="px-3 py-1.5 text-left font-bold text-black"
+                  className="px-3 py-2 text-left font-bold text-black"
                 >
                   Period:{' '}
                   <span className="font-bold">
@@ -468,25 +458,25 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
                 </td>
               </tr>
               <tr className="border-b-2 border-black font-bold text-center bg-white text-black">
-                <th className="border-r-2 border-black py-1.5 px-1.5 w-10 text-center">
+                <th className="border-r-2 border-black py-2 px-2 w-12 text-center">
                   S#
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-2 w-24 text-center font-mono">
+                <th className="border-r-2 border-black py-2 px-2.5 w-28 text-center font-mono">
                   Acc#
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-2.5 min-w-[185px] text-left">
+                <th className="border-r-2 border-black py-2 px-3 min-w-[230px] text-left">
                   Account Name
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-2 w-28 text-center">
+                <th className="border-r-2 border-black py-2 px-2.5 w-32 text-center">
                   Ref/Check No
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-2.5 text-left">
+                <th className="border-r-2 border-black py-2 px-3 min-w-[220px] text-left">
                   Description / Particulars
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-2.5 w-28 text-right font-mono">
+                <th className="border-r-2 border-black py-2 px-3 w-32 text-right font-mono">
                   Debit
                 </th>
-                <th className="py-1.5 px-2.5 w-28 text-right font-mono">Credit</th>
+                <th className="py-2 px-3 w-32 text-right font-mono">Credit</th>
               </tr>
             </thead>
             <tbody>
@@ -495,25 +485,25 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
                   key={entry.id || idx}
                   className="border-b border-black text-black bg-white"
                 >
-                  <td className="border-r-2 border-black py-1.5 px-1.5 text-center font-medium tabular-nums">
+                  <td className="border-r-2 border-black py-2 px-2 text-center font-medium tabular-nums">
                     {idx + 1}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-2 text-center font-mono font-bold text-black tabular-nums">
+                  <td className="border-r-2 border-black py-2 px-2.5 text-center font-mono font-bold text-black tabular-nums whitespace-nowrap">
                     {entry.accountCode}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-2.5 font-semibold text-left">
+                  <td className="border-r-2 border-black py-2 px-3 font-semibold text-left">
                     {entry.accountName}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-2 text-center font-mono text-[11px]">
+                  <td className="border-r-2 border-black py-2 px-2.5 text-center font-mono text-[11px] whitespace-nowrap">
                     {entry.refCheckNo || voucher.chequeNo || ''}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-2.5 text-left">
+                  <td className="border-r-2 border-black py-2 px-3 text-left">
                     {entry.description || voucher.narration || ''}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-2.5 text-right font-mono font-medium tabular-nums">
+                  <td className="border-r-2 border-black py-2 px-3 text-right font-mono font-medium tabular-nums whitespace-nowrap">
                     {entry.debit > 0 ? formatPKR(entry.debit) : '0.00'}
                   </td>
-                  <td className="py-1.5 px-2.5 text-right font-mono font-medium tabular-nums">
+                  <td className="py-2 px-3 text-right font-mono font-medium tabular-nums whitespace-nowrap">
                     {entry.credit > 0 ? formatPKR(entry.credit) : '0.00'}
                   </td>
                 </tr>
@@ -527,10 +517,10 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
                 >
                   {numberToWordsPKR(voucher.totalDebit)}
                 </td>
-                <td className="border-r-2 border-black px-2.5 py-2 text-right font-mono font-bold tabular-nums">
+                <td className="border-r-2 border-black px-3 py-2 text-right font-mono font-bold tabular-nums whitespace-nowrap">
                   {formatPKR(voucher.totalDebit)}
                 </td>
-                <td className="px-2.5 py-2 text-right font-mono font-bold tabular-nums">
+                <td className="px-3 py-2 text-right font-mono font-bold tabular-nums whitespace-nowrap">
                   {formatPKR(voucher.totalCredit)}
                 </td>
               </tr>
@@ -547,26 +537,6 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
           periodText={voucher.accountingPeriod || 'FY 2026-2027'}
           campusRef={campus?.code || 'MAIN'}
         />
-
-        {/* Verification & Audit Metadata Bar */}
-        <div className="mt-3 flex items-center justify-between text-[10px] text-black border-t border-black pt-1.5 font-mono">
-          <div>
-            <span>
-              Verification Status: <strong>{voucher.status}</strong>
-            </span>
-            {voucher.approvedAt && (
-              <span>
-                {' '}
-                • Approved At:{' '}
-                {new Date(voucher.approvedAt).toLocaleDateString('en-GB')}
-              </span>
-            )}
-            <span> • Type: {meta.shortCode} ({meta.fullTitle})</span>
-          </div>
-          <div>
-            <span>Audit Log ID: {voucher.id}</span>
-          </div>
-        </div>
               </td>
             </tr>
           </tbody>
