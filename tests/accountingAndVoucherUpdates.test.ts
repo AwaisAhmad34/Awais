@@ -297,3 +297,13 @@ test('Update 9: single-line wide Description/Particulars voucher columns, Trial 
   assert.ok(css.includes('.sidebar-hide-min'));
 });
 
+test('Update 10: toggleSidebarMinimized does not dispatch events inside a React state updater', () => {
+  const app = readSource('src/App.tsx');
+  const start = app.indexOf('const toggleSidebarMinimized');
+  const end = app.indexOf('useEffect(() => {', start);
+  const block = app.slice(start, end);
+  assert.equal(block.includes('setIsSidebarMinimized((prev)'), false);
+  assert.ok(block.includes('const next = !isSidebarMinimized;'));
+  assert.ok(block.includes('setIsSidebarMinimized(next);'));
+});
+

@@ -206,14 +206,12 @@ function InnerApp() {
   });
 
   const toggleSidebarMinimized = () => {
-    setIsSidebarMinimized((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('aplus_sidebar_minimized', String(next));
-        window.dispatchEvent(new CustomEvent('aplus-sidebar-toggle', { detail: { minimized: next } }));
-      }
-      return next;
-    });
+    const next = !isSidebarMinimized;
+    setIsSidebarMinimized(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aplus_sidebar_minimized', String(next));
+      window.dispatchEvent(new CustomEvent('aplus-sidebar-toggle', { detail: { minimized: next } }));
+    }
   };
 
   useEffect(() => {
