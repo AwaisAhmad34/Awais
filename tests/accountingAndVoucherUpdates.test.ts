@@ -307,3 +307,14 @@ test('Update 10: toggleSidebarMinimized does not dispatch events inside a React 
   assert.ok(block.includes('setIsSidebarMinimized(next);'));
 });
 
+test('Update 11: PlatformSiteAdminHub matches screen height and enables vertical scrollbar on main pane', () => {
+  const app = readSource('src/App.tsx');
+  const hub = readSource('src/components/PlatformSiteAdminHub.tsx');
+
+  assert.ok(app.includes('h-screen overflow-hidden flex flex-col bg-slate-950'));
+  assert.equal(hub.includes('min-h-[820px]'), false);
+  assert.equal(hub.includes('max-h-[700px]'), false);
+  assert.ok(hub.includes('flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden'));
+  assert.ok(hub.includes('<main className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-scroll bg-slate-900/60">'));
+});
+

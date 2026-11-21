@@ -1193,7 +1193,7 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
       {/* Platform Site Admin Hub Modal - ONLY accessible for Super Administration account */}
       {isSiteAdminHubOpen && isPlatformSiteAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
+          <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-7xl h-[94vh] max-h-[96vh] flex flex-col overflow-hidden">
             <PlatformSiteAdminHub
               onClose={() => setIsSiteAdminHubOpen(false)}
               onNavigate={(tab) => {

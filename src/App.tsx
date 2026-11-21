@@ -399,9 +399,9 @@ function InnerApp() {
   // Dedicated Platform-Level Control Panel (Level 1)
   if (isPlatformSiteAdmin && adminViewMode === 'platform_control_panel') {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 p-2 sm:p-4">
+      <div className="h-screen overflow-hidden flex flex-col bg-slate-950 text-slate-100 p-2 sm:p-3">
         {/* Platform Creator Workspace Bar */}
-        <div className="max-w-7xl mx-auto mb-2 flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-sm">
+        <div className="w-full max-w-7xl mx-auto mb-2 shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-sm">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs font-mono font-bold text-slate-300">

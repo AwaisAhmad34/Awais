@@ -1964,9 +1964,9 @@ export const PlatformSiteAdminHub: React.FC<{
   }
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden text-slate-100 max-w-7xl mx-auto my-4 flex flex-col min-h-[820px] transition-all">
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden text-slate-100 w-full max-w-7xl mx-auto flex-1 min-h-0 flex flex-col transition-all">
       {/* Platform Creator Header Bar */}
-      <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+      <div className="shrink-0 bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 px-6 py-3.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-11 h-11 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 shadow-inner">
             <ShieldCheck className="w-6 h-6 text-indigo-400" />
@@ -2064,7 +2064,7 @@ export const PlatformSiteAdminHub: React.FC<{
       </div>
 
       {/* Site Owner Relevant Campus & Consolidated Campus Selector Bar */}
-      <div className="bg-slate-950/90 px-6 py-2.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+      <div className="shrink-0 bg-slate-950/90 px-6 py-2.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
             <Building2 className="w-4 h-4 text-indigo-400" />
@@ -2128,7 +2128,7 @@ export const PlatformSiteAdminHub: React.FC<{
       {/* Toast Feedback */}
       {feedbackNotice && (
         <div
-          className={`px-6 py-2.5 text-xs font-semibold flex items-center justify-between border-b animate-in fade-in duration-200 ${
+          className={`shrink-0 px-6 py-2.5 text-xs font-semibold flex items-center justify-between border-b animate-in fade-in duration-200 ${
             feedbackNotice.type === 'success'
               ? 'bg-emerald-950/80 border-emerald-800 text-emerald-200'
               : feedbackNotice.type === 'error'
@@ -2157,10 +2157,10 @@ export const PlatformSiteAdminHub: React.FC<{
       )}
 
       {/* Main 2-Column Split: Navigation Sidebar + Active Module Workspace */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
         {/* Left Navigation Sequence (Sections 01 to 12) */}
-        <aside className={`bg-slate-950/90 border-r border-slate-800/80 flex flex-col shrink-0 transition-all duration-200 ${isSidebarMinimized ? 'w-full md:w-16' : 'w-full md:w-64'}`}>
-          <div className="p-3 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between gap-1">
+        <aside className={`bg-slate-950/90 border-b md:border-b-0 md:border-r border-slate-800/80 flex flex-col min-h-0 max-h-64 md:max-h-none shrink-0 transition-all duration-200 ${isSidebarMinimized ? 'w-full md:w-16' : 'w-full md:w-64'}`}>
+          <div className="shrink-0 p-3 border-b border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between gap-1">
             {!isSidebarMinimized && (
               <>
                 <span className="truncate">Platform Controls</span>
@@ -2182,7 +2182,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
           {/* Module Filter Input (when expanded) */}
           {!isSidebarMinimized && (
-            <div className="p-2 border-b border-slate-800">
+            <div className="shrink-0 p-2 border-b border-slate-800">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
@@ -2196,7 +2196,7 @@ export const PlatformSiteAdminHub: React.FC<{
             </div>
           )}
 
-          <nav className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[700px]">
+          <nav className="flex-1 min-h-0 p-2 space-y-2 overflow-y-auto">
             {['Core Platform', 'Identity & Access', 'Financial Suite', 'Data & Recovery', 'Security & Operations'].map((cat) => {
               const catItems = NAV_ITEMS.filter((item) => {
                 if (item.category !== cat) return false;
@@ -2292,7 +2292,7 @@ export const PlatformSiteAdminHub: React.FC<{
 
 
           {/* Creator Credentials & Info Pill */}
-          <div className="p-3 border-t border-slate-800 bg-slate-950 text-[11px] text-slate-400 space-y-1">
+          <div className="shrink-0 p-3 border-t border-slate-800 bg-slate-950 text-[11px] text-slate-400 space-y-1">
             <div className="flex items-center justify-between font-mono text-[10px]">
               <span className="text-slate-500">Platform Creator:</span>
               <span className="text-emerald-400 font-bold">Authenticated ✓</span>
@@ -2307,7 +2307,7 @@ export const PlatformSiteAdminHub: React.FC<{
         </aside>
 
         {/* Right Workspace Module Content */}
-        <main className="flex-1 p-5 sm:p-6 overflow-y-auto bg-slate-900/60">
+        <main className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-scroll bg-slate-900/60">
           {/* ================================================================ */}
           {/* 01: GLOBAL DASHBOARD                                             */}
           {/* ================================================================ */}

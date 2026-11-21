@@ -265,9 +265,20 @@ body,
 .dark ::-webkit-scrollbar-thumb,
 .bg-slate-900 ::-webkit-scrollbar-thumb,
 .bg-slate-950 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.45);
   border: 2px solid transparent;
   background-clip: content-box;
+}
+
+.bg-slate-900 main::-webkit-scrollbar-track,
+.bg-slate-950 main::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.bg-slate-900 main,
+.bg-slate-950 main {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.55) rgba(15, 23, 42, 0.45);
 }
 
 
