@@ -120,13 +120,13 @@ test('Update 4: financial reports omit bottom narration and unnecessary boilerpl
   assert.equal(ledgerPdf.includes('Double-Entry Verified'), false);
 });
 
-test('Update 5: QR code removed from vouchers and printable voucher columns are widened while preserving print header/footer', () => {
+test('Update 5: QR code removed from vouchers and printable voucher columns fit single A4 page while preserving print header/footer', () => {
   const a4 = readSource('src/components/PrintableVoucherA4Layout.tsx');
   assert.equal(a4.includes('VoucherQRCodeBadge'), false);
   assert.equal(a4.includes('Verification Status'), false);
-  assert.ok(a4.includes('max-w-5xl'));
-  assert.ok(a4.includes('min-w-[230px]'));
-  assert.ok(a4.includes('w-32'));
+  assert.ok(a4.includes('max-w-[210mm]'));
+  assert.ok(a4.includes('table-fixed'));
+  assert.ok(a4.includes('break-inside-avoid'));
   assert.ok(a4.includes('voucher-print-table-wrapper'));
   assert.ok(a4.includes('voucher-print-header'));
   assert.ok(a4.includes('voucher-print-footer'));
@@ -134,7 +134,7 @@ test('Update 5: QR code removed from vouchers and printable voucher columns are 
   const detail = readSource('src/components/VoucherDetailModal.tsx');
   assert.equal(detail.includes('VoucherQRCodeBadge'), false);
   assert.ok(detail.includes('max-w-4xl'));
-  assert.ok(detail.includes('min-w-[240px]'));
+  assert.ok(detail.includes('table-fixed'));
 
   const engine = readSource('src/core/aplusEngine.js');
   assert.equal(engine.includes('VoucherQRCodeBadge'), false);
@@ -203,3 +203,97 @@ test('Regression Guard: every jsxs/jsxDEV call in aplusEngine.js passes static c
   walk(ast);
   assert.deepEqual(bad, []);
 });
+
+test('Update 7: single-page A4 voucher export, bottom-only Sign Out, Account Head search, and non-blocking Petty Cash Delete', () => {
+  const engine = readSource('src/core/aplusEngine.js');
+  const topBar = readSource('src/components/AplusTopBar.tsx');
+  const a4 = readSource('src/components/PrintableVoucherA4Layout.tsx');
+  const css = readSource('src/index.css');
+  const hub = readSource('src/components/MultiFormatReportsHub.tsx');
+  const extMod = readSource('src/components/PlatformAdminExtendedModules.tsx');
+
+  // 1. Voucher layout fits single A4 page per voucher without overflow clipping
+  assert.ok(engine.includes('_vPages=e?.id===`vouchers-report-document`?Array.from(e.querySelectorAll(`.voucher-page-wrapper`)):[]'));
+  assert.ok(engine.includes('Math.min(d/_cv.width,p/_cv.height)'));
+  assert.ok(a4.includes('a4-voucher-sheet bg-white text-black max-w-[210mm]'));
+  assert.ok(css.includes('.voucher-page-wrapper'));
+
+  // 2. Top bar omits Sign Out; Sign Out appears in bottom footer and sidebar bottom
+  assert.equal(topBar.includes('<span>Sign Out</span>'), false);
+  assert.ok(engine.includes('onClick:()=>{_appLogout?.()},className:`px-3 py-1 rounded-lg bg-rose-50'));
+  assert.ok(engine.includes('window.__APLUS_LOGOUT__?.()'));
+
+  // 3. Account Head search filter on singleLedger & T-Account reports
+  assert.ok(engine.includes('Search account head by name or code...'));
+  assert.ok(hub.includes('Search account head by name or code...'));
+
+  // 4. Petty cash Recent Transactions Delete works without blocked window.confirm
+  const pwStart = engine.indexOf('Pw=()=>{');
+  const pwEnd = engine.indexOf('Yw=()=>{');
+  const pwFull = engine.slice(pwStart, pwEnd);
+  assert.equal(pwFull.includes('window.confirm'), false);
+  assert.ok(pwFull.includes('Recent Transactions ('));
+  assert.ok(pwFull.includes('_confirmDelPc'));
+  assert.ok(extMod.includes('deletePettyCashTransaction(pc.id)'));
+});
+
+test('Update 8: top-top organization/campus report header and contained short Particulars/Narration cells', () => {
+  const engine = readSource('src/core/aplusEngine.js');
+  const hub = readSource('src/components/MultiFormatReportsHub.tsx');
+
+  // 1. Top-top text organization & campus header in Vw and MultiFormatReportsHub
+  const vwStart = engine.indexOf('var Vw=');
+  const vwEnd = engine.indexOf('Hw=e=>');
+  const vwCode = engine.slice(vwStart, vwEnd);
+  assert.ok(vwCode.includes('report-top-org-header'));
+  assert.ok(vwCode.includes('Campus: '));
+  assert.ok(hub.includes('report-top-org-header'));
+
+  // 2. Opening B/F rows keep Particulars/Narration strictly in its own column with short text (no colSpan:2)
+  assert.equal(engine.includes('Balance Brought Forward from Previous Period'), false);
+  assert.equal(engine.includes('Balance Brought Forward from Previous Fiscal Period'), false);
+  assert.equal(engine.includes('Initial Balance b/f'), false);
+  assert.ok(engine.includes('children:`Balance B/F`'));
+  assert.ok(engine.includes('max-w-[240px] break-words'));
+});
+
+test('Update 9: single-line wide Description/Particulars voucher columns, Trial Balance with-transactions filter, and unified executive Sidebar', () => {
+  const engine = readSource('src/core/aplusEngine.js');
+  const a4 = readSource('src/components/PrintableVoucherA4Layout.tsx');
+  const topBar = readSource('src/components/AplusTopBar.tsx');
+  const hub = readSource('src/components/MultiFormatReportsHub.tsx');
+  const css = readSource('src/index.css');
+
+  // 1. Voucher table compact columns + wide single-line Description / Particulars
+  assert.ok(a4.includes('w-[4%]'));
+  assert.ok(a4.includes('w-[40%] text-left whitespace-nowrap'));
+  assert.ok(a4.includes('whitespace-nowrap truncate'));
+  assert.ok(engine.includes('w-[4%] text-center whitespace-nowrap'));
+  assert.ok(engine.includes('w-[40%] text-left whitespace-nowrap'));
+  assert.ok(engine.includes('whitespace-nowrap truncate'));
+
+  // 2. Trial Balance COA-with-transactions filter option
+  assert.ok(engine.includes('_tbScope'));
+  assert.ok(engine.includes('With Transactions Only'));
+  assert.ok(engine.includes('_tbTotals'));
+  assert.ok(hub.includes("trialBalanceScope === 'with_tx'"));
+  assert.ok(hub.includes('With Transactions Only'));
+
+  // 3. Streamlined TopBar + unified executive Sidebar housing all tool actions cleanly
+  assert.ok(topBar.includes('__APLUS_OPEN_TOOL__'));
+  assert.equal(topBar.includes('<span>Platform Site Admin Hub</span>'), false);
+  assert.equal(topBar.includes('<span>Restore Deleted COA</span>'), false);
+  assert.equal(topBar.includes('<span>Sync to Cloud</span>'), false);
+
+  const unStart = engine.indexOf('un=({');
+  const unEnd = engine.indexOf(',dn=({', unStart);
+  const sidebarCode = engine.slice(unStart, unEnd);
+  assert.ok(sidebarCode.includes('Filter menu & tools...'));
+  assert.ok(sidebarCode.includes('__APLUS_OPEN_TOOL__'));
+  assert.ok(sidebarCode.includes('Platform Site Admin Hub'));
+  assert.ok(sidebarCode.includes('Restore Deleted COA'));
+  assert.ok(sidebarCode.includes('Sync to Cloud'));
+  assert.equal(sidebarCode.includes('animate-pulse'), false);
+  assert.ok(css.includes('.sidebar-hide-min'));
+});
+

@@ -242,15 +242,15 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
 
                       {/* Debit & Credit Ledger Entries Table */}
                       <div className="border border-slate-200 rounded-xl overflow-hidden my-4">
-                        <table className="w-full text-xs border-collapse">
+                        <table className="w-full table-fixed text-xs border-collapse">
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] border-b border-slate-200">
-                              <th className="px-3.5 py-2.5 text-left font-mono w-28">Account Code</th>
-                              <th className="px-3.5 py-2.5 text-left min-w-[240px]">Account Title & Description</th>
-                              <th className="px-3.5 py-2.5 text-right font-mono w-32 bg-emerald-50/70 text-emerald-900">
+                              <th className="px-3 py-2.5 text-left font-mono w-[16%]">Account Code</th>
+                              <th className="px-3 py-2.5 text-left w-[44%]">Account Title & Description</th>
+                              <th className="px-3 py-2.5 text-right font-mono w-[20%] bg-emerald-50/70 text-emerald-900">
                                 Debit (PKR)
                               </th>
-                              <th className="px-3.5 py-2.5 text-right font-mono w-32 bg-blue-50/70 text-blue-900">
+                              <th className="px-3 py-2.5 text-right font-mono w-[20%] bg-blue-50/70 text-blue-900">
                                 Credit (PKR)
                               </th>
                             </tr>

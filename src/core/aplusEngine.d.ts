@@ -242,6 +242,9 @@ export interface AccountingContextType {
   updateVoucherStatus: (id: string, status: string, officer?: string, role?: string, remarks?: string) => void;
   addVoucherAuditLog?: (id: string, auditEntry: any) => void;
   addPettyCashTransaction: (tx: any) => void;
+  updatePettyCashTransaction?: (id: string, tx: any) => void;
+  updatePettyCashBatch?: (batch: any) => void;
+  deletePettyCashTransaction?: (id: string) => void;
   replenishPettyCash: (campusId: string, amount: number, bankAccountId: string, chequeNo: string, date: string) => void;
   addCampus: (campus: any) => Campus;
   updateCampus: (id: string, updates: any) => void;

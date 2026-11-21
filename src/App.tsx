@@ -605,6 +605,9 @@ export default function App() {
     window.__APLUS_PERMISSION_ENGINE__ = PermissionEngine;
     window.__APLUS_TOP_BAR__ = AplusTopBar;
     (window as any).__APLUS_CAMPUS_BUDGET_COMPARISON_CHART__ = CampusMonthlyBudgetExpenditureChart;
+    (window as any).__APLUS_LOGOUT__ = () => {
+      logoutAccount().catch(() => {});
+    };
     (window as any).__APLUS_PROVISION_CLOUD_USER__ = async (evt: { action: 'upsert' | 'status'; user: any }) => {
       try {
         const u = evt?.user;

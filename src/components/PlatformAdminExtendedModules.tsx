@@ -332,10 +332,12 @@ export const PettyCashImprestView: React.FC<{
     setLocalCampusId(id);
     onChangeCampusScope?.(id);
   };
+  const { deletePettyCashTransaction } = useAccounting();
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [editingFloatCampus, setEditingFloatCampus] = useState<Campus | null>(null);
   const [newFloatAmount, setNewFloatAmount] = useState<string>('');
+  const [confirmDeletePcId, setConfirmDeletePcId] = useState<string | null>(null);
 
   const scopedCampuses = useMemo(
     () => (selectedCampusId === 'all' ? campuses : campuses.filter((c) => c.id === selectedCampusId)),
@@ -560,11 +562,47 @@ export const PettyCashImprestView: React.FC<{
                 <p className="text-[11px] text-slate-400 mt-0.5">{pc.narration || 'General Disbursement'}</p>
               </div>
 
-              <div className="text-right">
-                <span className="font-mono font-bold text-white block">
-                  PKR {Number(pc.amount).toLocaleString()}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">{pc.date}</span>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-right">
+                  <span className="font-mono font-bold text-white block">
+                    PKR {Number(pc.amount).toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">{pc.date}</span>
+                </div>
+                {deletePettyCashTransaction && (
+                  confirmDeletePcId === pc.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deletePettyCashTransaction(pc.id);
+                          setConfirmDeletePcId(null);
+                          triggerToast('success', `Deleted Petty Cash entry #${pc.voucherNo}.`);
+                        }}
+                        className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold cursor-pointer"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeletePcId(null)}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeletePcId(pc.id)}
+                      className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                      title="Delete Petty Cash Entry"
+                      aria-label={`Delete ${pc.voucherNo}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )
+                )}
               </div>
             </div>
           ))}

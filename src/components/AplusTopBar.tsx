@@ -1,39 +1,22 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
-  BookOpen,
-  Cloud,
-  CloudUpload,
-  CloudDownload,
   CheckCircle2,
   RefreshCw,
-  Upload,
-  ShieldCheck,
-  Printer,
-  Banknote,
-  LayoutGrid,
-  BarChart3,
-  CheckSquare,
   AlertTriangle,
   X,
   ArrowRight,
   Clock,
   WifiOff,
-  HardDrive,
   Download,
   Search,
   Keyboard,
-  KeyRound,
   Sparkles,
-  Database,
-  RotateCcw,
-  LogOut,
   User,
-  Scale,
   Building2,
   PanelLeftClose,
   PanelLeftOpen,
   Zap,
-  Wallet,
+  Banknote,
 } from 'lucide-react';
 import { useAccounting, ImportCategoryTab, Transaction } from '../core/aplusEngine';
 import { restoreLastDeletedAccount } from '../services/chartOfAccountsRecovery';
@@ -45,7 +28,6 @@ import {
   fetchCashReconciliationsFromCloud,
   triggerInstantCloudSyncAndLoad,
 } from '../services/firebaseSync';
-import { logoutAccount } from '../services/secureAuthentication';
 import { SuperAdminImportModal } from './SuperAdminImportModal';
 import { VoucherA4PrintStudioModal } from './PrintableVoucherA4Layout';
 import { PlatformSiteAdminHub } from './PlatformSiteAdminHub';
@@ -93,7 +75,6 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
   const {
     isSuperAdmin,
     currentUser,
-    logout,
     currentCampusId,
     campuses,
     transactions,
@@ -472,15 +453,158 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     }
   };
 
+  // Keep latest tool action handlers synchronized for Sidebar tool dispatchers
+  const toolDispatchRef = React.useRef<(toolId: string) => void>(() => {});
+  toolDispatchRef.current = (toolId: string) => {
+    switch (toolId) {
+      case 'express_voucher':
+        if (!isReadOnlyRole && isModuleAllowed('transaction')) {
+          setIsExpressVoucherOpen(true);
+        }
+        break;
+      case 'express_petty_cash':
+        if (!isReadOnlyRole && isModuleAllowed('pettycash')) {
+          setIsExpressPettyCashOpen(true);
+        }
+        break;
+      case 'global_search':
+        setIsGlobalSearchOpen(true);
+        break;
+      case 'import_coa':
+        if (isSuperAdmin) {
+          const defaultTab: ImportCategoryTab =
+            activeTab === 'accounts'
+              ? 'coa'
+              : activeTab === 'transaction' || activeTab === 'alltransactions'
+              ? 'vouchers'
+              : activeTab === 'pettycash'
+              ? 'pettycash'
+              : activeTab === 'campuses'
+              ? 'campuses'
+              : activeTab === 'openingbalance'
+              ? 'openingbalance'
+              : 'coa';
+          setImportInitialTab(defaultTab);
+          setIsImportModalOpen(true);
+        }
+        break;
+      case 'deployment_ready':
+        setIsDeploymentHubOpen(true);
+        break;
+      case 'cloud_migration':
+        if (isSuperAdmin || isPlatformSiteAdmin) {
+          setIsMigrationCenterOpen(true);
+        }
+        break;
+      case 'sync_cloud':
+        if (isPlatformSiteAdmin) {
+          void handleCloudPush();
+        }
+        break;
+      case 'load_cloud':
+        if (isPlatformSiteAdmin) {
+          void handleCloudPull();
+        }
+        break;
+      case 'full_ledger_pdf':
+        setIsFullLedgerPdfOpen(true);
+        break;
+      case 'campus_head_access':
+        if (isPlatformSiteAdmin) {
+          setIsCampusAccountHeadAccessOpen(true);
+        }
+        break;
+      case 'permission_engine':
+        if (isPlatformSiteAdmin) {
+          setIsPermissionEngineOpen(true);
+        }
+        break;
+      case 'ai_suggester':
+        if (isPlatformSiteAdmin && isModuleAllowed('ai_suggester')) {
+          setIsSuggesterModalOpen(true);
+        }
+        break;
+      case 'site_admin_hub':
+        if (isPlatformSiteAdmin) {
+          setIsSiteAdminHubOpen(true);
+        }
+        break;
+      case 'approval_matrix':
+        if (isPlatformSiteAdmin && isModuleAllowed('approval_matrix')) {
+          setIsApprovalMatrixModalOpen(true);
+        }
+        break;
+      case 'campus_db_auth':
+        if (isPlatformSiteAdmin && isAuthorizedForCampusDb) {
+          setIsCampusAuthModalOpen(true);
+        }
+        break;
+      case 'a4_print_studio':
+        if (isModuleAllowed('reports')) {
+          setIsA4StudioOpen(true);
+        }
+        break;
+      case 'restore_deleted_coa':
+        if (isPlatformSiteAdmin) {
+          const res = restoreLastDeletedAccount({
+            accountHeads,
+            addAccountHead,
+            importOfficialAccountsHeads,
+          });
+          triggerShortcutToast(res.message);
+        }
+        break;
+      case 'install_pwa':
+        void handleInstallPwaApp();
+        break;
+      default:
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const opener = (toolId: string) => toolDispatchRef.current(toolId);
+    const onCustomEvent = (ev: Event) => {
+      const id = (ev as CustomEvent<{ id?: string }>).detail?.id;
+      if (id) opener(id);
+    };
+    (window as any).__APLUS_OPEN_TOOL__ = opener;
+    window.addEventListener('aplus-open-tool', onCustomEvent);
+    return () => {
+      delete (window as any).__APLUS_OPEN_TOOL__;
+      window.removeEventListener('aplus-open-tool', onCustomEvent);
+    };
+  }, []);
+
+  useEffect(() => {
+    const meta = {
+      pendingCount,
+      cashReconDue: cashReconciliationAlert.isDue,
+      busy,
+      isPlatformSiteAdmin,
+      isAuthorizedForCampusDb,
+      isReadOnlyRole,
+    };
+    (window as any).__APLUS_TOOL_META__ = meta;
+    window.dispatchEvent(new CustomEvent('aplus-tool-meta', { detail: meta }));
+  }, [
+    pendingCount,
+    cashReconciliationAlert.isDue,
+    busy,
+    isPlatformSiteAdmin,
+    isAuthorizedForCampusDb,
+    isReadOnlyRole,
+  ]);
+
   return (
     <>
-      <div className="bg-slate-900 text-white border-b border-slate-800 px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
-        <div className="flex items-center gap-2.5 min-w-0">
-          {/* Main Layout Sidebar Toggle Button */}
+      <div className="bg-slate-950 text-white border-b border-slate-800 px-4 sm:px-5 py-2 flex flex-wrap lg:flex-nowrap items-center justify-between gap-3 text-xs print:hidden">
+        {/* Left Zone: Sidebar Toggle + Cloud Status + Tenant/Campus Context */}
+        <div className="flex items-center gap-3 min-w-0 shrink-0">
           <button
             type="button"
             onClick={handleToggleSidebar}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 transition-colors cursor-pointer shrink-0"
+            className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer shrink-0"
             title={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
             aria-label={isSidebarMinimized ? 'Expand side navigation bar' : 'Minimize side navigation bar'}
           >
@@ -491,36 +615,30 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
             )}
           </button>
 
-          {/* Honest Sync Status Indicators */}
           {!isOnline || syncStats.status === 'offline' ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/25 border border-amber-400/50 text-amber-300 font-bold text-[11px]">
-              <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span>Offline — Changes queued in outbox</span>
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-300 font-semibold text-[11px] whitespace-nowrap">
+              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+              <span>Offline</span>
             </span>
           ) : syncStats.status === 'connecting' ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[11px]">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/35 text-amber-300 font-semibold text-[11px] whitespace-nowrap">
+              <RefreshCw className="w-3 h-3 animate-spin text-amber-400" />
               <span>Connecting...</span>
             </span>
           ) : syncStats.status === 'synchronizing' || busy ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 font-bold text-[11px]">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-              <span>Synchronizing...</span>
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 font-semibold text-[11px] whitespace-nowrap">
+              <RefreshCw className="w-3 h-3 animate-spin text-indigo-400" />
+              <span>Syncing...</span>
             </span>
           ) : syncStats.status === 'saved_locally_pending' ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[11px]">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/35 text-amber-300 font-semibold text-[11px] whitespace-nowrap">
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span>Saved locally—pending synchronization</span>
+              <span>Pending Sync</span>
             </span>
-          ) : syncStats.status === 'conflict' ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-rose-500/25 border border-rose-500/50 text-rose-300 font-bold text-[11px]">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 animate-bounce" />
-              <span>Conflict—review required</span>
-            </span>
-          ) : syncStats.status === 'sync_failed' ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold text-[11px]">
+          ) : syncStats.status === 'conflict' || syncStats.status === 'sync_failed' ? (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-500/15 border border-rose-500/35 text-rose-300 font-semibold text-[11px] whitespace-nowrap">
               <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-              <span>Synchronization failed</span>
+              <span>{syncStats.status === 'conflict' ? 'Sync Conflict' : 'Sync Failed'}</span>
             </span>
           ) : (
             <button
@@ -529,72 +647,47 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
                 setBusy(true);
                 triggerInstantCloudSyncAndLoad().finally(() => setBusy(false));
               }}
-              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/35 text-emerald-300 font-bold text-[11px] transition-colors cursor-pointer"
-              title="Auto-Sync & Cloud Load active (syncs changes in <=1s, checks cloud every 2s). Click to run instant sync & load now."
+              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold text-[11px] transition-colors cursor-pointer whitespace-nowrap"
+              title="Auto-Sync active. Click to sync & refresh from cloud now."
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Auto-Synced (1s)</span>
+              <span>Cloud Synced</span>
               {(syncStats.lastCloudLoadAt || syncStats.lastSyncedAt) && (
-                <span className="text-[10px] text-emerald-400/90 font-mono font-normal">
+                <span className="hidden xl:inline text-[10px] text-emerald-400/80 font-mono tabular-nums font-normal">
                   {new Date(syncStats.lastCloudLoadAt || syncStats.lastSyncedAt || '').toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
-                    second: '2-digit',
                   })}
                 </span>
               )}
             </button>
           )}
 
-          {/* Active Tenant Badge */}
-          {clientOrg && (
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 border border-purple-500/60 text-purple-100 text-[11px] font-bold shadow-xs">
-              {clientOrg.logoUrl ? (
-                <img
-                  src={clientOrg.logoUrl}
-                  alt={clientOrg.name}
-                  className="w-4 h-4 rounded object-contain bg-white/90 p-0.5"
-                />
-              ) : (
-                <Building2 className="w-3.5 h-3.5 text-purple-300" />
-              )}
-              <span className="tracking-wide text-white font-black uppercase">{clientOrg.name}</span>
-              {isClientOwnerMainAdmin ? (
-                <span className="px-1.5 py-0.2 rounded bg-purple-900 border border-purple-400/50 text-[9px] font-black text-purple-200">
-                  Level 2 Owner
-                </span>
-              ) : (
-                <span className="px-1.5 py-0.2 rounded bg-indigo-900 border border-indigo-400/50 text-[9px] font-black text-indigo-200">
-                  Subordinate Branch
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Active Campus & User Badge */}
-          {currentUser && (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-700/60 text-indigo-200 text-[11px] font-semibold">
-              <User className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="font-bold text-white">{currentUser.name}</span>
-              <span className="text-slate-400 text-[10px]">({currentUser.role || 'Staff'})</span>
+          {(clientOrg || orgSettings?.schoolName) && (
+            <div className="hidden sm:flex items-center gap-1.5 text-slate-300 text-[11px] font-medium truncate max-w-[240px]">
+              <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="truncate font-semibold text-white">
+                {clientOrg?.name || orgSettings?.schoolName}
+              </span>
               {currentCampusId && currentCampusId !== 'all' && (
-                <span className="text-purple-300 text-[10px] border-l border-indigo-700/60 pl-1.5 font-mono">
+                <span className="text-[10px] font-mono text-indigo-300 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded shrink-0">
                   {campuses.find((c) => c.id === currentCampusId)?.code || currentCampusId}
                 </span>
               )}
             </div>
           )}
 
-          <span className="text-slate-300 truncate text-[11px] hidden lg:inline">
-            {syncStats.message ||
-              orgSettings?.schoolName ||
-              'Multi-Campus Voucher & Petty Cash Management System'}
-          </span>
+          {currentUser && (
+            <div className="hidden md:flex items-center gap-1.5 text-slate-300 text-[11px] border-l border-slate-800 pl-3 whitespace-nowrap">
+              <User className="w-3.5 h-3.5 text-slate-400" />
+              <span className="font-semibold text-white">{currentUser.name}</span>
+              <span className="text-slate-400 text-[10px]">({currentUser.role || 'Staff'})</span>
+            </div>
+          )}
         </div>
 
-        {/* Global Smart Command Search Bar */}
-        <div className="w-full xl:w-auto xl:flex-1 xl:max-w-md min-w-[220px]">
+        {/* Center Zone: Global Command Search */}
+        <div className="w-full lg:w-auto lg:flex-1 lg:max-w-md min-w-[200px]">
           <SmartCommandBar
             onNavigate={onNavigate}
             onOpenExpressVoucher={() => setIsExpressVoucherOpen(true)}
@@ -603,372 +696,39 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 ml-auto">
-          {/* Quick Express Voucher button (hidden for read-only users or users lacking voucher entry access) */}
-          {!isReadOnlyRole && isModuleAllowed('transaction') && (
+        {/* Right Zone: Minimal Quick Actions (All modules & admin tools are organized in the Sidebar) */}
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
+          {!isPwaInstalled && (deferredPwaPrompt || isIOSDevice) && (
             <button
               type="button"
-              onClick={() => setIsExpressVoucherOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              title="Open Express Voucher Overlay for rapid entry without page reload (Alt+N)"
+              onClick={handleInstallPwaApp}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-cyan-300 font-semibold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              title="Install offline desktop/mobile app"
             >
-              <Zap className="w-3.5 h-3.5 text-amber-300 fill-current" />
-              <span>Express Voucher</span>
-            </button>
-          )}
-
-          {/* Quick Express Petty Cash button */}
-          {!isReadOnlyRole && isModuleAllowed('pettycash') && (
-            <button
-              type="button"
-              onClick={() => setIsExpressPettyCashOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              title="Record Petty Cash Expense Slip (Alt+P)"
-            >
-              <Wallet className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Petty Cash</span>
-            </button>
-          )}
-
-          {currentUser && (
-            <button
-              type="button"
-              onClick={() => {
-                logoutAccount().catch(() => {});
-                if (logout) {
-                  logout();
-                }
-              }}
-              className="px-2.5 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 text-rose-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
-              title="Sign out of current terminal. Login is required for everyone."
-            >
-              <LogOut className="w-3.5 h-3.5 text-rose-400" />
-              <span>Sign Out</span>
+              <Download className="w-3.5 h-3.5" />
+              <span>Install App</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={() => setIsGlobalSearchOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Power-User Global Search & Keyboard Shortcuts (Ctrl+F / Ctrl+N / Enter=Save)"
+            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 font-medium text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+            title="Power-User Global Search & Keyboard Shortcuts (Ctrl+F / Ctrl+N)"
           >
-            <Search className="w-3.5 h-3.5 text-amber-400" />
-            <span>Search & Shortcuts</span>
-            <kbd className="hidden sm:inline-block px-1.5 py-0.2 rounded bg-slate-900 border border-slate-600 font-mono text-[10px] text-amber-300">
-              Ctrl+F / Ctrl+N
-            </kbd>
+            <Search className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">Shortcuts</span>
           </button>
 
-          {!isPwaInstalled && (deferredPwaPrompt || isIOSDevice) && (
+          {!isReadOnlyRole && isModuleAllowed('transaction') && (
             <button
               type="button"
-              onClick={handleInstallPwaApp}
-              className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
-              title="Install this system as an offline-ready desktop or mobile app"
+              onClick={() => setIsExpressVoucherOpen(true)}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              title="Open Express Voucher overlay for rapid entry (Alt+N)"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Install Offline App</span>
-            </button>
-          )}
-          {isSuperAdmin && (
-            <button
-              onClick={() => {
-                const defaultTab: ImportCategoryTab =
-                  activeTab === 'accounts'
-                    ? 'coa'
-                    : activeTab === 'transaction' || activeTab === 'alltransactions'
-                    ? 'vouchers'
-                    : activeTab === 'pettycash'
-                    ? 'pettycash'
-                    : activeTab === 'campuses'
-                    ? 'campuses'
-                    : activeTab === 'openingbalance'
-                    ? 'openingbalance'
-                    : 'coa';
-                setImportInitialTab(defaultTab);
-                setIsImportModalOpen(true);
-              }}
-              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-              title="Super Admin Exclusive: Import Chart of Accounts, Vouchers, Petty Cash, Campuses, Opening Balances & Complete System Backup"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Import COA & All Data (Super Admin)</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => setIsDeploymentHubOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/70 text-emerald-300 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-            title="Inspect Production Deployment Readiness & Live Health Pre-Flight Diagnostics"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Deployment Ready ✓</span>
-          </button>
-
-          {(isSuperAdmin || isPlatformSiteAdmin) && (
-            <button
-              onClick={() => setIsMigrationCenterOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Multi-Client Persistent Cloud Migration Center: non-destructive backup, dry-run validate, and commit to tenant-isolated cloud paths"
-            >
-              <Database className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Cloud Migration Center</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && (
-            <button
-              onClick={handleCloudPush}
-              disabled={busy}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Save complete ledger, vouchers, petty cash & campuses to Firebase Firestore across all browsers"
-            >
-              {busy ? (
-                <RefreshCw className="w-3 h-3 animate-spin" />
-              ) : (
-                <CloudUpload className="w-3.5 h-3.5 text-emerald-400" />
-              )}
-              <span>Sync to Cloud</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => setIsFullLedgerPdfOpen(true)}
-            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-            title="Export formatted, print-ready full transaction ledger PDF document including institutional branding and authorized signature lines"
-          >
-            <Printer className="w-3.5 h-3.5 text-emerald-200" />
-            <span>Export Full Ledger PDF</span>
-          </button>
-
-          {isPlatformSiteAdmin && (
-            <button
-              onClick={() => setIsCampusAccountHeadAccessOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-              title="Campus Permission Levels (Level 1-5 RBAC) & Campus Account Head Access Panel"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-blue-200" />
-              <span>Campus Account Head Access</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && (
-            <button
-              onClick={() => setIsPermissionEngineOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-              title="Centralized Permission Engine (Levels 1-5 RBAC, Campus Administrator Role Assignments & Action Matrix Enforcement)"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-200" />
-              <span>Permission Engine</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && isModuleAllowed('ai_suggester') && (
-            <button
-              onClick={() => setIsSuggesterModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-              title="Automatically suggest expense categories by analyzing transaction description & historical patterns"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
-              <span>AI Expense Suggester</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && (
-            <button
-              onClick={() => setIsSiteAdminHubOpen(true)}
-              className="px-3 py-1 rounded-lg bg-gradient-to-r from-purple-700 via-indigo-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-600 text-white font-extrabold text-[11px] flex items-center gap-1.5 transition-all shadow-md cursor-pointer border border-purple-400/50"
-              title="Platform Site Admin Audit & Central School Management System (Creator Central Control, Hierarchy, 5-Tier RBAC, Code Controls, Disaster Recovery)"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-200" />
-              <span>Platform Site Admin Hub</span>
-              <span className="px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 font-mono text-[9px] font-black border border-purple-400/40">
-                12 SOPs
-              </span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && isModuleAllowed('approval_matrix') && (
-            <button
-              onClick={() => setIsApprovalMatrixModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-emerald-500/40"
-              title="Configurable Voucher Authorization & Approval Matrix by User Role and Campus Hierarchy"
-            >
-              <Scale className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Approval Matrix</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && isAuthorizedForCampusDb && (
-            <button
-              onClick={() => setIsCampusAuthModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-              title="Dynamic campus authentication and database credentials synchronization (Super Admin & Platform Admin scope)"
-            >
-              <KeyRound className="w-3.5 h-3.5 text-amber-200" />
-              <span>Campus DB Auth</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && (
-            <button
-              onClick={handleCloudPull}
-              disabled={busy}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Pull & refresh latest vouchers, COA, campuses, and petty cash from Firebase Cloud"
-            >
-              <CloudDownload className="w-3.5 h-3.5 text-blue-400" />
-              <span>Load Cloud</span>
-            </button>
-          )}
-
-          {(isPlatformSiteAdmin || isModuleAllowed('alltransactions')) && !isReadOnlyRole && (
-            <button
-              onClick={() => onNavigate('alltransactions')}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'alltransactions'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
-              }`}
-              title="Bulk Voucher Approval: Select multiple pending vouchers to approve or reject in a single batch operation (Auto-synced to Cloud)"
-            >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span>Bulk Voucher Approval ({pendingCount} Pending)</span>
-            </button>
-          )}
-
-          {isModuleAllowed('dashboard') && (
-            <button
-              onClick={() => onNavigate('dashboard')}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'dashboard'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
-              }`}
-              title="Open Daily Cash Summary Dashboard (Live Inflows, Outflows & Net Movement per Campus for Current Date)"
-            >
-              <Banknote className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Daily Cash Summary</span>
-            </button>
-          )}
-
-          {(!activeProfile || activeProfile.widgets.showTopBarErpButton) && isModuleAllowed('erp_overview') && (
-            <button
-              onClick={() => onNavigate('erp_overview')}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab.startsWith('erp_')
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-blue-300'
-              }`}
-              title="Open Modernized 360° School ERP Suite (Fees, Payroll, Procurement, Inventory, Budgeting & Recharts Analytics)"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>360° Modern ERP</span>
-              {activeTab.startsWith('erp_') && <CheckCircle2 className="w-3 h-3" />}
-            </button>
-          )}
-
-          {(!activeProfile || activeProfile.widgets.showPettyCashChart) && isModuleAllowed('pettycash') && (
-            <button
-              onClick={() => onNavigate('pettycash')}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'pettycash'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-indigo-300'
-              }`}
-              title="Open Petty Cash Management & Monthly Recharts Expense Breakdown by Category"
-            >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>Petty Cash Analytics</span>
-              {activeTab === 'pettycash' && <CheckCircle2 className="w-3 h-3" />}
-            </button>
-          )}
-
-          {(!activeProfile || activeProfile.widgets.showTopBarCashReconButton) && isModuleAllowed('cashreconciliation') && (
-            <button
-              onClick={() => {
-                setIsCashToastDismissed(false);
-                onNavigate('cashreconciliation');
-              }}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'cashreconciliation'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : cashReconciliationAlert.isDue
-                  ? 'bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-300'
-                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300'
-              }`}
-              title={cashReconciliationAlert.detailMessage}
-            >
-              <Banknote className="w-3.5 h-3.5" />
-              <span>Physical Cash Reconciliation</span>
-              {cashReconciliationAlert.isDue ? (
-                <span className="px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 font-mono font-black text-[10px]">
-                  7d Due
-                </span>
-              ) : (
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              )}
-            </button>
-          )}
-
-          {(!activeProfile || activeProfile.widgets.showTopBarA4PrintButton) && isModuleAllowed('reports') && (
-            <button
-              onClick={() => setIsA4StudioOpen(true)}
-              className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer"
-              title="Open A4 Print-Friendly Four-Voucher Layout Studio (BPV, BRV, CPV, CRV)"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>A4 Voucher Print Studio</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && (
-            <button
-              onClick={() => {
-                const res = restoreLastDeletedAccount({
-                  accountHeads,
-                  addAccountHead,
-                  importOfficialAccountsHeads,
-                });
-                triggerShortcutToast(res.message);
-              }}
-              className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer"
-              title="Restore recently deleted Chart of Account head or recover missing master accounts"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-              <span>Restore Deleted COA</span>
-            </button>
-          )}
-
-          {isPlatformSiteAdmin && isModuleAllowed('activity') && (
-            <button
-              onClick={() => onNavigate('activity')}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'activity'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300'
-              }`}
-              title="Open Forensic Secure Audit Trail (Voucher Creations, Edits & Deletions bound to User IDs & Timestamps)"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Secure Audit Trail</span>
-              {activeTab === 'activity' && <CheckCircle2 className="w-3 h-3" />}
-            </button>
-          )}
-
-          {isModuleAllowed('docs') && (
-            <button
-              onClick={() => onNavigate('docs')}
-              className={`px-3 py-1 rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'docs'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-blue-600 hover:bg-blue-500 text-white'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Aplus 49-Section Manual & Procedures</span>
-              {activeTab === 'docs' && <CheckCircle2 className="w-3 h-3" />}
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>Express Voucher</span>
             </button>
           )}
         </div>

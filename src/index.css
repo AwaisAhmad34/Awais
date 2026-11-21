@@ -143,7 +143,8 @@
     page-break-before: always !important;
     break-before: page !important;
   }
-  .break-inside-avoid {
+  .break-inside-avoid,
+  .voucher-page-wrapper {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
@@ -281,11 +282,13 @@ body.sidebar-minimized aside.w-72 {
   max-width: 5rem !important;
 }
 
-/* Hide text labels, headings, select inputs and descriptions when minimized */
+/* Hide text labels, headings, inputs, group headers and descriptions when minimized */
 body.sidebar-minimized aside.w-72 h1,
 body.sidebar-minimized aside.w-72 p,
 body.sidebar-minimized aside.w-72 label,
 body.sidebar-minimized aside.w-72 select,
+body.sidebar-minimized aside.w-72 input,
+body.sidebar-minimized aside.w-72 .sidebar-hide-min,
 body.sidebar-minimized aside.w-72 .truncate,
 body.sidebar-minimized aside.w-72 span:not(:has(svg)) {
   display: none !important;

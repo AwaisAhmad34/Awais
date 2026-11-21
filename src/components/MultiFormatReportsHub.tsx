@@ -254,6 +254,7 @@ export const MultiFormatReportsHub: React.FC<{
 
   const [selectedFormat, setSelectedFormat] = useState<ReportFormatId>('format_1_main');
   const [format1Tab, setFormat1Tab] = useState<'trial_balance' | 'profit_loss' | 'balance_sheet' | 'ledger_summary'>('trial_balance');
+  const [trialBalanceScope, setTrialBalanceScope] = useState<'active' | 'with_tx' | 'all'>('active');
 
   // Validate if currently authenticated user / client has permissions to view this financial report
   const reportAccess = useMemo(() => {
@@ -310,6 +311,7 @@ export const MultiFormatReportsHub: React.FC<{
     () => new Date().toISOString().slice(0, 10)
   );
   const [selectedTAccountId, setSelectedTAccountId] = useState<string>('ALL');
+  const [tAccountSearch, setTAccountSearch] = useState<string>('');
   const [isExporting, setIsExporting] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
@@ -318,11 +320,26 @@ export const MultiFormatReportsHub: React.FC<{
   const activeFormatObj =
     TEN_REPORT_FORMATS.find((f) => f.id === selectedFormat) || TEN_REPORT_FORMATS[0];
 
+  const resolvedCampusObj = useMemo(() => {
+    const targetId = activeCampusId || currentCampusId;
+    return (
+      activeCampusNode ||
+      campuses.find(
+        (c) =>
+          c.id === targetId ||
+          (c.code && targetId && c.code.toLowerCase() === String(targetId).toLowerCase())
+      ) ||
+      (currentUser?.campusId
+        ? campuses.find((c) => c.id === currentUser.campusId || c.code === currentUser.campusId)
+        : undefined)
+    );
+  }, [activeCampusNode, activeCampusId, currentCampusId, campuses, currentUser?.campusId]);
+
   const campusLabel = isCampusAdmin
-    ? `${activeCampusNode?.name || 'Active Campus'} (${activeCampusNode?.code || activeCampusId}) [Isolated]`
+    ? `${resolvedCampusObj?.name || currentUser?.campusName || 'Main Campus'} (${resolvedCampusObj?.code || activeCampusId})`
     : currentCampusId === 'all'
     ? 'All Campuses Combined (Consolidated)'
-    : campuses.find((c) => c.id === currentCampusId)?.name || 'Selected Campus';
+    : resolvedCampusObj?.name || campuses.find((c) => c.id === currentCampusId)?.name || 'Main Campus';
 
   // Scoped transactions for Formats 2–10
   const scopedVouchers = useMemo(() => {
@@ -434,6 +451,31 @@ export const MultiFormatReportsHub: React.FC<{
     const active = accountAnalytics.filter((a) => a.hasActivity);
     return active.length > 0 ? active : accountAnalytics.slice(0, 25);
   }, [accountAnalytics]);
+
+  const trialBalanceFilteredRows = useMemo(() => {
+    if (trialBalanceScope === 'with_tx') {
+      return accountAnalytics.filter((a) => a.periodDr > 0 || a.periodCr > 0);
+    }
+    if (trialBalanceScope === 'all') {
+      return accountAnalytics;
+    }
+    return activeAccountRows;
+  }, [accountAnalytics, activeAccountRows, trialBalanceScope]);
+
+  const trialBalanceFilteredTotals = useMemo(() => {
+    return trialBalanceFilteredRows.reduce(
+      (acc, r) => {
+        acc.openDr += r.openDr;
+        acc.openCr += r.openCr;
+        acc.periodDr += r.periodDr;
+        acc.periodCr += r.periodCr;
+        acc.closingDr += r.closingDr;
+        acc.closingCr += r.closingCr;
+        return acc;
+      },
+      { openDr: 0, openCr: 0, periodDr: 0, periodCr: 0, closingDr: 0, closingCr: 0 }
+    );
+  }, [trialBalanceFilteredRows]);
 
   const totals = useMemo(() => {
     let openDr = 0,
@@ -648,6 +690,27 @@ export const MultiFormatReportsHub: React.FC<{
     subtitle?: string;
   }) => (
     <div className="border-b-2 border-black pb-4 mb-5">
+      <div
+        className="report-top-org-header flex flex-wrap items-center justify-between gap-2 border-b border-black pb-1.5 mb-3 text-[10px] font-sans text-black"
+        aria-label="Report Organization and Campus Header"
+      >
+        <div className="flex flex-col min-w-0">
+          <span className="font-black uppercase tracking-wider text-[11px] text-black">
+            {orgSettings?.schoolName || 'A+ School System'}
+          </span>
+          <span className="font-bold text-black">
+            Campus: {campusLabel}
+          </span>
+        </div>
+        <div className="text-right font-mono shrink-0">
+          <div className="font-bold uppercase">
+            FY {activePeriod?.fiscalYear || '2026-2027'}
+          </div>
+          <div>
+            Period: {dateFrom} to {dateTo}
+          </div>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <SchoolLogo size="md" />
@@ -753,7 +816,7 @@ export const MultiFormatReportsHub: React.FC<{
                   <Building2 className={`w-3.5 h-3.5 ${isCampusAdmin ? 'text-amber-400' : 'text-slate-400'}`} />
                   {isCampusAdmin ? (
                     <div className="flex items-center gap-1.5 text-xs font-bold text-amber-200">
-                      <span>{activeCampusNode?.name || 'Assigned Campus'} ({activeCampusNode?.code || activeCampusId})</span>
+                      <span>{resolvedCampusObj?.name || currentUser?.campusName || 'Main Campus'} ({resolvedCampusObj?.code || activeCampusId})</span>
                       <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1 py-0.2 rounded font-mono uppercase">Locked</span>
                     </div>
                   ) : (
@@ -987,13 +1050,50 @@ export const MultiFormatReportsHub: React.FC<{
                 {/* Sub-Tab 1: 8-Column Trial Balance */}
                 {format1Tab === 'trial_balance' && (
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-sm font-black uppercase tracking-wider text-black">
                         Comprehensive 8-Column Institutional Trial Balance
                       </h3>
-                      <span className="text-[11px] font-mono text-slate-600">
-                        Active Accounts: {activeAccountRows.length}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2 print:hidden">
+                        <div className="inline-flex rounded-lg border border-slate-300 bg-slate-100 p-0.5 text-[11px] font-bold">
+                          <button
+                            type="button"
+                            onClick={() => setTrialBalanceScope('active')}
+                            className={`px-2.5 py-1 rounded cursor-pointer transition-colors ${
+                              trialBalanceScope === 'active'
+                                ? 'bg-black text-white'
+                                : 'text-slate-700 hover:bg-white'
+                            }`}
+                          >
+                            Active COA ({activeAccountRows.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTrialBalanceScope('with_tx')}
+                            className={`px-2.5 py-1 rounded cursor-pointer transition-colors ${
+                              trialBalanceScope === 'with_tx'
+                                ? 'bg-black text-white'
+                                : 'text-slate-700 hover:bg-white'
+                            }`}
+                          >
+                            With Transactions Only
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTrialBalanceScope('all')}
+                            className={`px-2.5 py-1 rounded cursor-pointer transition-colors ${
+                              trialBalanceScope === 'all'
+                                ? 'bg-black text-white'
+                                : 'text-slate-700 hover:bg-white'
+                            }`}
+                          >
+                            All COA ({accountAnalytics.length})
+                          </button>
+                        </div>
+                        <span className="text-[11px] font-mono text-slate-600 tabular-nums">
+                          Shown: {trialBalanceFilteredRows.length}
+                        </span>
+                      </div>
                     </div>
                     <div className="overflow-x-auto border-2 border-black">
                       <table className="w-full text-xs border-collapse">
@@ -1016,32 +1116,40 @@ export const MultiFormatReportsHub: React.FC<{
                           </tr>
                         </thead>
                         <tbody>
-                          {activeAccountRows.map((r, idx) => (
-                            <tr
-                              key={r.head.id || r.head.code}
-                              className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70 hover:bg-slate-100'}
-                            >
-                              <td className="border border-slate-300 p-2 font-mono font-bold">{r.head.code}</td>
-                              <td className="border border-slate-300 p-2 font-bold">{r.head.name}</td>
-                              <td className="border border-slate-300 p-2 font-mono text-[10px] text-slate-600">{r.head.category}</td>
-                              <td className="border border-slate-300 p-2 text-right font-mono">{r.openDr ? formatNum(r.openDr) : '—'}</td>
-                              <td className="border border-slate-300 p-2 text-right font-mono">{r.openCr ? formatNum(r.openCr) : '—'}</td>
-                              <td className="border border-slate-300 p-2 text-right font-mono font-semibold">{r.periodDr ? formatNum(r.periodDr) : '—'}</td>
-                              <td className="border border-slate-300 p-2 text-right font-mono font-semibold">{r.periodCr ? formatNum(r.periodCr) : '—'}</td>
-                              <td className="border border-slate-300 p-2 text-right font-mono font-black">{r.closingDr ? formatNum(r.closingDr) : '—'}</td>
-                              <td className="border border-slate-300 p-2 text-right font-mono font-black">{r.closingCr ? formatNum(r.closingCr) : '—'}</td>
+                          {trialBalanceFilteredRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="p-6 text-center text-slate-500 italic">
+                                No Chart of Accounts heads have posted transactions in this date range.
+                              </td>
                             </tr>
-                          ))}
+                          ) : (
+                            trialBalanceFilteredRows.map((r, idx) => (
+                              <tr
+                                key={r.head.id || r.head.code}
+                                className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70 hover:bg-slate-100'}
+                              >
+                                <td className="border border-slate-300 p-2 font-mono font-bold">{r.head.code}</td>
+                                <td className="border border-slate-300 p-2 font-bold">{r.head.name}</td>
+                                <td className="border border-slate-300 p-2 font-mono text-[10px] text-slate-600">{r.head.category}</td>
+                                <td className="border border-slate-300 p-2 text-right font-mono tabular-nums">{r.openDr ? formatNum(r.openDr) : '—'}</td>
+                                <td className="border border-slate-300 p-2 text-right font-mono tabular-nums">{r.openCr ? formatNum(r.openCr) : '—'}</td>
+                                <td className="border border-slate-300 p-2 text-right font-mono font-semibold tabular-nums">{r.periodDr ? formatNum(r.periodDr) : '—'}</td>
+                                <td className="border border-slate-300 p-2 text-right font-mono font-semibold tabular-nums">{r.periodCr ? formatNum(r.periodCr) : '—'}</td>
+                                <td className="border border-slate-300 p-2 text-right font-mono font-black tabular-nums">{r.closingDr ? formatNum(r.closingDr) : '—'}</td>
+                                <td className="border border-slate-300 p-2 text-right font-mono font-black tabular-nums">{r.closingCr ? formatNum(r.closingCr) : '—'}</td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                         <tfoot>
                           <tr className="bg-black text-white font-mono text-xs font-black">
                             <td colSpan={3} className="border border-black p-2.5 uppercase">Consolidated Totals</td>
-                            <td className="border border-black p-2.5 text-right">{formatNum(totals.openDr)}</td>
-                            <td className="border border-black p-2.5 text-right">{formatNum(totals.openCr)}</td>
-                            <td className="border border-black p-2.5 text-right">{formatNum(totals.periodDr)}</td>
-                            <td className="border border-black p-2.5 text-right">{formatNum(totals.periodCr)}</td>
-                            <td className="border border-black p-2.5 text-right">{formatNum(totals.closingDr)}</td>
-                            <td className="border border-black p-2.5 text-right">{formatNum(totals.closingCr)}</td>
+                            <td className="border border-black p-2.5 text-right tabular-nums">{formatNum(trialBalanceFilteredTotals.openDr)}</td>
+                            <td className="border border-black p-2.5 text-right tabular-nums">{formatNum(trialBalanceFilteredTotals.openCr)}</td>
+                            <td className="border border-black p-2.5 text-right tabular-nums">{formatNum(trialBalanceFilteredTotals.periodDr)}</td>
+                            <td className="border border-black p-2.5 text-right tabular-nums">{formatNum(trialBalanceFilteredTotals.periodCr)}</td>
+                            <td className="border border-black p-2.5 text-right tabular-nums">{formatNum(trialBalanceFilteredTotals.closingDr)}</td>
+                            <td className="border border-black p-2.5 text-right tabular-nums">{formatNum(trialBalanceFilteredTotals.closingCr)}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1396,19 +1504,36 @@ export const MultiFormatReportsHub: React.FC<{
             {/* FORMAT 4: T-ACCOUNT (HORIZONTAL TWO-SIDED DR | CR) */}
             {selectedFormat === 'format_4_t_account' && (
               <div className="space-y-5">
-                <div className="flex items-center gap-3 print:hidden">
+                <div className="flex flex-wrap items-center gap-3 print:hidden">
                   <label className="text-xs font-bold">Filter T-Account Head:</label>
+                  <input
+                    type="text"
+                    value={tAccountSearch}
+                    onChange={(e) => setTAccountSearch(e.target.value)}
+                    placeholder="Search account head by name or code..."
+                    className="px-3 py-1.5 border border-black rounded text-xs font-medium w-64 bg-white focus:outline-none focus:ring-1 focus:ring-black"
+                  />
                   <select
                     value={selectedTAccountId}
                     onChange={(e) => setSelectedTAccountId(e.target.value)}
                     className="px-3 py-1.5 border border-black rounded text-xs font-bold"
                   >
                     <option value="ALL">All Active Ledger Accounts ({activeAccountRows.length})</option>
-                    {accountHeads.map((h) => (
-                      <option key={h.id} value={h.id}>
-                        [{h.code}] {h.name}
-                      </option>
-                    ))}
+                    {accountHeads
+                      .filter((h) => {
+                        const q = tAccountSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          h.name.toLowerCase().includes(q) ||
+                          h.code.toLowerCase().includes(q) ||
+                          (h.category || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map((h) => (
+                        <option key={h.id} value={h.id}>
+                          [{h.code}] {h.name}
+                        </option>
+                      ))}
                   </select>
                 </div>
 

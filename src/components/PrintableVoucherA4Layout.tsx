@@ -328,17 +328,17 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
       <div
         data-voucher-campus-name={campusInfo.campusDisplayLabel}
         data-print-timestamp={printTimestamp}
-        className={`official-voucher-document a4-voucher-sheet bg-white text-black max-w-5xl w-full mx-auto ${PADDING_CLASS_MAP[paddingPreset]} ${TYPOGRAPHY_CLASS_MAP[typographyScale]} ${className}`}
+        className={`official-voucher-document a4-voucher-sheet bg-white text-black max-w-[210mm] w-full mx-auto box-border break-inside-avoid ${PADDING_CLASS_MAP[paddingPreset]} ${TYPOGRAPHY_CLASS_MAP[typographyScale]} ${className}`}
       >
         <table className="voucher-print-table-wrapper w-full border-collapse">
           <thead className="voucher-print-thead">
             <tr>
               <td>
                 <header
-                  className="voucher-print-header flex items-center justify-between gap-3 border-b-2 border-black pb-2 mb-3 text-[10px] font-sans text-black"
+                  className="voucher-print-header flex flex-wrap items-center justify-between gap-2 border-b-2 border-black pb-1.5 mb-2 text-[9.5px] font-sans text-black"
                   aria-label="Voucher Print Header"
                 >
-                  <div className="flex flex-col">
+                  <div className="flex flex-col min-w-0">
                     <span className="font-black uppercase tracking-wider text-black">
                       {campusInfo.schoolName}
                     </span>
@@ -346,7 +346,7 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
                       School Campus: {campusInfo.campusDisplayLabel}
                     </span>
                   </div>
-                  <div className="text-right font-mono">
+                  <div className="text-right font-mono shrink-0">
                     <div className="font-bold uppercase">
                       {meta.shortCode} • Voucher #{voucher.voucherNo}
                     </div>
@@ -360,68 +360,68 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <tr>
               <td>
         {/* Top Institutional Header Row */}
-        <div className="flex items-start justify-between gap-4 pb-2.5">
-          <div className="flex items-center gap-4">
+        <div className="flex items-start justify-between gap-3 pb-2">
+          <div className="flex items-center gap-3 min-w-0">
             <SchoolLogo
               campusId={voucher.campusId || campus?.id}
               size="lg"
-              className="w-16 h-16 shrink-0"
+              className="w-14 h-14 shrink-0"
             />
-            <div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-black font-sans">
+            <div className="min-w-0">
+              <div className="text-[9.5px] font-bold uppercase tracking-wider text-black font-sans">
                 {orgSettings?.schoolName || 'A+ School System'} •{' '}
                 {meta.voucherCategoryLabel}
               </div>
               <h1 className="a4-voucher-title font-serif font-bold text-black tracking-tight leading-tight mt-0.5">
                 {meta.fullTitle}
               </h1>
-              <div className="text-xs font-bold text-black mt-1 font-sans">
+              <div className="text-[11px] font-bold text-black mt-0.5 font-sans">
                 {dateRangeDisplay}
               </div>
             </div>
           </div>
 
-          <div className="flex items-start gap-2.5 shrink-0">
-            <div className="border-2 border-black text-center shrink-0 min-w-[175px] bg-white">
-              <div className="text-[11px] font-bold text-black uppercase border-b-2 border-black py-1 px-3 tracking-wide">
+          <div className="flex items-start gap-2 shrink-0">
+            <div className="border-2 border-black text-center shrink-0 min-w-[155px] bg-white">
+              <div className="text-[10px] font-bold text-black uppercase border-b-2 border-black py-0.5 px-2.5 tracking-wide">
                 Campus Name
               </div>
-              <div className="text-sm font-black text-black uppercase py-1.5 px-3 tracking-wider">
+              <div className="text-xs font-black text-black uppercase py-1 px-2.5 tracking-wider">
                 {campusDisplayName || 'CVT CAMPUS'}
               </div>
-              <div className="text-[10px] font-mono font-bold text-black border-t border-black py-0.5 px-2">
+              <div className="text-[9.5px] font-mono font-bold text-black border-t border-black py-0.5 px-2">
                 Voucher Type: {meta.shortCode}
               </div>
             </div>
           </div>
         </div>
 
-        <hr className="border-t-2 border-black my-3" />
+        <hr className="border-t-2 border-black my-2" />
 
         {/* Payee / Payer, Rupees, Instrument & Narration Lines */}
-        <div className="space-y-2.5 my-3.5 text-black a4-voucher-body-text">
+        <div className="space-y-2 my-2.5 text-black a4-voucher-body-text">
           <div className="flex items-baseline gap-2">
             <span className="font-bold shrink-0 w-24">{meta.partyLabel}:</span>
-            <div className="flex-1 border-b border-black pb-0.5 px-2 font-semibold min-h-[20px]">
+            <div className="flex-1 min-w-0 border-b border-black pb-0.5 px-1.5 font-semibold min-h-[18px] break-words">
               {resolvedPartyName}
             </div>
-            <span className="font-bold shrink-0 ml-3">Rupees (PKR):</span>
-            <div className="w-56 border-b border-black pb-0.5 px-2 font-bold font-mono tabular-nums text-right min-h-[20px]">
+            <span className="font-bold shrink-0 ml-2">Rupees (PKR):</span>
+            <div className="w-36 shrink-0 border-b border-black pb-0.5 px-1.5 font-bold font-mono tabular-nums text-right min-h-[18px]">
               {formatPKR(voucher.totalDebit)}
             </div>
           </div>
 
           <div className="flex items-baseline gap-2">
             <span className="font-bold shrink-0 w-24">On Account of:</span>
-            <div className="flex-1 border-b border-black pb-0.5 px-2 font-medium min-h-[20px]">
+            <div className="flex-1 min-w-0 border-b border-black pb-0.5 px-1.5 font-medium min-h-[18px] break-words">
               {voucher.narration || ''}
             </div>
             {resolvedInstrumentNo && (
               <>
-                <span className="font-bold shrink-0 ml-3">
+                <span className="font-bold shrink-0 ml-2">
                   {vType === 'BPV' || vType === 'BRV' ? 'Cheque / Ref:' : 'Ref No:'}
                 </span>
-                <div className="w-40 border-b border-black pb-0.5 px-2 font-mono font-bold min-h-[20px]">
+                <div className="w-32 shrink-0 border-b border-black pb-0.5 px-1.5 font-mono font-bold min-h-[18px] text-right">
                   {resolvedInstrumentNo}
                 </div>
               </>
@@ -429,27 +429,27 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
           </div>
         </div>
 
-        {/* Double-Entry Ledger Table with Widened Readable Columns */}
-        <div className="my-4 overflow-x-auto">
-          <table className="w-full border-collapse border-2 border-black a4-voucher-table">
+        {/* Double-Entry Ledger Table Fitted Strictly to Single-Page ISO A4 Width */}
+        <div className="my-2.5 w-full">
+          <table className="w-full table-fixed border-collapse border-2 border-black a4-voucher-table">
             <thead>
               <tr className="border-b-2 border-black font-bold bg-white">
                 <td
                   colSpan={3}
-                  className="border-r-2 border-black px-3 py-2 text-left font-bold text-black"
+                  className="border-r-2 border-black px-2 py-1.5 text-left font-bold text-black break-words"
                 >
                   Voucher No:{' '}
                   <span className="font-mono font-bold">{voucher.voucherNo}</span>
                 </td>
                 <td
                   colSpan={2}
-                  className="border-r-2 border-black px-3 py-2 text-left font-bold text-black"
+                  className="border-r-2 border-black px-2 py-1.5 text-left font-bold text-black"
                 >
                   Tr Date : <span className="font-bold">{formattedDate}</span>
                 </td>
                 <td
                   colSpan={2}
-                  className="px-3 py-2 text-left font-bold text-black"
+                  className="px-2 py-1.5 text-left font-bold text-black break-words"
                 >
                   Period:{' '}
                   <span className="font-bold">
@@ -458,25 +458,27 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
                 </td>
               </tr>
               <tr className="border-b-2 border-black font-bold text-center bg-white text-black">
-                <th className="border-r-2 border-black py-2 px-2 w-12 text-center">
+                <th className="border-r-2 border-black py-1.5 px-0.5 w-[4%] text-center whitespace-nowrap">
                   S#
                 </th>
-                <th className="border-r-2 border-black py-2 px-2.5 w-28 text-center font-mono">
+                <th className="border-r-2 border-black py-1.5 px-1 w-[9%] text-center font-mono whitespace-nowrap">
                   Acc#
                 </th>
-                <th className="border-r-2 border-black py-2 px-3 min-w-[230px] text-left">
+                <th className="border-r-2 border-black py-1.5 px-1.5 w-[17%] text-left whitespace-nowrap">
                   Account Name
                 </th>
-                <th className="border-r-2 border-black py-2 px-2.5 w-32 text-center">
-                  Ref/Check No
+                <th className="border-r-2 border-black py-1.5 px-1 w-[8%] text-center whitespace-nowrap">
+                  Ref/Check
                 </th>
-                <th className="border-r-2 border-black py-2 px-3 min-w-[220px] text-left">
+                <th className="border-r-2 border-black py-1.5 px-2 w-[40%] text-left whitespace-nowrap">
                   Description / Particulars
                 </th>
-                <th className="border-r-2 border-black py-2 px-3 w-32 text-right font-mono">
+                <th className="border-r-2 border-black py-1.5 px-1.5 w-[11%] text-right font-mono whitespace-nowrap">
                   Debit
                 </th>
-                <th className="py-2 px-3 w-32 text-right font-mono">Credit</th>
+                <th className="py-1.5 px-1.5 w-[11%] text-right font-mono whitespace-nowrap">
+                  Credit
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -485,25 +487,28 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
                   key={entry.id || idx}
                   className="border-b border-black text-black bg-white"
                 >
-                  <td className="border-r-2 border-black py-2 px-2 text-center font-medium tabular-nums">
+                  <td className="border-r-2 border-black py-1.5 px-0.5 text-center font-medium tabular-nums whitespace-nowrap">
                     {idx + 1}
                   </td>
-                  <td className="border-r-2 border-black py-2 px-2.5 text-center font-mono font-bold text-black tabular-nums whitespace-nowrap">
+                  <td className="border-r-2 border-black py-1.5 px-1 text-center font-mono font-bold text-black tabular-nums whitespace-nowrap">
                     {entry.accountCode}
                   </td>
-                  <td className="border-r-2 border-black py-2 px-3 font-semibold text-left">
+                  <td className="border-r-2 border-black py-1.5 px-1.5 font-semibold text-left truncate">
                     {entry.accountName}
                   </td>
-                  <td className="border-r-2 border-black py-2 px-2.5 text-center font-mono text-[11px] whitespace-nowrap">
+                  <td className="border-r-2 border-black py-1.5 px-1 text-center font-mono text-[10px] truncate">
                     {entry.refCheckNo || voucher.chequeNo || ''}
                   </td>
-                  <td className="border-r-2 border-black py-2 px-3 text-left">
+                  <td
+                    className="border-r-2 border-black py-1.5 px-2 text-left whitespace-nowrap truncate"
+                    title={entry.description || voucher.narration || ''}
+                  >
                     {entry.description || voucher.narration || ''}
                   </td>
-                  <td className="border-r-2 border-black py-2 px-3 text-right font-mono font-medium tabular-nums whitespace-nowrap">
+                  <td className="border-r-2 border-black py-1.5 px-1.5 text-right font-mono font-medium tabular-nums whitespace-nowrap">
                     {entry.debit > 0 ? formatPKR(entry.debit) : '0.00'}
                   </td>
-                  <td className="py-2 px-3 text-right font-mono font-medium tabular-nums whitespace-nowrap">
+                  <td className="py-1.5 px-1.5 text-right font-mono font-medium tabular-nums whitespace-nowrap">
                     {entry.credit > 0 ? formatPKR(entry.credit) : '0.00'}
                   </td>
                 </tr>
@@ -513,14 +518,14 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
               <tr className="border-t-2 border-black font-bold bg-white text-black">
                 <td
                   colSpan={5}
-                  className="border-r-2 border-black px-3 py-2 text-left font-bold"
+                  className="border-r-2 border-black px-2 py-1.5 text-left font-bold break-words"
                 >
                   {numberToWordsPKR(voucher.totalDebit)}
                 </td>
-                <td className="border-r-2 border-black px-3 py-2 text-right font-mono font-bold tabular-nums whitespace-nowrap">
+                <td className="border-r-2 border-black px-2 py-1.5 text-right font-mono font-bold tabular-nums whitespace-nowrap">
                   {formatPKR(voucher.totalDebit)}
                 </td>
-                <td className="px-3 py-2 text-right font-mono font-bold tabular-nums whitespace-nowrap">
+                <td className="px-2 py-1.5 text-right font-mono font-bold tabular-nums whitespace-nowrap">
                   {formatPKR(voucher.totalCredit)}
                 </td>
               </tr>
@@ -544,14 +549,14 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <tr>
               <td>
                 <footer
-                  className="voucher-print-footer mt-3 pt-2 border-t-2 border-black flex flex-wrap items-center justify-between gap-2 text-[9.5px] font-mono text-black"
+                  className="voucher-print-footer mt-2.5 pt-1.5 border-t-2 border-black flex flex-wrap items-center justify-between gap-2 text-[9px] font-mono text-black"
                   aria-label="Voucher Print Footer"
                 >
-                  <div>
+                  <div className="min-w-0">
                     <span className="font-bold">Campus: {campusInfo.campusDisplayLabel}</span>
                     <span> • Voucher #{voucher.voucherNo} ({meta.shortCode})</span>
                   </div>
-                  <div>
+                  <div className="shrink-0">
                     <span>Print Request Timestamp: {printTimestamp}</span>
                   </div>
                 </footer>
