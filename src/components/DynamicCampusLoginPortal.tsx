@@ -50,6 +50,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   // Controlled Platform Owner Setup Modal
   const [isOwnerSetupOpen, setIsOwnerSetupOpen] = useState(false);
   const [isOwnerAlreadyRegistered, setIsOwnerAlreadyRegistered] = useState(false);
+  const [ownerEmailMasked, setOwnerEmailMasked] = useState<string | null>(null);
   const [ownerEmail, setOwnerEmail] = useState('siteowner@platform.org');
   const [ownerName, setOwnerName] = useState('Platform Super Admin (Site Owner)');
   const [ownerPassword, setOwnerPassword] = useState('');
@@ -88,6 +89,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
     checkPlatformOwnerStatus()
       .then((status) => {
         setIsOwnerAlreadyRegistered(Boolean(status?.initialized));
+        setOwnerEmailMasked(status?.ownerEmailMasked || null);
       })
       .catch((err) => {
         console.warn('Could not query platform owner status:', err);
@@ -247,7 +249,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           campusName: userCamp?.name || (isSuper ? 'Platform Central Command' : 'Main Campus'),
           campusCode: userCamp?.code || 'HQ',
           clientId: profile.clientId || (isSuper ? undefined : 'client-aplus'),
-          clientName: matchingClient?.name || (isSuper ? 'Platform Site Owner' : 'Aplus School System'),
+          clientName: matchingClient?.name || (isSuper ? 'Accord Ledger Site Owner' : 'Accord Ledger'),
           userName: profile.name || profile.username,
           userRole: profile.role || profile.permissionLevel,
           userEmail: profile.email || cleanInput,
@@ -397,7 +399,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-indigo-500 selection:text-white no-scrollbar">
       {/* Top Banner */}
       <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -414,10 +416,10 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
           )}
           <div className="min-w-0">
             <h1 className="text-xs sm:text-sm font-black text-white tracking-wide uppercase truncate">
-              {matchingClient?.name || orgSettings?.schoolName || 'Aplus School Accounting Network'}
+              Accord Ledger
             </h1>
             <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
-              Multi-Campus Accounting & Unified Double-Entry Imprest Ledger
+              {matchingClient?.name || orgSettings?.schoolName || 'Multi-Campus Accounting & Unified Double-Entry Imprest Ledger'}
             </p>
           </div>
         </div>
@@ -434,23 +436,19 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
             className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap focus:outline-hidden focus:ring-2 ${
               !isOwnerAlreadyRegistered
                 ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md ring-amber-400'
-                : 'bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white focus:ring-indigo-500'
+                : 'bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 hover:text-white focus:ring-indigo-500'
             }`}
-            title={!isOwnerAlreadyRegistered ? 'Create Platform Site Owner account from scratch' : 'Manage Platform Site Owner account'}
+            title={!isOwnerAlreadyRegistered ? 'Set up Accord Ledger Platform Owner account' : 'Manage Accord Ledger Platform Owner Setup'}
           >
             <KeyRound className={`w-4 h-4 shrink-0 ${!isOwnerAlreadyRegistered ? 'text-slate-950' : 'text-amber-400'}`} />
-            <span className="hidden sm:inline">
-              {!isOwnerAlreadyRegistered ? 'Initialize Platform Owner' : 'Platform Owner Setup'}
-            </span>
-            <span className="sm:hidden">
-              {!isOwnerAlreadyRegistered ? 'Setup Owner' : 'Owner Setup'}
-            </span>
+            <span className="hidden sm:inline">Platform Owner Setup</span>
+            <span className="sm:hidden">Owner Setup</span>
           </button>
         </div>
       </header>
 
       {/* Main Login Card */}
-      <main className="flex-1 flex items-center justify-center px-4 py-8">
+      <main className="flex-1 flex items-center justify-center px-4 py-8 no-scrollbar">
         <div className="w-full max-w-md space-y-6">
           <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-indigo-500/10 via-purple-500/10 to-transparent blur-2xl pointer-events-none" />
@@ -464,10 +462,10 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 </span>
               </div>
               <h2 className="text-xl font-bold text-white tracking-tight">
-                Institutional Terminal Sign In
+                Accord Ledger Terminal Sign In
               </h2>
               <p className="text-xs text-slate-400">
-                Sign in with your verified institutional account to access multi-campus vouchers, general ledgers, and financial reports.
+                Sign in with your verified Accord Ledger institutional account to access multi-campus vouchers, general ledgers, and financial reports.
               </p>
             </div>
 
@@ -628,15 +626,45 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               </button>
             </form>
 
-            {/* Tenant Security Notice */}
-            <div className="mt-6 pt-4 border-t border-slate-800/80 text-center space-y-1 text-slate-500 text-xs">
-              <div className="flex items-center justify-center gap-1.5 text-slate-300 text-[11px] font-bold">
-                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Compulsory Registered Login — All Levels (1 to 5)</span>
+            {/* Tenant Security Notice + Direct Platform Owner Setup Option */}
+            <div className="mt-6 pt-4 border-t border-slate-800/80 space-y-3 text-slate-500 text-xs">
+              <div className="text-center space-y-1">
+                <div className="flex items-center justify-center gap-1.5 text-slate-300 text-[11px] font-bold">
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Compulsory Registered Login — All Levels (1 to 5)</span>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Registered credentials are mandatory across all access levels. Accounts are provisioned centrally by authorized administrators.
+                </p>
               </div>
-              <p className="text-[10px] text-slate-500">
-                Registered credentials are mandatory across all access levels. Accounts are provisioned centrally by authorized administrators.
-              </p>
+
+              <div className="p-3 rounded-xl bg-slate-950/90 border border-slate-800 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Platform Owner Setup</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                    {isOwnerAlreadyRegistered
+                      ? `Registered Owner${ownerEmailMasked ? `: ${ownerEmailMasked}` : ' active'}`
+                      : 'Configure Level 1 Accord Ledger Platform Owner'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOwnerSetupOpen(true);
+                    setOwnerSetupStatus(null);
+                  }}
+                  className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                    !isOwnerAlreadyRegistered
+                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                  }`}
+                >
+                  {!isOwnerAlreadyRegistered ? 'Setup Now' : 'Manage Setup'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -660,7 +688,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               <div className="flex items-center gap-2">
                 <KeyRound className="w-5 h-5 text-amber-400" />
                 <h3 id="owner-setup-heading" className="text-base font-bold text-white">
-                  Platform Owner Setup
+                  Accord Ledger — Platform Owner Setup
                 </h3>
               </div>
               {/* Task 6: 44x44 Close button with accessible name */}
@@ -682,8 +710,8 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
             <p id="owner-setup-description" className="text-xs text-slate-400">
               {isOwnerAlreadyRegistered
-                ? 'A Platform Owner is already registered. To update credentials, sign in as the Platform Owner or provide the authorized bootstrap installation secret.'
-                : 'This privileged setup procedure bootstraps the Level 1 Platform Super Admin account in Firebase Authentication. Backend transactional verification ensures initialization can only occur once.'}
+                ? `An Accord Ledger Platform Owner is registered${ownerEmailMasked ? ` (${ownerEmailMasked})` : ''}. Sign in as the Platform Owner or provide the authorized bootstrap installation secret to update credentials.`
+                : 'This privileged setup procedure bootstraps the Level 1 Accord Ledger Platform Super Admin account in Firebase Authentication.'}
             </p>
 
             {ownerSetupStatus && (
@@ -920,7 +948,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
             <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2 text-xs font-mono">
               <div>
                 <span className="text-slate-500">Institution:</span>{' '}
-                <span className="text-white font-bold">{orgSettings?.schoolName || 'A+ School System Central Command'}</span>
+                <span className="text-white font-bold">{orgSettings?.schoolName || 'Accord Ledger Central Command'}</span>
               </div>
               <div>
                 <span className="text-slate-500">System Support Email:</span>{' '}
@@ -1031,7 +1059,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950 py-3 text-center text-[11px] text-slate-500">
-        Enterprise Multi-Campus Financial Accounting & Imprest Cashbook Platform • {new Date().getFullYear()}
+        Accord Ledger • Multi-Campus Financial Accounting &amp; Imprest Cashbook Platform • {new Date().getFullYear()}
       </footer>
     </div>
   );

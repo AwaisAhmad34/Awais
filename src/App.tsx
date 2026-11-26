@@ -399,13 +399,13 @@ function InnerApp() {
   // Dedicated Platform-Level Control Panel (Level 1)
   if (isPlatformSiteAdmin && adminViewMode === 'platform_control_panel') {
     return (
-      <div className="h-screen overflow-hidden flex flex-col bg-slate-950 text-slate-100 p-2 sm:p-3">
+      <div className="h-screen overflow-hidden flex flex-col bg-slate-950 text-slate-100 p-2 sm:p-3 no-scrollbar">
         {/* Platform Creator Workspace Bar */}
         <div className="w-full max-w-7xl mx-auto mb-2 shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-sm">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs font-mono font-bold text-slate-300">
-              Platform Administration Workspace • Signed in as <strong className="text-white">{currentUser.name || currentUser.username}</strong> (Site Owner)
+              Accord Ledger Workspace • Signed in as <strong className="text-white">{currentUser.name || currentUser.username}</strong> (Site Owner)
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -470,11 +470,11 @@ function InnerApp() {
 
   // Campus Operational View (Level 2 when inspecting branch, or Level 3/4 sub-campus users)
   return (
-    <div>
+    <div className="no-scrollbar">
       {isPlatformSiteAdmin && (
         <div className="bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 border-b border-indigo-800/80 px-4 py-1.5 text-xs flex items-center justify-between text-indigo-200">
           <div className="flex items-center gap-2 font-mono">
-            <span className="font-bold text-white">Platform Site Admin:</span>
+            <span className="font-bold text-white">Accord Ledger Admin:</span>
             <span>Auditing Campus Operations</span>
           </div>
           <button

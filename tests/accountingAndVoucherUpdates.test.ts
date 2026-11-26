@@ -307,7 +307,7 @@ test('Update 10: toggleSidebarMinimized does not dispatch events inside a React 
   assert.ok(block.includes('setIsSidebarMinimized(next);'));
 });
 
-test('Update 11: PlatformSiteAdminHub matches screen height and enables vertical scrollbar on main pane', () => {
+test('Update 11: PlatformSiteAdminHub matches screen height and enables scrollable main pane with no-scrollbar', () => {
   const app = readSource('src/App.tsx');
   const hub = readSource('src/components/PlatformSiteAdminHub.tsx');
 
@@ -315,6 +315,33 @@ test('Update 11: PlatformSiteAdminHub matches screen height and enables vertical
   assert.equal(hub.includes('min-h-[820px]'), false);
   assert.equal(hub.includes('max-h-[700px]'), false);
   assert.ok(hub.includes('flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden'));
-  assert.ok(hub.includes('<main className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-scroll bg-slate-900/60">'));
+  assert.ok(hub.includes('<main className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-auto no-scrollbar bg-slate-900/60">'));
+});
+
+test('Update 12: .no-scrollbar class, Accord Ledger platform branding, and Platform Owner Setup option in login page', () => {
+  const css = readSource('src/index.css');
+  const html = readSource('index.html');
+  const app = readSource('src/App.tsx');
+  const login = readSource('src/components/DynamicCampusLoginPortal.tsx');
+  const adminSvc = readSource('src/services/platformSiteAdminService.ts');
+  const engine = readSource('src/core/aplusEngine.js');
+
+  // 1. .no-scrollbar defined in index.css and applied across main containers
+  assert.ok(css.includes('.no-scrollbar'));
+  assert.ok(css.includes('scrollbar-width: none;'));
+  assert.ok(css.includes('.no-scrollbar::-webkit-scrollbar'));
+  assert.ok(html.includes('no-scrollbar'));
+  assert.ok(app.includes('no-scrollbar'));
+  assert.ok(engine.includes('no-scrollbar'));
+
+  // 2. Accord Ledger platform name across HTML, Platform settings, and Login Page
+  assert.ok(html.includes('Accord Ledger'));
+  assert.ok(adminSvc.includes("platformName: 'Accord Ledger'"));
+  assert.ok(login.includes('Accord Ledger'));
+
+  // 3. Platform Owner Setup option clearly available in header & login card
+  assert.ok(login.includes('Platform Owner Setup'));
+  assert.ok(login.includes('Accord Ledger — Platform Owner Setup'));
+  assert.ok(login.includes('setIsOwnerSetupOpen(true)'));
 });
 

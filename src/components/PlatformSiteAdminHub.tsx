@@ -1983,7 +1983,7 @@ export const PlatformSiteAdminHub: React.FC<{
               )}
             </div>
             <h2 className="text-lg font-black text-white tracking-tight mt-0.5 flex items-center gap-2">
-              <span>Platform Site Admin & Multi-Campus Management Hub</span>
+              <span>{settings.platformName || 'Accord Ledger'} — Multi-Campus Management Hub</span>
               <span className="text-xs font-mono text-slate-400 font-normal">
                 ({settings.systemVersion})
               </span>
@@ -2196,7 +2196,7 @@ export const PlatformSiteAdminHub: React.FC<{
             </div>
           )}
 
-          <nav className="flex-1 min-h-0 p-2 space-y-2 overflow-y-auto">
+          <nav className="flex-1 min-h-0 p-2 space-y-2 overflow-y-auto no-scrollbar">
             {['Core Platform', 'Identity & Access', 'Financial Suite', 'Data & Recovery', 'Security & Operations'].map((cat) => {
               const catItems = NAV_ITEMS.filter((item) => {
                 if (item.category !== cat) return false;
@@ -2307,7 +2307,7 @@ export const PlatformSiteAdminHub: React.FC<{
         </aside>
 
         {/* Right Workspace Module Content */}
-        <main className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-scroll bg-slate-900/60">
+        <main className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-auto no-scrollbar bg-slate-900/60">
           {/* ================================================================ */}
           {/* 01: GLOBAL DASHBOARD                                             */}
           {/* ================================================================ */}

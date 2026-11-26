@@ -204,7 +204,7 @@ const SETTINGS_STORAGE_KEY = 'aplus_platform_system_settings_v1';
 const PLATFORM_AUDIT_STORAGE_KEY = 'aplus_platform_security_audit_logs_v1';
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSystemSettings = {
-  platformName: 'Multi-Campus School Management Platform',
+  platformName: 'Accord Ledger',
   platformCreatorName: 'Platform Site Administrator (Original Creator)',
   platformCreatorEmail: 'creator@siteadmin.internal',
   supportEmail: 'support@aplus.edu.pk',
@@ -347,7 +347,12 @@ export function getStoredPlatformSettings(): PlatformSystemSettings {
       saveStoredPlatformSettings(DEFAULT_PLATFORM_SETTINGS);
       return DEFAULT_PLATFORM_SETTINGS;
     }
-    return { ...DEFAULT_PLATFORM_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    const merged = { ...DEFAULT_PLATFORM_SETTINGS, ...parsed };
+    if (merged.platformName === 'Multi-Campus School Management Platform') {
+      merged.platformName = 'Accord Ledger';
+    }
+    return merged;
   } catch {
     return DEFAULT_PLATFORM_SETTINGS;
   }
