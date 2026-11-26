@@ -284,7 +284,7 @@ platformRouter.post('/reset-scratch', async (req, res) => {
 
 // Provision or update a Firebase Auth user account for global synchronization
 platformRouter.post('/provision-user', async (req, res) => {
-  const { email, password, displayName } = req.body || {};
+  const { email, previousEmail, uid: requestedUid, password, displayName } = req.body || {};
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     return res.status(400).json({ error: 'INVALID_EMAIL', message: 'Valid email required.' });
   }
@@ -305,42 +305,65 @@ platformRouter.post('/provision-user', async (req, res) => {
 
   try {
     const cleanEmail = email.trim().toLowerCase();
+    const cleanPrevEmail =
+      typeof previousEmail === 'string' && previousEmail.includes('@')
+        ? previousEmail.trim().toLowerCase()
+        : '';
     const auth = getAuth(adminApp());
-    let uid = '';
+    let resolvedUid = '';
 
-    try {
-      const existing = await auth.getUserByEmail(cleanEmail);
-      uid = existing.uid;
+    let existingUser: any = null;
+    if (requestedUid && typeof requestedUid === 'string') {
+      try {
+        existingUser = await auth.getUser(requestedUid.trim());
+      } catch {}
+    }
+    if (!existingUser && cleanPrevEmail) {
+      try {
+        existingUser = await auth.getUserByEmail(cleanPrevEmail);
+      } catch {}
+    }
+    if (!existingUser) {
+      try {
+        existingUser = await auth.getUserByEmail(cleanEmail);
+      } catch (lookupErr: any) {
+        if (lookupErr?.code !== 'auth/user-not-found') {
+          throw lookupErr;
+        }
+      }
+    }
+
+    if (existingUser) {
+      resolvedUid = existingUser.uid;
       const updates: Record<string, any> = {};
+      if (cleanEmail && existingUser.email?.toLowerCase() !== cleanEmail) {
+        updates.email = cleanEmail;
+      }
       if (displayName) updates.displayName = String(displayName);
       if (password && typeof password === 'string' && password.length >= 6) {
         updates.password = password;
       }
       if (Object.keys(updates).length > 0) {
-        await auth.updateUser(uid, updates);
+        await auth.updateUser(resolvedUid, updates);
       }
-    } catch (lookupErr: any) {
-      if (lookupErr.code === 'auth/user-not-found') {
-        if (!password || typeof password !== 'string' || password.length < 6) {
-          return res.status(400).json({
-            error: 'WEAK_PASSWORD',
-            message: 'Password of at least 6 characters required to create a new Firebase Auth account.',
-          });
-        }
-        const created = await auth.createUser({
-          email: cleanEmail,
-          password,
-          displayName: displayName ? String(displayName) : undefined,
+    } else {
+      if (!password || typeof password !== 'string' || password.length < 6) {
+        return res.status(400).json({
+          error: 'WEAK_PASSWORD',
+          message: 'Password of at least 6 characters required to create a new Firebase Auth account.',
         });
-        uid = created.uid;
-      } else {
-        throw lookupErr;
       }
+      const created = await auth.createUser({
+        email: cleanEmail,
+        password,
+        displayName: displayName ? String(displayName) : undefined,
+      });
+      resolvedUid = created.uid;
     }
 
     return res.status(200).json({
       status: 'success',
-      uid,
+      uid: resolvedUid,
       email: cleanEmail,
     });
   } catch (err: any) {
@@ -381,7 +404,7 @@ platformRouter.delete('/users/:uid', async (req, res) => {
   }
 });
 
-// Optional server-side login identifier resolver for global username -> email lookup
+// Optional server-side login identifier resolver for global username/email -> authEmail lookup
 platformRouter.post('/resolve-login', async (req, res) => {
   const { identifier } = req.body || {};
   const adminConfig = getAdminConfigStatus();
@@ -392,29 +415,38 @@ platformRouter.post('/resolve-login', async (req, res) => {
   try {
     const rawClean = identifier.trim().toLowerCase().replace(/\s+/g, '');
     const normalizedKey = rawClean.replace(/[^a-z0-9._-]/g, '_');
-    const keys = Array.from(new Set([normalizedKey, rawClean].filter(Boolean)));
+    const keys = rawClean.includes('@')
+      ? [`email_${normalizedKey}`]
+      : Array.from(new Set([normalizedKey, rawClean].filter(Boolean)));
     const db = adminDatabase();
 
     for (const key of keys) {
       const dirSnap = await db.collection('login_directory').doc(key).get();
-      if (dirSnap.exists && dirSnap.data()?.email) {
+      if (dirSnap.exists && (dirSnap.data()?.authEmail || dirSnap.data()?.email)) {
         const dirData = dirSnap.data();
         const dirStatus = String(dirData?.status || 'active').toLowerCase();
         if (dirStatus === 'suspended' || dirStatus === 'inactive') {
           return res.status(403).json({ found: false, error: 'ACCOUNT_DISABLED', message: 'Account access has been suspended.' });
         }
-        return res.json({ found: true, email: String(dirData?.email).toLowerCase() });
+        const resolvedEmail = String(dirData?.email || dirData?.authEmail).toLowerCase();
+        const resolvedAuthEmail = String(dirData?.authEmail || dirData?.email).toLowerCase();
+        return res.json({ found: true, email: resolvedEmail, authEmail: resolvedAuthEmail });
       }
     }
 
-    const qSnap = await db.collection('global_users').where('username', '==', rawClean).limit(1).get();
-    if (!qSnap.empty && qSnap.docs[0].data()?.email) {
+    const qField = rawClean.includes('@') ? 'email' : 'username';
+    const qSnap = await db.collection('global_users').where(qField, '==', rawClean).limit(1).get();
+    if (!qSnap.empty && (qSnap.docs[0].data()?.authEmail || qSnap.docs[0].data()?.email)) {
       const guData = qSnap.docs[0].data();
       const guStatus = String(guData?.status || 'active').toLowerCase();
       if (guStatus === 'suspended' || guStatus === 'inactive') {
         return res.status(403).json({ found: false, error: 'ACCOUNT_DISABLED', message: 'Account access has been suspended.' });
       }
-      return res.json({ found: true, email: String(guData.email).toLowerCase() });
+      return res.json({
+        found: true,
+        email: String(guData.email || guData.authEmail).toLowerCase(),
+        authEmail: String(guData.authEmail || guData.email).toLowerCase(),
+      });
     }
     return res.json({ found: false });
   } catch {

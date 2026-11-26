@@ -1506,15 +1506,16 @@ export const PlatformSiteAdminHub: React.FC<{
       : (userFormClientId || (assignedCampus as any)?.clientId || clients[0]?.id || null);
     const resolvedEmail = (userFormEmail.trim() || `${cleanUsername}@institution.edu.pk`).toLowerCase();
 
+    if (deduplicatedUsers.some((u) => u.id !== selectedUserToEdit?.id && u.username?.toLowerCase() === cleanUsername)) {
+      triggerToast('error', `Username '${cleanUsername}' already exists.`);
+      return;
+    }
+    if (deduplicatedUsers.some((u) => u.id !== selectedUserToEdit?.id && u.email?.toLowerCase() === resolvedEmail)) {
+      triggerToast('error', `Email '${resolvedEmail}' is already assigned to another user.`);
+      return;
+    }
+
     if (!selectedUserToEdit) {
-      if (deduplicatedUsers.some((u) => u.username?.toLowerCase() === cleanUsername)) {
-        triggerToast('error', `Username '${cleanUsername}' already exists.`);
-        return;
-      }
-      if (deduplicatedUsers.some((u) => u.email?.toLowerCase() === resolvedEmail)) {
-        triggerToast('error', `Email '${resolvedEmail}' is already assigned to another user.`);
-        return;
-      }
       if (!userFormPassword.trim() || userFormPassword.trim().length < 6) {
         triggerToast('error', 'A secure password of at least 6 characters is required for global Firebase authentication.');
         return;
@@ -1568,8 +1569,11 @@ export const PlatformSiteAdminHub: React.FC<{
         id: selectedUserToEdit?.id,
         uid: selectedUserToEdit?.uid || null,
         username: cleanUsername,
+        previousUsername: selectedUserToEdit?.username,
         name: userFormName.trim(),
         email: resolvedEmail,
+        previousEmail: selectedUserToEdit?.email,
+        authEmail: selectedUserToEdit?.authEmail,
         password: userFormPassword.trim() || undefined,
         role: resolvedRole,
         permissionLevel: normalizedLevel,
@@ -1694,9 +1698,9 @@ export const PlatformSiteAdminHub: React.FC<{
 
         if (userFormPassword.trim() && !provisioned.authProvisioned) {
           triggerToast(
-            'warning',
+            'error',
             provisioned.warning ||
-              `Updated '@${cleanUsername}' profile in Firestore DB, but Firebase Auth password could not be changed from client session.`
+              `Updated '@${cleanUsername}' profile in Firestore DB, but Firebase Auth password could not be changed.`
           );
           return;
         }
@@ -2149,9 +2153,10 @@ export const PlatformSiteAdminHub: React.FC<{
           <button
             type="button"
             onClick={() => setFeedbackNotice(null)}
-            className="text-slate-400 hover:text-white"
+            aria-label="Dismiss notice"
+            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
-            &times;
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -3905,9 +3910,10 @@ export const PlatformSiteAdminHub: React.FC<{
               <button
                 type="button"
                 onClick={() => setIsClientModalOpen(false)}
-                className="text-slate-400 hover:text-white"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -4170,9 +4176,10 @@ export const PlatformSiteAdminHub: React.FC<{
               <button
                 type="button"
                 onClick={() => setIsCampusModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -4424,9 +4431,10 @@ export const PlatformSiteAdminHub: React.FC<{
               <button
                 type="button"
                 onClick={() => setIsUserModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -4581,8 +4589,7 @@ export const PlatformSiteAdminHub: React.FC<{
                     value={userFormUsername}
                     onChange={(e) => setUserFormUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
                     placeholder="e.g. tmehmood"
-                    disabled={!!selectedUserToEdit}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-500 disabled:opacity-50"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-indigo-500"
                     required
                   />
                 </div>
@@ -4841,9 +4848,10 @@ export const PlatformSiteAdminHub: React.FC<{
               <button
                 type="button"
                 onClick={() => setEditingCampus(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -4996,21 +5004,31 @@ export const PlatformSiteAdminHub: React.FC<{
       {deletingClient && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-rose-900/80 rounded-3xl shadow-2xl max-w-lg w-full p-6 text-slate-100 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white">
+                    Confirm Deletion of School Client Organization
+                  </h3>
+                  <p className="text-xs text-rose-300 font-bold mt-0.5">
+                    {deletingClient.name} ({deletingClient.code})
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    This removes the client organization from the global cloud registry and archives it in the Global Recycle Bin.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-black text-sm text-white">
-                  Confirm Deletion of School Client Organization
-                </h3>
-                <p className="text-xs text-rose-300 font-bold mt-0.5">
-                  {deletingClient.name} ({deletingClient.code})
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  This removes the client organization from the global cloud registry and archives it in the Global Recycle Bin.
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingClient(null)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 text-xs">
@@ -5066,21 +5084,32 @@ export const PlatformSiteAdminHub: React.FC<{
       {deletingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-rose-900/80 rounded-3xl shadow-2xl max-w-md w-full p-6 text-slate-100 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <UserX className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <UserX className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white">
+                    Confirm Deletion of Global User Account
+                  </h3>
+                  <p className="text-xs text-rose-300 font-bold mt-0.5">
+                    {deletingUser.name || deletingUser.username} (@{deletingUser.username})
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    This revokes login access immediately across all browsers and removes this user from the global directory.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-black text-sm text-white">
-                  Confirm Deletion of Global User Account
-                </h3>
-                <p className="text-xs text-rose-300 font-bold mt-0.5">
-                  {deletingUser.name || deletingUser.username} (@{deletingUser.username})
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  This revokes login access immediately across all browsers and removes this user from the global directory.
-                </p>
-              </div>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setDeletingUser(null)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-1.5 text-[11px]">
@@ -5124,21 +5153,31 @@ export const PlatformSiteAdminHub: React.FC<{
       {deletingCampus && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-rose-900/80 rounded-3xl shadow-2xl max-w-lg w-full p-6 text-slate-100 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-white">
+                    Confirm Deletion of Campus Branch
+                  </h3>
+                  <p className="text-xs text-rose-300 font-bold mt-0.5">
+                    {deletingCampus.name} ({deletingCampus.code})
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Are you sure you want to delete this campus branch from the system?
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-black text-sm text-white">
-                  Confirm Deletion of Campus Branch
-                </h3>
-                <p className="text-xs text-rose-300 font-bold mt-0.5">
-                  {deletingCampus.name} ({deletingCampus.code})
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Are you sure you want to delete this campus branch from the system?
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingCampus(null)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             {/* Check child sub-campuses */}
@@ -5227,9 +5266,10 @@ export const PlatformSiteAdminHub: React.FC<{
               <button
                 type="button"
                 onClick={() => setManagingModulesClient(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 

@@ -19,6 +19,7 @@ import {
   Copy,
   Check,
   Zap,
+  X,
 } from 'lucide-react';
 import { useAccounting } from '../core/aplusEngine';
 import { getStoredSchoolClients } from '../services/platformSiteAdminService';
@@ -165,9 +166,10 @@ export const DeploymentReadinessHub: React.FC<{
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-colors cursor-pointer"
+              aria-label="Close modal"
+              className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
             >
-              Close
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>

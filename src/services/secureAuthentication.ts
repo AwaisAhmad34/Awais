@@ -12,6 +12,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import {
   lookupLoginDirectoryByUsername,
+  lookupLoginDirectoryByEmail,
   findGlobalUserInCloudByEmailOrUid,
   provisionGlobalUserAccount,
   normalizeUsernameKey,
@@ -140,9 +141,9 @@ export function resolveUserEmail(input: string): string {
  * Checks synced localStorage user directory (`ams_users_v5_clean`) and dynamic campus credentials
  * to resolve a freshly created user's email from their username.
  */
-export function resolveLocalUserEmailByUsername(username: string): string | null {
+export function resolveLocalUserEmailByUsername(usernameOrEmail: string): string | null {
   if (typeof window === 'undefined' || !window.localStorage) return null;
-  const clean = (username || '').trim().toLowerCase().replace(/\s+/g, '');
+  const clean = (usernameOrEmail || '').trim().toLowerCase().replace(/\s+/g, '');
   const normKey = normalizeUsernameKey(clean);
   if (!clean) return null;
 
@@ -157,11 +158,15 @@ export function resolveLocalUserEmailByUsername(username: string): string | null
         if (!u || typeof u !== 'object') continue;
         const uName = String(u.username || '').trim().toLowerCase().replace(/\s+/g, '');
         const uNorm = normalizeUsernameKey(uName);
-        if ((uName && uName === clean) || (uNorm && normKey && uNorm === normKey)) {
-          const candidate = String(u.email || '').trim().toLowerCase();
-          if (candidate && candidate.includes('@')) {
-            return candidate;
-          }
+        const uEmail = String(u.email || '').trim().toLowerCase();
+        const isMatch =
+          (clean.includes('@') && uEmail === clean) ||
+          (uName && uName === clean) ||
+          (uNorm && normKey && uNorm === normKey);
+        if (isMatch) {
+          const authCand = String(u.authEmail || '').trim().toLowerCase();
+          if (authCand && authCand.includes('@')) return authCand;
+          if (uEmail && uEmail.includes('@')) return uEmail;
         }
       }
     } catch {}
@@ -170,17 +175,25 @@ export function resolveLocalUserEmailByUsername(username: string): string | null
 }
 
 /**
- * Resolves usernames dynamically via Firestore `login_directory`, server endpoint, and local user cache.
+ * Resolves usernames or updated emails dynamically via Firestore `login_directory`, server endpoint, and local user cache.
  */
 export async function resolveUserEmailAsync(input: string): Promise<string> {
   const clean = input.trim().toLowerCase().replace(/\s+/g, '');
-  if (clean.includes('@')) return clean;
+  if (clean.includes('@')) {
+    try {
+      const emailDir = await lookupLoginDirectoryByEmail(clean);
+      if (emailDir?.authEmail || emailDir?.email) {
+        return (emailDir.authEmail || emailDir.email).toLowerCase();
+      }
+    } catch {}
+    return resolveLocalUserEmailByUsername(clean) || clean;
+  }
 
   // 1. Live Firestore login_directory lookup (works on any browser before auth)
   try {
     const dirEntry = await lookupLoginDirectoryByUsername(clean);
-    if (dirEntry?.email) {
-      return dirEntry.email.toLowerCase();
+    if (dirEntry?.authEmail || dirEntry?.email) {
+      return (dirEntry.authEmail || dirEntry.email).toLowerCase();
     }
   } catch {}
 
@@ -193,13 +206,13 @@ export async function resolveUserEmailAsync(input: string): Promise<string> {
     });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
-      if (data?.found && data?.email) {
-        return String(data.email).toLowerCase();
+      if (data?.found && (data?.authEmail || data?.email)) {
+        return String(data.authEmail || data.email).toLowerCase();
       }
     }
   } catch {}
 
-  // 3. Synchronized localStorage user cache lookup (handles newly created users in same session)
+  // 3. Synchronized localStorage user cache lookup (handles newly created/updated users in same session)
   const localMatch = resolveLocalUserEmailByUsername(clean);
   if (localMatch) {
     return localMatch;
@@ -210,12 +223,11 @@ export async function resolveUserEmailAsync(input: string): Promise<string> {
 }
 
 /**
- * Collects ordered candidate emails to try when authenticating via username.
+ * Collects ordered candidate auth emails to try when authenticating via email or username.
  */
 export async function collectCandidateEmailsForUsername(emailOrUsername: string): Promise<string[]> {
   const cleanInput = (emailOrUsername || '').trim().toLowerCase().replace(/\s+/g, '');
   if (!cleanInput) return [];
-  if (cleanInput.includes('@')) return [cleanInput];
 
   const candidates: string[] = [];
   const pushUnique = (email?: string | null) => {
@@ -225,11 +237,62 @@ export async function collectCandidateEmailsForUsername(emailOrUsername: string)
     }
   };
 
+  if (cleanInput.includes('@')) {
+    try {
+      const emailDir = await lookupLoginDirectoryByEmail(cleanInput);
+      if (emailDir?.status === 'suspended' || emailDir?.status === 'inactive') {
+        throw new Error('Account locked or suspended. Contact your administrator.');
+      }
+      pushUnique(emailDir?.authEmail);
+      pushUnique(emailDir?.email);
+    } catch (dirErr: any) {
+      if (
+        String(dirErr?.message || '').toLowerCase().includes('suspended') ||
+        String(dirErr?.message || '').toLowerCase().includes('locked')
+      ) {
+        throw dirErr;
+      }
+    }
+
+    try {
+      const res = await fetch('/api/platform/resolve-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: cleanInput }),
+      });
+      if (res.status === 403) {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.error === 'ACCOUNT_DISABLED') {
+          throw new Error('Account locked or suspended. Contact your administrator.');
+        }
+      }
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data?.found) {
+          pushUnique(data.authEmail);
+          pushUnique(data.email);
+        }
+      }
+    } catch (srvErr: any) {
+      if (
+        String(srvErr?.message || '').toLowerCase().includes('suspended') ||
+        String(srvErr?.message || '').toLowerCase().includes('locked')
+      ) {
+        throw srvErr;
+      }
+    }
+
+    pushUnique(resolveLocalUserEmailByUsername(cleanInput));
+    pushUnique(cleanInput);
+    return candidates;
+  }
+
   try {
     const dirEntry = await lookupLoginDirectoryByUsername(cleanInput);
     if (dirEntry?.status === 'suspended' || dirEntry?.status === 'inactive') {
       throw new Error('Account locked or suspended. Contact your administrator.');
     }
+    pushUnique(dirEntry?.authEmail);
     pushUnique(dirEntry?.email);
   } catch (dirErr: any) {
     if (String(dirErr?.message || '').toLowerCase().includes('suspended') || String(dirErr?.message || '').toLowerCase().includes('locked')) {
@@ -251,7 +314,8 @@ export async function collectCandidateEmailsForUsername(emailOrUsername: string)
     }
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
-      if (data?.found && data?.email) {
+      if (data?.found) {
+        pushUnique(data.authEmail);
         pushUnique(data.email);
       }
     }
@@ -690,6 +754,12 @@ async function restoreAccountInternal(user: User) {
   const snapshot = await getDoc(mRef);
   let membership = snapshot.data();
 
+  if (membership?.status === 'superseded') {
+    verifiedProfile = null;
+    await signOut(auth).catch(() => {});
+    throw new Error('Your login credentials were updated by an administrator. Please sign in with your latest password.');
+  }
+
   const emailLower = user.email?.toLowerCase() || '';
   const membershipUserIdHint = membership?.userId ? String(membership.userId) : undefined;
   const globalUser = await findGlobalUserInCloudByEmailOrUid(
@@ -1024,7 +1094,8 @@ async function restoreAccountInternal(user: User) {
     id: resolvedId,
     uid: user.uid,
     username: resolvedUsername,
-    email: user.email || emailLower,
+    email: globalUser?.email || membership?.email || user.email || emailLower,
+    authEmail: user.email || emailLower,
     name: membership.name || (isOwner ? 'Platform Super Admin (Site Owner)' : user.email || 'Campus Administrator'),
     role: assignedRole,
     permissionLevel: effectivePermissionLevel,
@@ -1052,6 +1123,7 @@ async function restoreAccountInternal(user: User) {
       username: verifiedProfile.username,
       name: verifiedProfile.name,
       email: verifiedProfile.email,
+      authEmail: verifiedProfile.authEmail,
       role: verifiedProfile.role,
       permissionLevel: verifiedProfile.permissionLevel,
       isSuperAdmin: verifiedProfile.isSuperAdmin,

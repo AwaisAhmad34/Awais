@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { QrCode, CheckCircle, ShieldCheck, Copy, Check } from 'lucide-react';
+import { QrCode, CheckCircle, ShieldCheck, Copy, Check, X } from 'lucide-react';
 import { Transaction, Campus } from '../core/aplusEngine';
 
 export interface VoucherQRCodeBadgeProps {
@@ -157,9 +157,10 @@ export const VoucherQRCodeBadge: React.FC<VoucherQRCodeBadgeProps> = ({
               <button
                 type="button"
                 onClick={() => setShowModal(false)}
-                className="text-slate-400 hover:text-slate-700 text-sm font-bold px-2 py-1"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 

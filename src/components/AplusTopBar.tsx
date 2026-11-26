@@ -821,9 +821,11 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
               <button
                 type="button"
                 onClick={() => setIsGlobalSearchOpen(false)}
-                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[10px] cursor-pointer"
+                aria-label="Close modal"
+                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-mono text-[10px] flex items-center gap-1 cursor-pointer"
               >
-                ESC
+                <X className="w-3.5 h-3.5" />
+                <span>ESC</span>
               </button>
             </div>
 

@@ -2610,20 +2610,30 @@ export const BulkVoucherAndAccessManager: React.FC<{
       {voucherToDeleteSingle && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-slate-900 border border-rose-800/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Delete Ledger Voucher</h4>
+                  <p className="text-xs text-rose-300 font-bold mt-0.5 font-mono">
+                    #{voucherToDeleteSingle.voucherNo} ({voucherToDeleteSingle.voucherType} — PKR{' '}
+                    {(Number(voucherToDeleteSingle.totalDebit) || 0).toLocaleString()})
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    This voucher will be removed from the active ledger and safely archived to the Global Recycle Bin for recovery if needed.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-white">Delete Ledger Voucher</h4>
-                <p className="text-xs text-rose-300 font-bold mt-0.5 font-mono">
-                  #{voucherToDeleteSingle.voucherNo} ({voucherToDeleteSingle.voucherType} — PKR{' '}
-                  {(Number(voucherToDeleteSingle.totalDebit) || 0).toLocaleString()})
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                  This voucher will be removed from the active ledger and safely archived to the Global Recycle Bin for recovery if needed.
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setVoucherToDeleteSingle(null)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
@@ -2649,19 +2659,29 @@ export const BulkVoucherAndAccessManager: React.FC<{
       {isBulkDeleteConfirmOpen && selectedVouchers.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-slate-900 border border-rose-800/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Delete {selectedVouchers.length} Selected Voucher(s)</h4>
+                  <p className="text-xs text-rose-300 font-bold mt-0.5 font-mono">
+                    Batch Debit Total: {formatPKR(selectedTotalDebit)}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    All {selectedVouchers.length} selected voucher entries will be removed from the active ledger and safely archived to the Global Recycle Bin for recovery.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-white">Delete {selectedVouchers.length} Selected Voucher(s)</h4>
-                <p className="text-xs text-rose-300 font-bold mt-0.5 font-mono">
-                  Batch Debit Total: {formatPKR(selectedTotalDebit)}
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                  All {selectedVouchers.length} selected voucher entries will be removed from the active ledger and safely archived to the Global Recycle Bin for recovery.
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteConfirmOpen(false)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button

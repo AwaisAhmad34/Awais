@@ -211,6 +211,6 @@ test('refresh never auto-authenticates and login portal stays mounted during fai
 
   const globalSync = readSource('src/services/globalUserSyncService.ts');
   assert.ok(globalSync.includes('inMemoryPersistence'));
-  assert.ok(globalSync.includes('if (cleanPassword && !authProvisioned && !resolvedUid)'));
+  assert.ok(globalSync.includes('if (cleanPassword && !authProvisioned && (!resolvedUid || !isUpdateOperation))'));
   assert.ok(globalSync.includes("const allSnap = await getDocs(collection(db, 'global_users'))"));
 });

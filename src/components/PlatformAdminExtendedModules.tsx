@@ -34,6 +34,7 @@ import {
   HardDrive,
   Edit3,
   Trash2,
+  X,
 } from 'lucide-react';
 import { Campus, Transaction, PettyCashTransaction, AccountHead, useAccounting } from '../core/aplusEngine';
 import {
@@ -483,9 +484,19 @@ export const PettyCashImprestView: React.FC<{
       {editingFloatCampus && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
-            <h4 className="text-sm font-bold text-white">
-              Adjust Petty Cash Float: {editingFloatCampus.name}
-            </h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-bold text-white">
+                Adjust Petty Cash Float: {editingFloatCampus.name}
+              </h4>
+              <button
+                type="button"
+                onClick={() => setEditingFloatCampus(null)}
+                aria-label="Close modal"
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
             <div>
               <label className="text-xs text-slate-400 block mb-1">New Float Amount (PKR):</label>
               <input
@@ -872,9 +883,20 @@ export const DatabaseHubView: React.FC<{
       {confirmZeroResetModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-rose-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center gap-2 text-rose-400 font-black text-base">
-              <AlertTriangle className="w-5 h-5" />
-              <span>Confirm Production Zero-Data Reset</span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-rose-400 font-black text-base">
+                <AlertTriangle className="w-5 h-5" />
+                <span>Confirm Production Zero-Data Reset</span>
+              </div>
+              <button
+                type="button"
+                disabled={isResettingZeroData}
+                onClick={() => setConfirmZeroResetModalOpen(false)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
               This will permanently wipe all vouchers, petty cash entries, sub-campuses, recycle bin records, reconciliations, and search history across Cloud Firestore and all connected browsers.

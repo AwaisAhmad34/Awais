@@ -12,6 +12,7 @@ import {
   ArrowRight,
   FileText,
   FileCheck,
+  X,
 } from 'lucide-react';
 import {
   exportLocalDataBackup,
@@ -236,9 +237,10 @@ export const DataMigrationControlCenter: React.FC<DataMigrationControlCenterProp
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+            aria-label="Close modal"
+            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
 

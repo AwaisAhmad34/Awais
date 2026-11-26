@@ -17,6 +17,7 @@ import {
   Layers,
   ArrowRight,
   ShieldAlert,
+  X,
 } from 'lucide-react';
 import {
   ApprovalMatrixConfig,
@@ -180,9 +181,10 @@ export const ConfigurableApprovalMatrixModule: React.FC<ConfigurableApprovalMatr
             <button
               type="button"
               onClick={onClose}
-              className="px-2.5 py-1.5 text-slate-400 hover:text-white text-xs font-bold"
+              aria-label="Close modal"
+              className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
             >
-              &times;
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>

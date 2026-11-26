@@ -30,6 +30,7 @@ import {
   Info,
   ChevronRight,
   ShieldAlert,
+  X,
 } from 'lucide-react';
 import { useAccounting, Campus, Transaction } from '../core/aplusEngine';
 
@@ -1180,9 +1181,11 @@ export const CampusMonthlyBudgetExpenditureChart: React.FC<CampusMonthlyBudgetEx
             <button
               type="button"
               onClick={() => setSelectedCampusId(null)}
-              className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+              aria-label="Close drilldown"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
             >
-              Close Drilldown &times;
+              <span>Close Drilldown</span>
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
 
@@ -1241,9 +1244,10 @@ export const CampusMonthlyBudgetExpenditureChart: React.FC<CampusMonthlyBudgetEx
               <button
                 type="button"
                 onClick={() => setIsEditingBudgets(false)}
-                className="text-slate-400 hover:text-white text-sm font-bold cursor-pointer"
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 

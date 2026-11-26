@@ -541,9 +541,10 @@ export const VoucherEditingModal: React.FC<VoucherEditingModalProps> = ({
             <button
               type="button"
               onClick={() => setFeedback(null)}
-              className="text-slate-400 hover:text-white"
+              aria-label="Dismiss notice"
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              &times;
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}

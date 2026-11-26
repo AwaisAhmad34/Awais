@@ -44,6 +44,7 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import { recordCampusLoginActivity } from '../services/campusLoginActivityService';
 import { getVerifiedProfile } from '../services/secureAuthentication';
+import { provisionGlobalUserAccount } from '../services/globalUserSyncService';
 
 interface DynamicCampusAuthModalProps {
   isOpen: boolean;
@@ -428,23 +429,80 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
 
     setIsSavingOwner(true);
     try {
+      const cleanUsername = ownerUsername.trim().toLowerCase().replace(/\s+/g, '');
+      const cleanEmail = (ownerEmail.trim() || `${cleanUsername}@accordledger.app`).toLowerCase();
+      const cleanName = ownerDisplayName.trim() || currentUser?.name || 'Platform Super Admin';
+      const cleanPassword = ownerNewPassword.trim();
+
+      const provisioned = await provisionGlobalUserAccount({
+        id: currentUser?.id,
+        uid: (currentUser as any)?.uid || null,
+        username: cleanUsername,
+        previousUsername: currentUser?.username,
+        name: cleanName,
+        email: cleanEmail,
+        previousEmail: currentUser?.email,
+        authEmail: (currentUser as any)?.authEmail,
+        password: cleanPassword || undefined,
+        role: 'level_1_platform_super_admin',
+        permissionLevel: 'level_1_platform_super_admin',
+        isSuperAdmin: true,
+        clientId: null,
+        campusId: null,
+        campusName: 'All Campuses (Central Platform)',
+        permittedCampusIds: ['all'],
+        delegatedSubCampusIds: [],
+        allowedModules: ['all'],
+        status: 'active',
+        designation: 'Platform Super Admin',
+      });
+
+      if (cleanPassword && !provisioned.authProvisioned) {
+        const msg =
+          provisioned.warning ||
+          'Could not update Platform Owner password in Firebase Authentication.';
+        setOwnerPassError(msg);
+        showToast('error', msg);
+        return;
+      }
+
       if (currentUser?.id && updateUser) {
         updateUser(currentUser.id, {
-          username: ownerUsername.trim(),
-          name: ownerDisplayName.trim(),
-          email: ownerEmail.trim(),
+          ...provisioned.userRecord,
+          username: provisioned.userRecord.username,
+          name: provisioned.userRecord.name,
+          email: provisioned.userRecord.email,
+          authEmail: provisioned.userRecord.authEmail,
         });
       }
-      if (currentUser?.id && resetUserPassword && ownerNewPassword.trim()) {
-        resetUserPassword(currentUser.id, ownerNewPassword.trim());
+      if (currentUser?.id && resetUserPassword && cleanPassword) {
+        resetUserPassword(currentUser.id, cleanPassword);
       }
+
+      try {
+        const rawSession = localStorage.getItem('ams_current_user_v5_clean');
+        if (rawSession) {
+          const parsed = JSON.parse(rawSession);
+          localStorage.setItem(
+            'ams_current_user_v5_clean',
+            JSON.stringify({
+              ...parsed,
+              uid: provisioned.userRecord.uid || parsed.uid,
+              username: provisioned.userRecord.username,
+              name: provisioned.userRecord.name,
+              email: provisioned.userRecord.email,
+              authEmail: provisioned.userRecord.authEmail,
+            })
+          );
+        }
+      } catch {}
 
       localStorage.setItem(
         'APLUS_PLATFORM_OWNER_PROFILE',
         JSON.stringify({
-          username: ownerUsername.trim(),
-          name: ownerDisplayName.trim(),
-          email: ownerEmail.trim(),
+          username: cleanUsername,
+          name: cleanName,
+          email: cleanEmail,
           updatedAt: new Date().toISOString(),
         })
       );
@@ -453,12 +511,12 @@ export const DynamicCampusAuthModal: React.FC<DynamicCampusAuthModalProps> = ({
         'STATUS_CHANGE',
         'System',
         'PLATFORM_OWNER',
-        `Platform Owner updated master credentials (${ownerUsername.trim()}).`
+        `Platform Owner updated master credentials (@${cleanUsername} / ${cleanEmail}).`
       );
 
       showToast(
         'success',
-        'Platform Owner credentials and profile successfully updated!'
+        'Platform Owner credentials updated and synced globally across devices!'
       );
       setOwnerNewPassword('');
       setOwnerConfirmPassword('');
@@ -551,7 +609,15 @@ Generated:              ${new Date(c.generatedAt).toLocaleDateString()}
   if (!isCampusSuperAdmin) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs animate-in fade-in duration-200">
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-center space-y-4 shadow-2xl text-white">
+        <div className="relative bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-center space-y-4 shadow-2xl text-white">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close modal"
+            className="absolute top-3.5 right-3.5 w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
           <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 mx-auto flex items-center justify-center">
             <Lock className="w-6 h-6" />
           </div>

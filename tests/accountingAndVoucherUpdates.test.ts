@@ -328,9 +328,9 @@ test('Update 12: .no-scrollbar class, Accord Ledger platform branding, and Platf
 
   // 1. .no-scrollbar defined in index.css and applied across main containers
   assert.ok(css.includes('.no-scrollbar'));
-  assert.ok(css.includes('scrollbar-width: none;'));
+  assert.ok(css.includes('scrollbar-width: none !important;'));
   assert.ok(css.includes('.no-scrollbar::-webkit-scrollbar'));
-  assert.ok(html.includes('no-scrollbar'));
+  assert.ok(html.includes('<html lang="en" class="no-scrollbar">'));
   assert.ok(app.includes('no-scrollbar'));
   assert.ok(engine.includes('no-scrollbar'));
 

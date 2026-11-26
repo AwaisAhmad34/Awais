@@ -373,9 +373,10 @@ export const GlobalRecycleBinModule: React.FC<GlobalRecycleBinModuleProps> = ({
           <button
             type="button"
             onClick={() => setFeedback(null)}
-            className="text-slate-400 hover:text-white"
+            aria-label="Dismiss notice"
+            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
-            &times;
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -943,7 +944,18 @@ export const GlobalRecycleBinModule: React.FC<GlobalRecycleBinModuleProps> = ({
       {/* --------------------------------------------------------------------- */}
       {permanentDeleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-rose-800/80 rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 text-slate-100">
+          <div className="relative bg-slate-900 border border-rose-800/80 rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 text-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                setPermanentDeleteTarget(null);
+                setPermanentDeleteConfirmText('');
+              }}
+              aria-label="Close modal"
+              className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
             <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 mx-auto">
               <ShieldAlert className="w-6 h-6" />
             </div>

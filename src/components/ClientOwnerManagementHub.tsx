@@ -674,8 +674,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
           id: targetUser.id,
           uid: (targetUser as any).uid || null,
           username: targetUser.username || updatedCred.username,
+          previousUsername: targetUser.username,
           name: targetUser.name || editingCampus.accountantName || editingCampus.name,
           email: targetUser.email || `${updatedCred.username}@${clientInfo.code.toLowerCase()}.edu.pk`,
+          previousEmail: targetUser.email,
+          authEmail: (targetUser as any).authEmail,
           password: newPassword,
           role: targetUser.role || 'level_3_sub_campus_admin',
           permissionLevel: (targetUser as any).permissionLevel || 'level_4_sub_campus_admin',
@@ -689,6 +692,9 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
           status: (targetUser as any).status === 'suspended' ? 'suspended' : 'active',
           designation: (targetUser as any).designation,
         });
+        if (provisioned.userRecord) {
+          updateUser?.(targetUser.id, provisioned.userRecord);
+        }
         if (!provisioned.authProvisioned) {
           resetWarning =
             provisioned.warning ||
@@ -944,6 +950,14 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       showToast('error', 'Staff full name and login username are required.');
       return;
     }
+    if (myOrgStaffUsers.some((u) => u.id !== editingStaffUser?.id && u.username?.toLowerCase() === cleanUsername)) {
+      showToast('error', `Username '@${cleanUsername}' is already assigned to another user.`);
+      return;
+    }
+    if (myOrgStaffUsers.some((u) => u.id !== editingStaffUser?.id && u.email?.toLowerCase() === cleanEmail)) {
+      showToast('error', `Email '${cleanEmail}' is already assigned to another user.`);
+      return;
+    }
     if (!editingStaffUser && (!cleanPassword || cleanPassword.length < 6)) {
       showToast('error', 'Password must be at least 6 characters for Firebase Authentication.');
       return;
@@ -977,8 +991,11 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
         id: editingStaffUser?.id,
         uid: editingStaffUser?.uid || null,
         username: cleanUsername,
+        previousUsername: editingStaffUser?.username,
         name: cleanName,
         email: cleanEmail,
+        previousEmail: editingStaffUser?.email,
+        authEmail: editingStaffUser?.authEmail,
         password: cleanPassword || undefined,
         role: staffRoleInput,
         permissionLevel: staffLevelInput,
@@ -1001,17 +1018,20 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
         readOnly: effectiveReadOnly,
       });
 
-      if (!editingStaffUser && !provisioned.authProvisioned) {
+      if (cleanPassword && !provisioned.authProvisioned) {
         showToast(
           'error',
           provisioned.warning ||
-            `Could not register '@${cleanUsername}' in Firebase Authentication. Verify email & password (>= 6 characters).`
+            `Could not update credentials for '@${cleanUsername}' in Firebase Authentication. Verify email & password (>= 6 characters).`
         );
         return;
       }
 
       if (editingStaffUser) {
-        updateUser?.(editingStaffUser.id, provisioned.userRecord);
+        updateUser?.(editingStaffUser.id, {
+          ...provisioned.userRecord,
+          ...(cleanPassword ? { password: cleanPassword } : {}),
+        });
         showToast(
           'success',
           `Updated '@${cleanUsername}' (${staffRoleInput} • ${effectiveMods.includes('all') ? 'All Modules' : `${effectiveMods.length} Modules`})!`
@@ -2738,21 +2758,31 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       {branchToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-slate-900 border border-rose-900/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
-                <AlertCircle className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">
+                    Delete Campus Branch
+                  </h4>
+                  <p className="text-xs text-rose-300 font-bold mt-0.5">
+                    {branchToDelete.name} ({branchToDelete.code})
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Are you sure you want to delete this campus branch from your organization?
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-white">
-                  Delete Campus Branch
-                </h4>
-                <p className="text-xs text-rose-300 font-bold mt-0.5">
-                  {branchToDelete.name} ({branchToDelete.code})
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Are you sure you want to delete this campus branch from your organization?
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setBranchToDelete(null)}
+                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-2">
@@ -3014,9 +3044,8 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
                     type="text"
                     value={staffUsernameInput}
                     onChange={(e) => setStaffUsernameInput(e.target.value.toLowerCase().replace(/\s+/g, ''))}
-                    disabled={!!editingStaffUser}
                     placeholder="e.g. bilal.cashier"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono disabled:opacity-50"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
                     required
                   />
                 </div>

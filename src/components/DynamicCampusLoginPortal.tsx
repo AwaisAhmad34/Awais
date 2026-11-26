@@ -423,28 +423,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
             </p>
           </div>
         </div>
-
-        {/* Task 6 & 9: Mobile header button with min 44px touch target without excessive wrapping */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            ref={triggerButtonRef}
-            type="button"
-            onClick={() => {
-              setIsOwnerSetupOpen(true);
-              setOwnerSetupStatus(null);
-            }}
-            className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap focus:outline-hidden focus:ring-2 ${
-              !isOwnerAlreadyRegistered
-                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md ring-amber-400'
-                : 'bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 hover:text-white focus:ring-indigo-500'
-            }`}
-            title={!isOwnerAlreadyRegistered ? 'Set up Accord Ledger Platform Owner account' : 'Manage Accord Ledger Platform Owner Setup'}
-          >
-            <KeyRound className={`w-4 h-4 shrink-0 ${!isOwnerAlreadyRegistered ? 'text-slate-950' : 'text-amber-400'}`} />
-            <span className="hidden sm:inline">Platform Owner Setup</span>
-            <span className="sm:hidden">Owner Setup</span>
-          </button>
-        </div>
       </header>
 
       {/* Main Login Card */}
@@ -626,7 +604,7 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
               </button>
             </form>
 
-            {/* Tenant Security Notice + Direct Platform Owner Setup Option */}
+            {/* Tenant Security Notice */}
             <div className="mt-6 pt-4 border-t border-slate-800/80 space-y-3 text-slate-500 text-xs">
               <div className="text-center space-y-1">
                 <div className="flex items-center justify-center gap-1.5 text-slate-300 text-[11px] font-bold">
@@ -636,34 +614,6 @@ export const DynamicCampusLoginPortal: React.FC<DynamicCampusLoginPortalProps> =
                 <p className="text-[10px] text-slate-500">
                   Registered credentials are mandatory across all access levels. Accounts are provisioned centrally by authorized administrators.
                 </p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-950/90 border border-slate-800 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span>Platform Owner Setup</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                    {isOwnerAlreadyRegistered
-                      ? `Registered Owner${ownerEmailMasked ? `: ${ownerEmailMasked}` : ' active'}`
-                      : 'Configure Level 1 Accord Ledger Platform Owner'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsOwnerSetupOpen(true);
-                    setOwnerSetupStatus(null);
-                  }}
-                  className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
-                    !isOwnerAlreadyRegistered
-                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                  }`}
-                >
-                  {!isOwnerAlreadyRegistered ? 'Setup Now' : 'Manage Setup'}
-                </button>
               </div>
             </div>
           </div>
