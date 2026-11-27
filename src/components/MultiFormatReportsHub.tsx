@@ -249,8 +249,24 @@ export const MultiFormatReportsHub: React.FC<{
     getAccountOpeningDrCr,
   } = useAccounting();
 
-  const { platformRole, activeCampusId, activeCampusNode } = useTenantAuth();
-  const isCampusAdmin = platformRole === 'campus_admin' && Boolean(activeCampusId);
+  const {
+    platformRole,
+    activeCampusId,
+    activeCampusNode,
+    isSuperAdmin: isTenantSuperAdmin,
+    isClientOwner,
+    authorizedCampuses,
+  } = useTenantAuth();
+  const isCampusAdmin =
+    !isTenantSuperAdmin && !isClientOwner && platformRole === 'campus_admin' && Boolean(activeCampusId);
+  const scopedCampusList = useMemo(
+    () => (authorizedCampuses.length > 0 ? authorizedCampuses : campuses || []),
+    [authorizedCampuses, campuses]
+  );
+  const authorizedCampusIdSet = useMemo(
+    () => new Set(scopedCampusList.map((c) => c.id)),
+    [scopedCampusList]
+  );
 
   const [selectedFormat, setSelectedFormat] = useState<ReportFormatId>('format_1_main');
   const [format1Tab, setFormat1Tab] = useState<'trial_balance' | 'profit_loss' | 'balance_sheet' | 'ledger_summary'>('trial_balance');
@@ -338,8 +354,10 @@ export const MultiFormatReportsHub: React.FC<{
   const campusLabel = isCampusAdmin
     ? `${resolvedCampusObj?.name || currentUser?.campusName || 'Main Campus'} (${resolvedCampusObj?.code || activeCampusId})`
     : currentCampusId === 'all'
-    ? 'All Campuses Combined (Consolidated)'
-    : resolvedCampusObj?.name || campuses.find((c) => c.id === currentCampusId)?.name || 'Main Campus';
+    ? isClientOwner && !isTenantSuperAdmin
+      ? `All Own Campuses Combined (Consolidated — ${scopedCampusList.length})`
+      : 'All Campuses Combined (Consolidated)'
+    : resolvedCampusObj?.name || scopedCampusList.find((c) => c.id === currentCampusId)?.name || 'Main Campus';
 
   // Scoped transactions for Formats 2–10
   const scopedVouchers = useMemo(() => {
@@ -347,7 +365,16 @@ export const MultiFormatReportsHub: React.FC<{
       .filter((tx) => {
         if (isCampusAdmin) {
           if (tx.campusId !== activeCampusId) return false;
-        } else if (currentCampusId !== 'all' && tx.campusId !== currentCampusId) {
+        } else if (currentCampusId === 'all') {
+          if (
+            isClientOwner &&
+            !isTenantSuperAdmin &&
+            authorizedCampusIdSet.size > 0 &&
+            !authorizedCampusIdSet.has(tx.campusId)
+          ) {
+            return false;
+          }
+        } else if (tx.campusId !== currentCampusId) {
           return false;
         }
         const d = (tx.date || '').slice(0, 10);
@@ -356,7 +383,17 @@ export const MultiFormatReportsHub: React.FC<{
         return tx.status !== 'Rejected';
       })
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  }, [transactions, currentCampusId, isCampusAdmin, activeCampusId, dateFrom, dateTo]);
+  }, [
+    transactions,
+    currentCampusId,
+    isCampusAdmin,
+    activeCampusId,
+    isClientOwner,
+    isTenantSuperAdmin,
+    authorizedCampusIdSet,
+    dateFrom,
+    dateTo,
+  ]);
 
   // Compute Account-Level Movements & Balances for Formats 2–10
   const effectiveReportCampusId =
@@ -366,7 +403,7 @@ export const MultiFormatReportsHub: React.FC<{
     return (accountHeads || []).map((head) => {
       let openDr = 0;
       let openCr = 0;
-      if (getAccountOpeningDrCr) {
+      if (getAccountOpeningDrCr && (isTenantSuperAdmin || effectiveReportCampusId !== 'all')) {
         const op = getAccountOpeningDrCr(head, effectiveReportCampusId);
         openDr = Number(op?.debit) || 0;
         openCr = Number(op?.credit) || 0;
@@ -374,7 +411,7 @@ export const MultiFormatReportsHub: React.FC<{
         const op = resolveEffectiveAccountOpeningDrCr(
           head,
           effectiveReportCampusId,
-          campuses || [],
+          scopedCampusList,
           accountHeads || []
         );
         openDr = op.debit;
@@ -826,9 +863,11 @@ export const MultiFormatReportsHub: React.FC<{
                       className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
                     >
                       <option value="all" className="text-slate-900">
-                        All Campuses (Consolidated)
+                        {isClientOwner && !isTenantSuperAdmin
+                          ? `Consolidated — All Own Campuses (${scopedCampusList.length})`
+                          : 'All Campuses (Consolidated)'}
                       </option>
-                      {campuses.map((c) => (
+                      {scopedCampusList.map((c) => (
                         <option key={c.id} value={c.id} className="text-slate-900">
                           {c.name} ({c.code})
                         </option>
@@ -1886,12 +1925,12 @@ export const MultiFormatReportsHub: React.FC<{
                       <th className="border border-black p-2 text-left">Code</th>
                       <th className="border border-black p-2 text-left">Account Head</th>
                       <th className="border border-black p-2 text-center">Category</th>
-                      {campuses.length === 0 ? (
+                      {scopedCampusList.length === 0 ? (
                         <th className="border border-black p-2 text-center">
                           No Campuses Created Yet
                         </th>
                       ) : (
-                        campuses.map((c) => (
+                        scopedCampusList.map((c) => (
                           <th key={c.id} className="border border-black p-2 text-right">
                             {c.name} ({c.code})
                           </th>
@@ -1908,10 +1947,10 @@ export const MultiFormatReportsHub: React.FC<{
                         </td>
                         <td className="border border-black p-2 font-semibold">{r.head.name}</td>
                         <td className="border border-black p-2 text-center">{r.head.category}</td>
-                        {campuses.length === 0 ? (
+                        {scopedCampusList.length === 0 ? (
                           <td className="border border-black p-2 text-center font-mono">0</td>
                         ) : (
-                          campuses.map((c) => {
+                          scopedCampusList.map((c) => {
                             let cBal = 0;
                             (transactions || [])
                               .filter((tx) => tx.campusId === c.id && tx.status !== 'Rejected')

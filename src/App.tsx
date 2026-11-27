@@ -517,22 +517,25 @@ function InnerApp() {
             </div>
           </div>
 
-          {/* Subordinate Campus Switcher & Hub Navigation */}
+          {/* Subordinate Campus Switcher, Consolidated Report & Hub Navigation */}
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="flex items-center gap-2 bg-slate-900/90 border border-indigo-700/60 rounded-xl px-3 py-1.5 shadow-inner">
               <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wide">
-                Subordinate Branch:
+                Campus Scope:
               </span>
               <select
-                value={currentCampusId || mySubordinateCampuses[0]?.id || ''}
+                value={currentCampusId || mySubordinateCampuses[0]?.id || 'all'}
                 onChange={(e) => {
                   if (setCurrentCampusId && e.target.value) {
                     setCurrentCampusId(e.target.value);
                   }
                 }}
                 className="bg-slate-800 border border-indigo-600/70 text-white font-bold text-xs rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-purple-400 focus:outline-hidden cursor-pointer"
-                title="Select from your own subordinate campuses only"
+                title="Switch across your own campuses or Consolidated All Own Campuses view"
               >
+                <option value="all">
+                  Consolidated — All Own Campuses ({mySubordinateCampuses.length})
+                </option>
                 {mySubordinateCampuses.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.code} - {c.name} {c.isMainCampus ? '(Main Campus)' : '(Subordinate Branch)'}
@@ -540,6 +543,26 @@ function InnerApp() {
                 ))}
               </select>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (setCurrentCampusId) {
+                  setCurrentCampusId('all');
+                }
+                window.dispatchEvent(
+                  new CustomEvent('aplus-navigate-tab', { detail: { tab: 'reports' } })
+                );
+              }}
+              className={`px-3.5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                currentCampusId === 'all'
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 ring-2 ring-emerald-300/60'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
+              title="Open Consolidated Financial Reports across all your own campuses"
+            >
+              <span>Consolidated Reports</span>
+            </button>
 
             <button
               type="button"

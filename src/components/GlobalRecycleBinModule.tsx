@@ -949,7 +949,7 @@ export const GlobalRecycleBinModule: React.FC<GlobalRecycleBinModuleProps> = ({
               type="button"
               onClick={() => {
                 setPermanentDeleteTarget(null);
-                setPermanentDeleteConfirmText('');
+                setConfirmPhrase('');
               }}
               aria-label="Close modal"
               className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"

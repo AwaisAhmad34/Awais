@@ -345,3 +345,65 @@ test('Update 12: .no-scrollbar class, Accord Ledger platform branding, and Platf
   assert.ok(login.includes('setIsOwnerSetupOpen(true)'));
 });
 
+test('Update 13: A4 and fallback voucher tables enforce colgroup column widths and executive sans-serif typography', () => {
+  const a4 = readSource('src/components/PrintableVoucherA4Layout.tsx');
+  const engine = readSource('src/core/aplusEngine.js');
+  const css = readSource('src/index.css');
+
+  // 1. Explicit <colgroup> before <thead> so table-fixed does not flatten column widths behind colSpan header row
+  const colgroupPosA4 = a4.indexOf('<colgroup>');
+  const theadPosA4 = a4.indexOf('<thead>', colgroupPosA4);
+  assert.notEqual(colgroupPosA4, -1);
+  assert.ok(theadPosA4 > colgroupPosA4);
+  assert.ok(a4.includes('<col className="w-[40%]" />'));
+  assert.ok(a4.includes('<col className="w-[9%]" />'));
+
+  const colgroupPosEng = engine.indexOf('jsxs)(`colgroup`');
+  const descPosEng = engine.indexOf('Description / Particulars');
+  assert.notEqual(colgroupPosEng, -1);
+  assert.ok(colgroupPosEng < descPosEng);
+
+  // 2. Executive sans-serif voucher typography & crisp refined borders/shading
+  assert.ok(a4.includes('a4-voucher-title font-sans font-extrabold'));
+  assert.ok(a4.includes('bg-slate-100 text-slate-950'));
+  assert.ok(a4.includes('leading-snug break-words'));
+  assert.equal(a4.includes('a4-voucher-title font-serif'), false);
+  assert.ok(css.includes('.a4-voucher-typo-10pt'));
+  assert.ok(css.includes('font-size: 8.75pt;'));
+});
+
+test('Update 14: Level 2 Organization Owner can switch own campuses and open Consolidated Reports without cross-tenant leakage', () => {
+  const auth = readSource('src/context/TenantAuthContext.tsx');
+  const app = readSource('src/App.tsx');
+  const reportsHub = readSource('src/components/MultiFormatReportsHub.tsx');
+  const engine = readSource('src/core/aplusEngine.js');
+
+  // 1. TenantAuthContext exposes isClientOwner and authorizedCampuses and does not branch-lock Level 2 owners
+  assert.ok(auth.includes('isClientOwner: boolean;'));
+  assert.ok(auth.includes('authorizedCampuses: Campus[];'));
+  assert.ok(auth.includes('const canSwitchOwnCampuses = isSuper || isClientOwner;'));
+  assert.ok(auth.includes('!canSwitchOwnCampuses && role === \'campus_admin\' && Boolean(activeCampusId)'));
+
+  // 2. App.tsx Level 2 banner includes Consolidated All Own Campuses option and Consolidated Reports action
+  assert.ok(app.includes('<option value="all">'));
+  assert.ok(app.includes('Consolidated — All Own Campuses'));
+  assert.ok(app.includes('Consolidated Reports'));
+  assert.ok(app.includes("new CustomEvent('aplus-navigate-tab', { detail: { tab: 'reports' } })"));
+
+  // 3. MultiFormatReportsHub isolates Consolidated Reports to authorizedCampusIdSet for Level 2 owners
+  assert.ok(reportsHub.includes('isClientOwner &&'));
+  assert.ok(reportsHub.includes('authorizedCampusIdSet.size > 0'));
+  assert.ok(reportsHub.includes('!authorizedCampusIdSet.has(tx.campusId)'));
+
+  // 4. aplusEngine.js enables multi-campus switching & Consolidated Reports for Level 2 in header, sidebar, dashboard, and reports
+  assert.ok(engine.includes('aplus-navigate-tab'));
+  assert.ok(engine.includes('_canSwitchCampuses'));
+  assert.ok(engine.includes('_dnCanAll'));
+  assert.ok(engine.includes('Consolidated Reports'));
+  assert.ok(engine.includes('_ywCanAll'));
+  assert.ok(engine.includes('_eteCanAll'));
+  assert.ok(engine.includes('_mwCanAll'));
+  assert.ok(engine.includes('_pwCanAll'));
+});
+
+

@@ -173,8 +173,9 @@
   box-sizing: border-box;
   width: 100%;
   max-width: 210mm;
-  color: #000000;
+  color: #0f172a;
   background-color: #ffffff;
+  font-family: 'Public Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   font-variant-numeric: tabular-nums;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -186,45 +187,45 @@
 }
 
 .a4-voucher-pad-standard {
-  padding: 12mm 14mm;
+  padding: 11mm 13mm;
 }
 
 .a4-voucher-pad-spacious {
-  padding: 16mm 18mm;
+  padding: 15mm 17mm;
 }
 
 /* Specific A4 Typography Scale Presets */
 .a4-voucher-typo-10pt {
-  font-size: 10pt;
-  line-height: 1.35;
+  font-size: 9.25pt;
+  line-height: 1.38;
 }
 .a4-voucher-typo-10pt .a4-voucher-title {
-  font-size: 20pt;
+  font-size: 16pt;
 }
 .a4-voucher-typo-10pt .a4-voucher-table {
-  font-size: 9.5pt;
+  font-size: 8.75pt;
 }
 
 .a4-voucher-typo-11pt {
-  font-size: 11pt;
+  font-size: 10pt;
   line-height: 1.4;
 }
 .a4-voucher-typo-11pt .a4-voucher-title {
-  font-size: 22pt;
+  font-size: 17.5pt;
 }
 .a4-voucher-typo-11pt .a4-voucher-table {
-  font-size: 10pt;
+  font-size: 9.25pt;
 }
 
 .a4-voucher-typo-12pt {
-  font-size: 12pt;
-  line-height: 1.45;
+  font-size: 10.75pt;
+  line-height: 1.44;
 }
 .a4-voucher-typo-12pt .a4-voucher-title {
-  font-size: 24pt;
+  font-size: 19pt;
 }
 .a4-voucher-typo-12pt .a4-voucher-table {
-  font-size: 11pt;
+  font-size: 10pt;
 }
 
 /* ========================================================================== */

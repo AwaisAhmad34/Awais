@@ -335,19 +335,19 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <tr>
               <td>
                 <header
-                  className="voucher-print-header flex flex-wrap items-center justify-between gap-2 border-b-2 border-black pb-1.5 mb-2 text-[9.5px] font-sans text-black"
+                  className="voucher-print-header flex flex-wrap items-center justify-between gap-2 border-b-[1.5px] border-slate-900 pb-1.5 mb-2.5 text-[9px] font-sans text-slate-900"
                   aria-label="Voucher Print Header"
                 >
                   <div className="flex flex-col min-w-0">
-                    <span className="font-black uppercase tracking-wider text-black">
+                    <span className="font-extrabold uppercase tracking-wider text-slate-950">
                       {campusInfo.schoolName}
                     </span>
-                    <span className="font-bold text-black">
+                    <span className="font-semibold text-slate-700">
                       School Campus: {campusInfo.campusDisplayLabel}
                     </span>
                   </div>
-                  <div className="text-right font-mono shrink-0">
-                    <div className="font-bold uppercase">
+                  <div className="text-right font-mono shrink-0 text-slate-800">
+                    <div className="font-bold uppercase text-slate-950">
                       {meta.shortCode} • Voucher #{voucher.voucherNo}
                     </div>
                     <div>Print Timestamp: {printTimestamp}</div>
@@ -360,68 +360,68 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <tr>
               <td>
         {/* Top Institutional Header Row */}
-        <div className="flex items-start justify-between gap-3 pb-2">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-start justify-between gap-4 pb-2.5">
+          <div className="flex items-center gap-3.5 min-w-0">
             <SchoolLogo
               campusId={voucher.campusId || campus?.id}
               size="lg"
-              className="w-14 h-14 shrink-0"
+              className="w-12 h-12 shrink-0"
             />
             <div className="min-w-0">
-              <div className="text-[9.5px] font-bold uppercase tracking-wider text-black font-sans">
+              <div className="text-[9px] font-bold uppercase tracking-widest text-slate-600 font-sans">
                 {orgSettings?.schoolName || 'A+ School System'} •{' '}
                 {meta.voucherCategoryLabel}
               </div>
-              <h1 className="a4-voucher-title font-serif font-bold text-black tracking-tight leading-tight mt-0.5">
+              <h1 className="a4-voucher-title font-sans font-extrabold text-slate-950 tracking-tight leading-tight mt-0.5">
                 {meta.fullTitle}
               </h1>
-              <div className="text-[11px] font-bold text-black mt-0.5 font-sans">
-                {dateRangeDisplay}
+              <div className="text-[10px] font-semibold text-slate-700 mt-0.5 font-sans">
+                Period Coverage: {dateRangeDisplay}
               </div>
             </div>
           </div>
 
           <div className="flex items-start gap-2 shrink-0">
-            <div className="border-2 border-black text-center shrink-0 min-w-[155px] bg-white">
-              <div className="text-[10px] font-bold text-black uppercase border-b-2 border-black py-0.5 px-2.5 tracking-wide">
+            <div className="border-[1.5px] border-slate-900 text-center shrink-0 min-w-[175px] max-w-[235px] bg-white">
+              <div className="text-[8.5px] font-bold text-slate-900 uppercase bg-slate-100 border-b border-slate-900 py-0.5 px-2.5 tracking-widest">
                 Campus Name
               </div>
-              <div className="text-xs font-black text-black uppercase py-1 px-2.5 tracking-wider">
+              <div className="text-[11px] font-extrabold text-slate-950 uppercase py-1 px-2.5 tracking-wide leading-tight">
                 {campusDisplayName || 'CVT CAMPUS'}
               </div>
-              <div className="text-[9.5px] font-mono font-bold text-black border-t border-black py-0.5 px-2">
+              <div className="text-[9px] font-mono font-bold text-slate-800 border-t border-slate-800 py-0.5 px-2 bg-slate-50/70">
                 Voucher Type: {meta.shortCode}
               </div>
             </div>
           </div>
         </div>
 
-        <hr className="border-t-2 border-black my-2" />
+        <hr className="border-t-[1.5px] border-slate-900 my-2" />
 
         {/* Payee / Payer, Rupees, Instrument & Narration Lines */}
-        <div className="space-y-2 my-2.5 text-black a4-voucher-body-text">
+        <div className="space-y-2 my-2.5 text-slate-950 a4-voucher-body-text font-sans">
           <div className="flex items-baseline gap-2">
-            <span className="font-bold shrink-0 w-24">{meta.partyLabel}:</span>
-            <div className="flex-1 min-w-0 border-b border-black pb-0.5 px-1.5 font-semibold min-h-[18px] break-words">
+            <span className="font-bold shrink-0 w-28 text-slate-800">{meta.partyLabel}:</span>
+            <div className="flex-1 min-w-0 border-b border-slate-800 pb-0.5 px-1.5 font-semibold min-h-[18px] break-words">
               {resolvedPartyName}
             </div>
-            <span className="font-bold shrink-0 ml-2">Rupees (PKR):</span>
-            <div className="w-36 shrink-0 border-b border-black pb-0.5 px-1.5 font-bold font-mono tabular-nums text-right min-h-[18px]">
+            <span className="font-bold shrink-0 ml-2 text-slate-800">Rupees (PKR):</span>
+            <div className="w-36 shrink-0 border-b border-slate-800 pb-0.5 px-1.5 font-bold font-mono tabular-nums text-right min-h-[18px] text-slate-950">
               {formatPKR(voucher.totalDebit)}
             </div>
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="font-bold shrink-0 w-24">On Account of:</span>
-            <div className="flex-1 min-w-0 border-b border-black pb-0.5 px-1.5 font-medium min-h-[18px] break-words">
+            <span className="font-bold shrink-0 w-28 text-slate-800">On Account of:</span>
+            <div className="flex-1 min-w-0 border-b border-slate-800 pb-0.5 px-1.5 font-medium min-h-[18px] break-words">
               {voucher.narration || ''}
             </div>
             {resolvedInstrumentNo && (
               <>
-                <span className="font-bold shrink-0 ml-2">
+                <span className="font-bold shrink-0 ml-2 text-slate-800">
                   {vType === 'BPV' || vType === 'BRV' ? 'Cheque / Ref:' : 'Ref No:'}
                 </span>
-                <div className="w-32 shrink-0 border-b border-black pb-0.5 px-1.5 font-mono font-bold min-h-[18px] text-right">
+                <div className="w-32 shrink-0 border-b border-slate-800 pb-0.5 px-1.5 font-mono font-bold min-h-[18px] text-right">
                   {resolvedInstrumentNo}
                 </div>
               </>
@@ -430,50 +430,60 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
         </div>
 
         {/* Double-Entry Ledger Table Fitted Strictly to Single-Page ISO A4 Width */}
-        <div className="my-2.5 w-full">
-          <table className="w-full table-fixed border-collapse border-2 border-black a4-voucher-table">
+        <div className="my-3 w-full">
+          <table className="w-full table-fixed border-collapse border-[1.5px] border-slate-900 a4-voucher-table font-sans">
+            <colgroup>
+              <col className="w-[4%]" />
+              <col className="w-[9%]" />
+              <col className="w-[16%]" />
+              <col className="w-[9%]" />
+              <col className="w-[40%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+            </colgroup>
             <thead>
-              <tr className="border-b-2 border-black font-bold bg-white">
+              <tr className="border-b-[1.5px] border-slate-900 font-semibold bg-slate-50/80 text-slate-950">
                 <td
                   colSpan={3}
-                  className="border-r-2 border-black px-2 py-1.5 text-left font-bold text-black break-words"
+                  className="border-r border-slate-800 px-2 py-1.5 text-left break-words"
                 >
-                  Voucher No:{' '}
-                  <span className="font-mono font-bold">{voucher.voucherNo}</span>
+                  <span className="text-slate-600 font-semibold">Voucher No:</span>{' '}
+                  <span className="font-mono font-bold text-slate-950">{voucher.voucherNo}</span>
                 </td>
                 <td
                   colSpan={2}
-                  className="border-r-2 border-black px-2 py-1.5 text-left font-bold text-black"
+                  className="border-r border-slate-800 px-2 py-1.5 text-left"
                 >
-                  Tr Date : <span className="font-bold">{formattedDate}</span>
+                  <span className="text-slate-600 font-semibold">Tr Date:</span>{' '}
+                  <span className="font-bold text-slate-950">{formattedDate}</span>
                 </td>
                 <td
                   colSpan={2}
-                  className="px-2 py-1.5 text-left font-bold text-black break-words"
+                  className="px-2 py-1.5 text-left break-words"
                 >
-                  Period:{' '}
-                  <span className="font-bold">
+                  <span className="text-slate-600 font-semibold">Period:</span>{' '}
+                  <span className="font-bold text-slate-950">
                     {voucher.accountingPeriod || 'FY 2025-2026'}
                   </span>
                 </td>
               </tr>
-              <tr className="border-b-2 border-black font-bold text-center bg-white text-black">
-                <th className="border-r-2 border-black py-1.5 px-0.5 w-[4%] text-center whitespace-nowrap">
+              <tr className="border-b-[1.5px] border-slate-900 font-bold bg-slate-100 text-slate-950">
+                <th className="border-r border-slate-800 py-1.5 px-1 w-[4%] text-center whitespace-nowrap">
                   S#
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-1 w-[9%] text-center font-mono whitespace-nowrap">
+                <th className="border-r border-slate-800 py-1.5 px-1 w-[9%] text-center font-mono whitespace-nowrap">
                   Acc#
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-1.5 w-[17%] text-left whitespace-nowrap">
+                <th className="border-r border-slate-800 py-1.5 px-1.5 w-[16%] text-left whitespace-nowrap">
                   Account Name
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-1 w-[8%] text-center whitespace-nowrap">
+                <th className="border-r border-slate-800 py-1.5 px-0.5 w-[9%] text-center whitespace-nowrap">
                   Ref/Check
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-2 w-[40%] text-left whitespace-nowrap">
+                <th className="border-r border-slate-800 py-1.5 px-2 w-[40%] text-left whitespace-nowrap">
                   Description / Particulars
                 </th>
-                <th className="border-r-2 border-black py-1.5 px-1.5 w-[11%] text-right font-mono whitespace-nowrap">
+                <th className="border-r border-slate-800 py-1.5 px-1.5 w-[11%] text-right font-mono whitespace-nowrap">
                   Debit
                 </th>
                 <th className="py-1.5 px-1.5 w-[11%] text-right font-mono whitespace-nowrap">
@@ -485,47 +495,47 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
               {(voucher.entries || []).map((entry, idx) => (
                 <tr
                   key={entry.id || idx}
-                  className="border-b border-black text-black bg-white"
+                  className="border-b border-slate-300 text-slate-950 bg-white align-middle"
                 >
-                  <td className="border-r-2 border-black py-1.5 px-0.5 text-center font-medium tabular-nums whitespace-nowrap">
+                  <td className="border-r border-slate-800 py-1.5 px-1 text-center font-medium tabular-nums whitespace-nowrap">
                     {idx + 1}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-1 text-center font-mono font-bold text-black tabular-nums whitespace-nowrap">
+                  <td className="border-r border-slate-800 py-1.5 px-1.5 text-center font-mono font-bold text-slate-900 tabular-nums whitespace-nowrap">
                     {entry.accountCode}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-1.5 font-semibold text-left truncate">
+                  <td className="border-r border-slate-800 py-1.5 px-2 font-semibold text-left leading-snug break-words">
                     {entry.accountName}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-1 text-center font-mono text-[10px] truncate">
+                  <td className="border-r border-slate-800 py-1.5 px-1 text-center font-mono text-[0.9em] text-slate-700 truncate">
                     {entry.refCheckNo || voucher.chequeNo || ''}
                   </td>
                   <td
-                    className="border-r-2 border-black py-1.5 px-2 text-left whitespace-nowrap truncate"
+                    className="border-r border-slate-800 py-1.5 px-2.5 text-left whitespace-nowrap truncate"
                     title={entry.description || voucher.narration || ''}
                   >
                     {entry.description || voucher.narration || ''}
                   </td>
-                  <td className="border-r-2 border-black py-1.5 px-1.5 text-right font-mono font-medium tabular-nums whitespace-nowrap">
+                  <td className="border-r border-slate-800 py-1.5 px-2 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
                     {entry.debit > 0 ? formatPKR(entry.debit) : '0.00'}
                   </td>
-                  <td className="py-1.5 px-1.5 text-right font-mono font-medium tabular-nums whitespace-nowrap">
+                  <td className="py-1.5 px-2 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
                     {entry.credit > 0 ? formatPKR(entry.credit) : '0.00'}
                   </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 border-black font-bold bg-white text-black">
+              <tr className="border-t-[1.5px] border-slate-900 font-bold bg-slate-50 text-slate-950">
                 <td
                   colSpan={5}
-                  className="border-r-2 border-black px-2 py-1.5 text-left font-bold break-words"
+                  className="border-r border-slate-800 px-2.5 py-2 text-left font-bold break-words"
                 >
                   {numberToWordsPKR(voucher.totalDebit)}
                 </td>
-                <td className="border-r-2 border-black px-2 py-1.5 text-right font-mono font-bold tabular-nums whitespace-nowrap">
+                <td className="border-r border-slate-800 px-2 py-2 text-right font-mono font-extrabold tabular-nums whitespace-nowrap">
                   {formatPKR(voucher.totalDebit)}
                 </td>
-                <td className="px-2 py-1.5 text-right font-mono font-bold tabular-nums whitespace-nowrap">
+                <td className="px-2 py-2 text-right font-mono font-extrabold tabular-nums whitespace-nowrap">
                   {formatPKR(voucher.totalCredit)}
                 </td>
               </tr>
@@ -549,14 +559,14 @@ export const PrintableVoucherA4Layout: React.FC<PrintableVoucherA4LayoutProps> =
             <tr>
               <td>
                 <footer
-                  className="voucher-print-footer mt-2.5 pt-1.5 border-t-2 border-black flex flex-wrap items-center justify-between gap-2 text-[9px] font-mono text-black"
+                  className="voucher-print-footer mt-2.5 pt-1.5 border-t-[1.5px] border-slate-900 flex flex-wrap items-center justify-between gap-2 text-[9px] font-sans text-slate-700"
                   aria-label="Voucher Print Footer"
                 >
                   <div className="min-w-0">
-                    <span className="font-bold">Campus: {campusInfo.campusDisplayLabel}</span>
+                    <span className="font-bold text-slate-950">Campus: {campusInfo.campusDisplayLabel}</span>
                     <span> • Voucher #{voucher.voucherNo} ({meta.shortCode})</span>
                   </div>
-                  <div className="shrink-0">
+                  <div className="shrink-0 font-mono text-slate-800">
                     <span>Print Request Timestamp: {printTimestamp}</span>
                   </div>
                 </footer>
