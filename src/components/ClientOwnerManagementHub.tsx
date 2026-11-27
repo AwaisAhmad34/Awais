@@ -291,16 +291,29 @@ export const ClientOwnerManagementHub: React.FC<ClientOwnerManagementHubProps> =
       const rawSettings = localStorage.getItem('ams_org_settings_v5');
       if (rawSettings) {
         const parsed = JSON.parse(rawSettings);
+        const trimmedLogo = orgLogoInput.trim();
         localStorage.setItem(
           'ams_org_settings_v5',
           JSON.stringify({
             ...parsed,
             schoolName: cleanName,
-            ...(orgLogoInput.trim() ? { schoolLogo: orgLogoInput.trim() } : {}),
+            ...(trimmedLogo
+              ? {
+                  schoolLogo: trimmedLogo,
+                  logoType: trimmedLogo.startsWith('data:') ? 'upload' : 'url',
+                  ...(trimmedLogo.startsWith('data:')
+                    ? { logoBase64: trimmedLogo }
+                    : { logoCustomUrl: trimmedLogo }),
+                }
+              : {}),
           })
         );
       }
     } catch {}
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('aplus-clients-updated'));
+    }
 
     setClientRefreshKey((prev) => prev + 1);
     setIsEditOrgModalOpen(false);

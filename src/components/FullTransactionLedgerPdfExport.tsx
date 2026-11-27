@@ -28,6 +28,8 @@ import {
   printOrDownloadElement,
 } from '../core/aplusEngine';
 import { formatAccountingInteger } from '../utils/accountingFormat';
+import { useTenantAuth } from '../context/TenantAuthContext';
+import { resolveOrganizationBrand } from '../utils/organizationBrand';
 
 interface FullTransactionLedgerPdfExportProps {
   onClose?: () => void;
@@ -48,11 +50,30 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
     orgSettings,
     currentUser,
   } = useAccounting();
+  const {
+    isSuperAdmin,
+    isClientOwner,
+    authorizedCampuses,
+    activeCampusId,
+  } = useTenantAuth();
+
+  const canSwitchCampuses = isSuperAdmin || isClientOwner;
+  const scopedCampuses = useMemo(
+    () => (authorizedCampuses.length > 0 ? authorizedCampuses : campuses || []),
+    [authorizedCampuses, campuses]
+  );
+  const authorizedCampusIdSet = useMemo(
+    () => new Set(scopedCampuses.map((c) => c.id)),
+    [scopedCampuses]
+  );
 
   // Document Filters
-  const [selectedCampusId, setSelectedCampusId] = useState<string>(
-    initialCampusId || (currentCampusId !== 'all' ? currentCampusId : 'all')
-  );
+  const [selectedCampusId, setSelectedCampusId] = useState<string>(() => {
+    if (!canSwitchCampuses && (activeCampusId || currentUser?.campusId)) {
+      return activeCampusId || currentUser?.campusId || 'all';
+    }
+    return initialCampusId || (currentCampusId !== 'all' ? currentCampusId : 'all');
+  });
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [datePreset, setDatePreset] = useState<'ALL' | 'TODAY' | 'WEEK' | 'MONTH' | 'FY'>('ALL');
@@ -102,8 +123,22 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
     }
   };
 
-  // Resolved Campus
-  const selectedCampus = campuses.find((c) => c.id === selectedCampusId);
+  // Resolved Campus & Organization Branding
+  const selectedCampus =
+    scopedCampuses.find((c) => c.id === selectedCampusId) ||
+    campuses.find((c) => c.id === selectedCampusId);
+
+  const resolvedOrgBrand = useMemo(
+    () =>
+      resolveOrganizationBrand({
+        currentUser,
+        campus: selectedCampus || scopedCampuses[0] || null,
+        campuses: scopedCampuses,
+        currentCampusId: selectedCampusId,
+        orgSettings,
+      }),
+    [currentUser, selectedCampus, scopedCampuses, selectedCampusId, orgSettings]
+  );
 
   // Normalize voucher status
   const getNormalizedStatus = (st?: string): 'Pending' | 'Approved' | 'Rejected' => {
@@ -115,7 +150,11 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
   // Filtered Ledger Transactions
   const filteredLedgerRows = useMemo(() => {
     return (transactions || []).filter((tx) => {
-      if (selectedCampusId !== 'all' && tx.campusId !== selectedCampusId) return false;
+      if (selectedCampusId !== 'all') {
+        if (tx.campusId !== selectedCampusId) return false;
+      } else if (!isSuperAdmin && authorizedCampusIdSet.size > 0) {
+        if (!authorizedCampusIdSet.has(tx.campusId)) return false;
+      }
       if (voucherTypeFilter !== 'ALL' && tx.voucherType !== voucherTypeFilter) return false;
 
       const normStatus = getNormalizedStatus(tx.status);
@@ -151,6 +190,8 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
   }, [
     transactions,
     selectedCampusId,
+    isSuperAdmin,
+    authorizedCampusIdSet,
     voucherTypeFilter,
     statusFilter,
     dateFrom,
@@ -202,9 +243,9 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
   const handlePrintDocument = async () => {
     if (!printDocumentRef.current) return;
     await printOrDownloadElement(printDocumentRef.current, {
-      title: `Full Transaction Ledger — ${orgSettings?.schoolName || 'Aplus School System'}`,
+      title: `Full Transaction Ledger — ${resolvedOrgBrand.name}`,
       orientation: pageOrientation,
-      fallbackFileName: 'Aplus-Full-Transaction-Ledger.pdf',
+      fallbackFileName: 'Full-Transaction-Ledger.pdf',
     });
   };
 
@@ -363,11 +404,18 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
             </label>
             <select
               value={selectedCampusId}
+              disabled={!canSwitchCampuses}
               onChange={(e) => setSelectedCampusId(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+              className="w-full bg-white border border-slate-300 rounded-lg p-2 font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-75"
             >
-              <option value="all">Consolidated (All Campus Branches)</option>
-              {campuses.map((c) => (
+              {canSwitchCampuses && (
+                <option value="all">
+                  {isSuperAdmin
+                    ? 'Consolidated (All Campus Branches)'
+                    : `Consolidated — All Own Campuses (${scopedCampuses.length})`}
+                </option>
+              )}
+              {scopedCampuses.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} ({c.code})
                 </option>
@@ -536,17 +584,25 @@ export const FullTransactionLedgerPdfExport: React.FC<FullTransactionLedgerPdfEx
           <div className="border-b-2 border-slate-900 pb-5 mb-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-4">
-                <SchoolLogo size="lg" />
+                {resolvedOrgBrand.logoUrl ? (
+                  <img
+                    src={resolvedOrgBrand.logoUrl}
+                    alt={resolvedOrgBrand.name}
+                    className="w-16 h-16 rounded-xl object-contain bg-white border border-slate-300 p-1 shrink-0"
+                  />
+                ) : (
+                  <SchoolLogo campusId={selectedCampus?.id} size="lg" />
+                )}
                 <div>
                   <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-950 uppercase">
-                    {orgSettings?.schoolName || 'Aplus School System'}
+                    {resolvedOrgBrand.name}
                   </h1>
                   <p className="text-[11px] text-slate-500 font-medium">
                     {selectedCampus
                       ? `${selectedCampus.name} (${selectedCampus.code}) · ${
-                          selectedCampus.city || 'Gujranwala'
+                          selectedCampus.city || 'Campus Branch'
                         }`
-                      : 'Central Consolidated Ledger (All Campuses Branch Network)'}
+                      : `Consolidated Ledger (${scopedCampuses.length} Campuses)`}
                   </p>
                 </div>
               </div>

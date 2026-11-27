@@ -34,6 +34,7 @@ export interface GenerateReportPdfOptions {
   dateFrom: string;
   dateTo: string;
   schoolName: string;
+  logoUrl?: string;
   orientation?: 'portrait' | 'landscape';
   accountRows?: ReportPdfAccountRow[];
   totals?: ReportPdfTotals;
@@ -44,6 +45,41 @@ export interface GenerateReportPdfResult {
   success: boolean;
   fileName: string;
   totalPages?: number;
+}
+
+async function resolvePdfLogoDataUrl(url?: string): Promise<string | null> {
+  const clean = String(url || '').trim();
+  if (!clean) return null;
+  if (clean.startsWith('data:image/')) return clean;
+  if (typeof window === 'undefined' || typeof Image === 'undefined') return null;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = window.setTimeout(() => resolve(null), 1800);
+    img.onload = () => {
+      window.clearTimeout(timer);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 128;
+        canvas.height = img.naturalHeight || 128;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      window.clearTimeout(timer);
+      resolve(null);
+    };
+    img.src = clean;
+  });
 }
 
 export async function generateAndDownloadReportPdf(
@@ -58,6 +94,7 @@ export async function generateAndDownloadReportPdf(
     dateFrom,
     dateTo,
     schoolName,
+    logoUrl,
     orientation = 'portrait',
     accountRows = [],
     totals,
@@ -76,36 +113,75 @@ export async function generateAndDownloadReportPdf(
 
   // Header Colors & Style
   doc.setFillColor(15, 23, 42); // slate-900
-  doc.rect(margin, margin, contentWidth, 22, 'F');
+  doc.rect(margin, margin, contentWidth, 24, 'F');
 
-  // School & Report Brand
+  // Organization Logo Box (actual logo image if loadable, else institutional monogram crest)
+  const logoData = await resolvePdfLogoDataUrl(logoUrl);
+  const logoBoxX = margin + 4;
+  const logoBoxY = margin + 4;
+  const logoBoxSize = 16;
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(logoBoxX, logoBoxY, logoBoxSize, logoBoxSize, 2, 2, 'F');
+
+  if (logoData) {
+    try {
+      const imgType = logoData.includes('image/jpeg') || logoData.includes('image/jpg') ? 'JPEG' : 'PNG';
+      doc.addImage(logoData, imgType, logoBoxX + 1, logoBoxY + 1, logoBoxSize - 2, logoBoxSize - 2);
+    } catch {
+      const initials = (schoolName || 'AL')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((w) => w[0]?.toUpperCase() || '')
+        .join('') || 'AL';
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(initials, logoBoxX + logoBoxSize / 2, logoBoxY + 10.5, { align: 'center' });
+    }
+  } else {
+    const initials = (schoolName || 'AL')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() || '')
+      .join('') || 'AL';
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text(initials, logoBoxX + logoBoxSize / 2, logoBoxY + 10.5, { align: 'center' });
+  }
+
+  const textStartX = logoBoxX + logoBoxSize + 5;
+
+  // Organization Name & Report Brand
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
+  doc.setFontSize(13.5);
   doc.setFont('helvetica', 'bold');
-  doc.text(schoolName.toUpperCase(), margin + 6, margin + 7);
+  doc.text((schoolName || 'Institutional Financial Ledger').toUpperCase(), textStartX, margin + 7.5);
 
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(226, 232, 240); // slate-200
-  doc.text(reportTitle, margin + 6, margin + 13);
+  doc.text(reportTitle, textStartX, margin + 13.5);
 
   // Format Tag
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(148, 163, 184); // slate-400
-  doc.text(`Format #${formatNumber} — ${formatName}`, margin + 6, margin + 18);
+  doc.text(`Format #${formatNumber} — ${formatName}`, textStartX, margin + 19);
 
   // Right-aligned Campus & Period details in header
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 255, 255);
-  doc.text(`CAMPUS: ${campusName.toUpperCase()}`, pageWidth - margin - 6, margin + 7, { align: 'right' });
+  doc.text(`CAMPUS: ${campusName.toUpperCase()}`, pageWidth - margin - 5, margin + 7.5, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(203, 213, 225);
-  doc.text(`Period: ${dateFrom} to ${dateTo}`, pageWidth - margin - 6, margin + 13, { align: 'right' });
-  doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin - 6, margin + 18, { align: 'right' });
+  doc.text(`Period: ${dateFrom} to ${dateTo}`, pageWidth - margin - 5, margin + 13.5, { align: 'right' });
+  doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin - 5, margin + 19, { align: 'right' });
 
-  let y = margin + 28;
+  let y = margin + 29;
 
   // Draw table header
   const isLandscape = orientation === 'landscape';

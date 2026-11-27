@@ -62,6 +62,7 @@ import { ExpressVoucherModal } from './ExpressVoucherModal';
 import { ExpressPettyCashModal } from './ExpressPettyCashModal';
 import { VoucherDetailModal } from './VoucherDetailModal';
 import { isUserPermittedForModule, isUserReadOnlyRole } from '../services/rolePresets';
+import { filterCampusesForUser } from '../services/multiTenantDataService';
 
 interface AplusTopBarProps {
   activeTab: string;
@@ -415,9 +416,35 @@ export const AplusTopBar: React.FC<AplusTopBarProps> = ({
     return isUserPermittedForModule(moduleId, currentUser, activeProfile?.modules || null);
   };
 
-  const pendingCount = (transactions || []).filter(
-    (t) => !t.status || t.status === 'Pending' || t.status === 'Draft'
-  ).length;
+  const authorizedCampuses = useMemo(
+    () => filterCampusesForUser(campuses || [], currentUser),
+    [campuses, currentUser]
+  );
+
+  const authorizedCampusIdSet = useMemo(
+    () => new Set(authorizedCampuses.map((c) => c.id)),
+    [authorizedCampuses]
+  );
+
+  const effectivePendingScope =
+    !isSuperAdmin && !isClientOwnerMainAdmin && currentUser?.campusId
+      ? currentUser.campusId
+      : currentCampusId || 'all';
+
+  const pendingCount = useMemo(
+    () =>
+      (transactions || []).filter((t) => {
+        if (t.status && t.status !== 'Pending' && t.status !== 'Draft') return false;
+        if (effectivePendingScope === 'all') {
+          if (isSuperAdmin) return true;
+          return authorizedCampusIdSet.size > 0
+            ? authorizedCampusIdSet.has(t.campusId)
+            : !t.campusId;
+        }
+        return t.campusId === effectivePendingScope;
+      }).length,
+    [transactions, effectivePendingScope, isSuperAdmin, authorizedCampusIdSet]
+  );
 
   useEffect(() => {
     window.__OPEN_SUPER_ADMIN_IMPORT__ = (tab?: ImportCategoryTab) => {

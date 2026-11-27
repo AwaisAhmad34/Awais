@@ -8,6 +8,7 @@ import {
   formatAccountingInteger,
   formatAccountingPKR,
 } from '../src/utils/accountingFormat';
+import { resolveOrganizationBrand } from '../src/utils/organizationBrand';
 
 const ROOT = process.cwd();
 const readSource = (relPath: string) =>
@@ -405,5 +406,103 @@ test('Update 14: Level 2 Organization Owner can switch own campuses and open Con
   assert.ok(engine.includes('_mwCanAll'));
   assert.ok(engine.includes('_pwCanAll'));
 });
+
+test('Update 15: Per-campus voucher/petty-cash counting isolation, Level 2 opening balances, and organization name/logo in financial reports', () => {
+  // 1. resolveOrganizationBrand runtime resolution prioritizes active client name & logo, with campus/custom fallback
+  const clientBrand = resolveOrganizationBrand({
+    currentUser: { clientId: 'client-beacon', role: 'level_2_client_super_admin' },
+    campus: {
+      id: 'campus-sub-2',
+      clientId: 'client-beacon',
+      name: 'South Branch',
+      code: 'SB-02',
+      city: 'Lahore',
+      address: '',
+      phone: '',
+      email: '',
+      accountantName: '',
+      pettyCashFloat: 50000,
+      currentPettyCash: 50000,
+      status: 'active',
+    },
+    campuses: [],
+    currentCampusId: 'campus-sub-2',
+    orgSettings: { schoolName: 'A+ School System' },
+    clients: [
+      {
+        id: 'client-beacon',
+        name: 'Beacon Horizon Academy',
+        code: 'BHA',
+        logoUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==',
+      } as any,
+    ],
+  });
+  assert.equal(clientBrand.name, 'Beacon Horizon Academy');
+  assert.equal(clientBrand.logoUrl, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==');
+
+  const campusLogoOverride = resolveOrganizationBrand({
+    currentUser: { clientId: 'client-beacon' },
+    campus: {
+      id: 'campus-sub-2',
+      clientId: 'client-beacon',
+      name: 'South Branch',
+      code: 'SB-02',
+      city: 'Lahore',
+      address: '',
+      phone: '',
+      email: '',
+      accountantName: '',
+      pettyCashFloat: 50000,
+      currentPettyCash: 50000,
+      status: 'active',
+      logoType: 'upload',
+      logoBase64: 'data:image/png;base64,CAMPUS_CUSTOM_LOGO',
+    },
+    orgSettings: { schoolName: 'Custom Settings School' },
+    clients: [{ id: 'client-beacon', name: 'A+ School System', logoUrl: 'https://example.com/client.png' } as any],
+  });
+  assert.equal(campusLogoOverride.name, 'Custom Settings School');
+  assert.equal(campusLogoOverride.logoUrl, 'data:image/png;base64,CAMPUS_CUSTOM_LOGO');
+
+  // 2. Per-campus voucher & petty cash numbering + UI counting isolation
+  const engine = readSource('src/core/aplusEngine.js');
+  const topBar = readSource('src/components/AplusTopBar.tsx');
+  const approvalHub = readSource('src/components/BulkVoucherApprovalHub.tsx');
+
+  assert.ok(engine.includes('campusScoped=n&&n!==`all`?list.filter(x=>x.campusId===n):list'));
+  assert.ok(engine.includes('pcScoped=e&&e!==`all`?h.filter(t=>t.campusId===e):h'));
+  assert.ok(engine.includes('targetCid=e.campusId||d'));
+  assert.ok(engine.includes('[w,y,txList]'));
+  assert.ok(engine.includes('_prevPwG=(0,v.useRef)(g)'));
+  assert.ok(engine.includes('let switched=_prevPwG.current!==g'));
+  assert.ok(engine.includes('Safe Ledger & Float Replenishment (`,r.filter(x=>g===`all`||x.campusId===g).length,`)'));
+  assert.ok(engine.includes('transactionCount:_iteTxCount,pettyCashCount:_itePcCount'));
+  assert.ok(engine.includes('badge:_sbCampuses.length'));
+  assert.ok(topBar.includes('effectivePendingScope'));
+  assert.ok(approvalHub.includes('authorizedCampusIdSet'));
+
+  // 3. Level 2 opening balances editability on sub-campuses
+  assert.ok(engine.includes('_opEdit=Boolean(a||_opCanAll)'));
+  assert.ok(engine.includes('!_opEdit&&(0,K.jsxs)(`div`'));
+  assert.ok(engine.includes('_opEdit&&(0,K.jsxs)(`button`,{onClick:M'));
+
+  // 4. Organization Name and Logo in financial reports and PDF exports
+  const reportsHub = readSource('src/components/MultiFormatReportsHub.tsx');
+  const pdfGen = readSource('src/services/financialReportPdfGenerator.ts');
+  const ledgerPdf = readSource('src/components/FullTransactionLedgerPdfExport.tsx');
+
+  assert.ok(reportsHub.includes('resolvedOrgBrand'));
+  assert.ok(reportsHub.includes('resolvedOrgBrand.logoUrl'));
+  assert.ok(reportsHub.includes('logoUrl: resolvedOrgBrand.logoUrl'));
+  assert.ok(pdfGen.includes('resolvePdfLogoDataUrl'));
+  assert.ok(ledgerPdf.includes('resolvedOrgBrand'));
+  assert.ok(engine.includes('resolveOrganizationBrand as __resolveOrgBrand'));
+  assert.ok(engine.includes('_vwBrand=__resolveOrgBrand'));
+  assert.ok(engine.includes('_nwBrand=__resolveOrgBrand'));
+  assert.ok(engine.includes('_awBrand=__resolveOrgBrand'));
+  assert.ok(engine.includes('_jwBrand=__resolveOrgBrand'));
+  assert.ok(engine.includes('_ywBrand=__resolveOrgBrand'));
+});
+
 
 

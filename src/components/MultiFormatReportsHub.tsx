@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   FileSpreadsheet,
   Printer,
@@ -26,6 +26,7 @@ import {
 } from '../core/aplusEngine';
 import { formatAccountingInteger } from '../utils/accountingFormat';
 import { resolveEffectiveAccountOpeningDrCr } from '../utils/campusOpeningBalance';
+import { resolveOrganizationBrand } from '../utils/organizationBrand';
 import {
   validateClientReportAccess,
   getStoredClientReportPermissions,
@@ -359,6 +360,25 @@ export const MultiFormatReportsHub: React.FC<{
       : 'All Campuses Combined (Consolidated)'
     : resolvedCampusObj?.name || scopedCampusList.find((c) => c.id === currentCampusId)?.name || 'Main Campus';
 
+  const [orgBrandVersion, setOrgBrandVersion] = useState(0);
+  useEffect(() => {
+    const onClientsUpdated = () => setOrgBrandVersion((v) => v + 1);
+    window.addEventListener('aplus-clients-updated', onClientsUpdated);
+    return () => window.removeEventListener('aplus-clients-updated', onClientsUpdated);
+  }, []);
+
+  const resolvedOrgBrand = useMemo(
+    () =>
+      resolveOrganizationBrand({
+        currentUser,
+        campus: resolvedCampusObj || scopedCampusList[0] || null,
+        campuses: scopedCampusList,
+        currentCampusId,
+        orgSettings,
+      }),
+    [currentUser, resolvedCampusObj, scopedCampusList, currentCampusId, orgSettings, orgBrandVersion]
+  );
+
   // Scoped transactions for Formats 2–10
   const scopedVouchers = useMemo(() => {
     return (transactions || [])
@@ -643,7 +663,8 @@ export const MultiFormatReportsHub: React.FC<{
           campusName: campusLabel,
           dateFrom,
           dateTo,
-          schoolName: orgSettings?.schoolName || 'A+ School System',
+          schoolName: resolvedOrgBrand.name,
+          logoUrl: resolvedOrgBrand.logoUrl,
           orientation: isLandscape ? 'landscape' : 'portrait',
           accountRows: rows,
           totals: totals,
@@ -670,7 +691,7 @@ export const MultiFormatReportsHub: React.FC<{
             addPageNumbers: true,
             margin: 6,
             docTitle: activeFormatObj.fullTitle,
-            institutionName: orgSettings?.schoolName || 'A+ School System',
+            institutionName: resolvedOrgBrand.name,
           }
         );
         setToastMsg(`Exported PDF for ${activeFormatObj.shortTitle}`);
@@ -685,7 +706,7 @@ export const MultiFormatReportsHub: React.FC<{
   };
 
   const handleExportCsvFormat = () => {
-    let csv = `"${orgSettings?.schoolName || 'A+ School System'} - ${activeFormatObj.fullTitle}"\n`;
+    let csv = `"${resolvedOrgBrand.name} - ${activeFormatObj.fullTitle}"\n`;
     csv += `"Campus: ${campusLabel}","Period: ${dateFrom} to ${dateTo}"\n\n`;
     csv += `"Account Code","Account Title","Category","Opening Dr","Opening Cr","Period Dr","Period Cr","Closing Dr","Closing Cr"\n`;
     activeAccountRows.forEach((r) => {
@@ -733,7 +754,7 @@ export const MultiFormatReportsHub: React.FC<{
       >
         <div className="flex flex-col min-w-0">
           <span className="font-black uppercase tracking-wider text-[11px] text-black">
-            {orgSettings?.schoolName || 'A+ School System'}
+            {resolvedOrgBrand.name}
           </span>
           <span className="font-bold text-black">
             Campus: {campusLabel}
@@ -750,10 +771,21 @@ export const MultiFormatReportsHub: React.FC<{
       </div>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <SchoolLogo size="md" />
+          {resolvedOrgBrand.logoUrl ? (
+            <img
+              src={resolvedOrgBrand.logoUrl}
+              alt={resolvedOrgBrand.name}
+              className="w-12 h-12 rounded-xl object-contain bg-white border border-slate-300 p-0.5 shrink-0"
+            />
+          ) : (
+            <SchoolLogo
+              campusId={resolvedCampusObj?.id || (currentCampusId !== 'all' ? currentCampusId : undefined)}
+              size="md"
+            />
+          )}
           <div>
             <h1 className="text-lg sm:text-xl font-black uppercase tracking-tight text-black">
-              {orgSettings?.schoolName || 'A+ School System'}
+              {resolvedOrgBrand.name}
             </h1>
             <p className="text-xs font-bold text-slate-700">{title}</p>
           </div>
@@ -2041,7 +2073,7 @@ export const MultiFormatReportsHub: React.FC<{
                   <p>
                     We hereby certify that the General Ledger registers and voucher books (BPV, BRV,
                     CPV, CRV, JV) of{' '}
-                    <strong>{orgSettings?.schoolName || 'A+ School System'}</strong> (
+                    <strong>{resolvedOrgBrand.name}</strong> (
                     <strong>{campusLabel}</strong>) for the period <strong>{dateFrom}</strong> to{' '}
                     <strong>{dateTo}</strong> have been examined in accordance with double-entry
                     accounting standards.

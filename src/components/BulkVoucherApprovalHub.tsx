@@ -37,6 +37,7 @@ import {
   RecentVoucherSearch,
 } from '../services/recentSearchesIndexedDb';
 import { VoucherDetailModal } from './VoucherDetailModal';
+import { useTenantAuth } from '../context/TenantAuthContext';
 
 interface BulkVoucherApprovalHubProps {
   onNavigate?: (tab: string) => void;
@@ -59,16 +60,43 @@ export const BulkVoucherApprovalHub: React.FC<BulkVoucherApprovalHubProps> = ({
     exportSystemState,
   } = useAccounting();
 
+  const {
+    isSuperAdmin: isTenantSuperAdmin,
+    isClientOwner,
+    authorizedCampuses,
+    activeCampusId,
+  } = useTenantAuth();
+
+  const canSwitchCampuses = isSuperAdmin || isTenantSuperAdmin || isClientOwner;
+
+  const scopedCampuses = useMemo(
+    () => (authorizedCampuses.length > 0 ? authorizedCampuses : campuses || []),
+    [authorizedCampuses, campuses]
+  );
+
+  const authorizedCampusIdSet = useMemo(
+    () => new Set(scopedCampuses.map((c) => c.id)),
+    [scopedCampuses]
+  );
+
   // Active status queue tab
   const [activeQueue, setActiveQueue] = useState<'Pending' | 'Approved' | 'Rejected' | 'ALL'>('Pending');
 
   // Filters
   const [selectedCampus, setSelectedCampus] = useState<string>(() => {
-    if (currentUser?.campusId && currentUser.campusId !== 'all') {
+    if (!canSwitchCampuses && currentUser?.campusId && currentUser.campusId !== 'all') {
       return currentUser.campusId;
     }
-    return currentCampusId || 'all';
+    return currentCampusId || activeCampusId || 'all';
   });
+
+  React.useEffect(() => {
+    if (!canSwitchCampuses && currentUser?.campusId && currentUser.campusId !== 'all') {
+      setSelectedCampus(currentUser.campusId);
+    } else if (canSwitchCampuses && currentCampusId) {
+      setSelectedCampus(currentCampusId);
+    }
+  }, [canSwitchCampuses, currentUser?.campusId, currentCampusId]);
   const [voucherTypeFilter, setVoucherTypeFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'WEEK' | 'MONTH'>('ALL');
@@ -132,8 +160,10 @@ export const BulkVoucherApprovalHub: React.FC<BulkVoucherApprovalHubProps> = ({
 
     return (transactions || []).filter((tx) => {
       // 1. Campus scoping
-      if (selectedCampus !== 'all' && tx.campusId !== selectedCampus) {
-        return false;
+      if (selectedCampus !== 'all') {
+        if (tx.campusId !== selectedCampus) return false;
+      } else if (!isTenantSuperAdmin && !isSuperAdmin && authorizedCampusIdSet.size > 0) {
+        if (!authorizedCampusIdSet.has(tx.campusId)) return false;
       }
 
       // 2. Queue Status
@@ -178,7 +208,7 @@ export const BulkVoucherApprovalHub: React.FC<BulkVoucherApprovalHubProps> = ({
 
       return true;
     });
-  }, [transactions, selectedCampus, activeQueue, voucherTypeFilter, dateFilter, searchQuery]);
+  }, [transactions, selectedCampus, activeQueue, voucherTypeFilter, dateFilter, searchQuery, isTenantSuperAdmin, isSuperAdmin, authorizedCampusIdSet]);
 
   // Counts for tabs
   const queueCounts = useMemo(() => {
@@ -187,7 +217,11 @@ export const BulkVoucherApprovalHub: React.FC<BulkVoucherApprovalHubProps> = ({
     let rejected = 0;
 
     (transactions || []).forEach((tx) => {
-      if (selectedCampus !== 'all' && tx.campusId !== selectedCampus) return;
+      if (selectedCampus !== 'all') {
+        if (tx.campusId !== selectedCampus) return;
+      } else if (!isTenantSuperAdmin && !isSuperAdmin && authorizedCampusIdSet.size > 0) {
+        if (!authorizedCampusIdSet.has(tx.campusId)) return;
+      }
       const st = getNormalizedStatus(tx.status);
       if (st === 'Pending') pending++;
       else if (st === 'Approved') approved++;
@@ -200,7 +234,7 @@ export const BulkVoucherApprovalHub: React.FC<BulkVoucherApprovalHubProps> = ({
       rejected,
       all: pending + approved + rejected,
     };
-  }, [transactions, selectedCampus]);
+  }, [transactions, selectedCampus, isTenantSuperAdmin, isSuperAdmin, authorizedCampusIdSet]);
 
   // Selected vouchers details
   const selectedVouchers = useMemo(() => {

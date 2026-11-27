@@ -274,7 +274,8 @@ export const AplusSystemManual: React.FC<AplusSystemManualProps> = ({
           a.type === 'Cash'
       ) || accountHeads[0];
 
-    const voucherNo = `APS-EXP-${String(transactions.length + 1).padStart(5, '0')}`;
+    const campusTxCount = transactions.filter((tx) => tx.campusId === targetCampus.id).length;
+    const voucherNo = `APS-EXP-${String(campusTxCount + 1).padStart(5, '0')}`;
     const todayDate = '2026-09-30';
 
     addTransaction({
